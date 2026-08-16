@@ -1,6 +1,6 @@
 # Technical Fix Documentation — Security & Architecture Hardening
 
-**Branch:** `merge/upgrade-transplant` (based on `main` @ `2c7cdf3`)
+**Branch:** `merge` (based on `main` @ `2c7cdf3`)
 **Commit:** `c269996`
 **Date:** 2026-08-16
 **Verification status:** `tsc --noEmit` clean · 184/184 vitest passing · `next build` succeeds
