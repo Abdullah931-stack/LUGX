@@ -1,0 +1,417 @@
+"use server";
+
+import { db, schema } from "@/lib/db";
+import { processWithAI, Tier } from "@/lib/ai/client";
+import { AIOperation } from "@/lib/ai/prompts";
+import { getUser } from "@/lib/supabase/server";
+import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config";
+import { countWords } from "@/lib/utils";
+import { eq, and, sql } from "drizzle-orm";
+
+// Get current date as string for usage tracking
+function getToday(): string {
+    return new Date().toISOString().split("T")[0];
+}
+
+// Get start of current week (Sunday) for weekly quota
+function getWeekStart(): string {
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - dayOfWeek);
+    return startOfWeek.toISOString().split("T")[0];
+}
+
+/**
+ * Get user's tier from database
+ */
+export async function getUserTier(userId: string): Promise<TierName> {
+    const user = await db.query.users.findFirst({
+        where: eq(schema.users.id, userId),
+        columns: { tier: true },
+    });
+
+    return (user?.tier as TierName) || "free";
+}
+
+/**
+ * Get usage for today
+ */
+async function getTodayUsage(userId: string) {
+    const today = getToday();
+
+    let usage = await db.query.usage.findFirst({
+        where: and(
+            eq(schema.usage.userId, userId),
+            eq(schema.usage.date, today)
+        ),
+    });
+
+    // Create usage record if doesn't exist
+    if (!usage) {
+        const [newUsage] = await db
+            .insert(schema.usage)
+            .values({
+                userId,
+                date: today,
+            })
+            .returning();
+        usage = newUsage;
+    }
+
+    return usage;
+}
+
+/**
+ * Get weekly word usage for free tier
+ */
+async function getWeeklyWordUsage(userId: string): Promise<number> {
+    const weekStart = getWeekStart();
+
+    const result = await db
+        .select({
+            total: sql<number>`COALESCE(SUM(correct_words + improve_words + translate_words), 0)`,
+        })
+        .from(schema.usage)
+        .where(
+            and(
+                eq(schema.usage.userId, userId),
+                sql`date >= ${weekStart}`
+            )
+        );
+
+    return result[0]?.total || 0;
+}
+
+/**
+ * Check if user has quota for operation
+ */
+export async function checkQuota(
+    userId: string,
+    operation: AIOperation,
+    wordCount: number
+): Promise<{ allowed: boolean; reason?: string }> {
+    const tier = await getUserTier(userId);
+    const limits = TIER_LIMITS[tier];
+    const usage = await getTodayUsage(userId);
+
+    // Check ToPrompt availability
+    if (operation === "toPrompt") {
+        if (!isToPromptEnabled(tier)) {
+            return { allowed: false, reason: "ToPrompt is only available for Pro and Ultra plans" };
+        }
+        if (usage.toPromptCount >= limits.toPrompt!.dailyLimit) {
+            return { allowed: false, reason: "Daily ToPrompt limit reached" };
+        }
+        return { allowed: true };
+    }
+
+    // Check Summarize limits
+    if (operation === "summarize") {
+        if (wordCount > limits.summarize.maxWordsPerRequest) {
+            return {
+                allowed: false,
+                reason: `Text exceeds maximum ${limits.summarize.maxWordsPerRequest} words for summarization`,
+            };
+        }
+        if (usage.summarizeCount >= limits.summarize.dailyLimit) {
+            return { allowed: false, reason: "Daily summarize limit reached" };
+        }
+        return { allowed: true };
+    }
+
+    // Check Correct/Improve/Translate limits
+    const operationsMap: Record<string, keyof typeof usage> = {
+        correct: "correctWords",
+        improve: "improveWords",
+        translate: "translateWords",
+    };
+
+    if (limits.correctImproveTranslate.period === "weekly") {
+        const weeklyUsage = await getWeeklyWordUsage(userId);
+        if (weeklyUsage + wordCount > limits.correctImproveTranslate.words) {
+            return {
+                allowed: false,
+                reason: `Weekly word limit (${limits.correctImproveTranslate.words}) exceeded`,
+            };
+        }
+    } else {
+        // Daily limit
+        const todayTotal =
+            (usage.correctWords || 0) +
+            (usage.improveWords || 0) +
+            (usage.translateWords || 0);
+        if (todayTotal + wordCount > limits.correctImproveTranslate.words) {
+            return {
+                allowed: false,
+                reason: `Daily word limit (${limits.correctImproveTranslate.words}) exceeded`,
+            };
+        }
+    }
+
+    return { allowed: true };
+}
+
+/**
+ * Get the user's current tier limits (memoized-ish lookup)
+ */
+function getLimitsForOperation(
+    operation: AIOperation,
+    tier: TierName,
+    wordCount: number
+): { maxWords: number; period: string; allowed: boolean; reason?: string } {
+    const limits = TIER_LIMITS[tier];
+
+    if (operation === "toPrompt") {
+        const allowed = isToPromptEnabled(tier);
+        return {
+            maxWords: 0,
+            period: "daily",
+            allowed,
+            reason: allowed ? undefined : "ToPrompt is only available for Pro and Ultra plans",
+        };
+    }
+
+    if (operation === "summarize") {
+        const allowed = wordCount <= limits.summarize.maxWordsPerRequest;
+        return {
+            maxWords: limits.summarize.maxWordsPerRequest,
+            period: "daily",
+            allowed,
+            reason: allowed ? undefined : `Text exceeds maximum ${limits.summarize.maxWordsPerRequest} words for summarization`,
+        };
+    }
+
+    // Correct / Improve / Translate share one combined limit
+    return {
+        maxWords: limits.correctImproveTranslate.words,
+        period: limits.correctImproveTranslate.period,
+        allowed: true,
+    };
+}
+
+/**
+ * Atomically reserve quota and update usage counters.
+ *
+ * SECURITY FIX (TOCTOU race): the old flow did checkQuota() -> processWithAI()
+ * -> updateUsage(), which let concurrent requests or quota changes slip past
+ * the check. This function enforces the limit inside a single conditional
+ * UPDATE so the operation only counts when the user still has quota.
+ * Returns { reserved: false, reason } when the quota was exhausted at
+ * reservation time — the caller must NOT count the operation.
+ */
+export async function reserveAndUpdateUsage(
+    userId: string,
+    operation: AIOperation,
+    wordCount: number,
+    tier: TierName
+): Promise<{ reserved: boolean; reason?: string }> {
+    const today = getToday();
+    const limitsInfo = getLimitsForOperation(operation, tier, wordCount);
+
+    if (!limitsInfo.allowed) {
+        return { reserved: false, reason: limitsInfo.reason };
+    }
+
+    // Ensure the daily usage row exists (UPSERT is atomic per row on conflict)
+    const todayUsage = await getTodayUsage(userId);
+
+    // Build the SQL that only applies when quota remains
+    let quotaGuard = sql`TRUE`;
+    const updateFields: Record<string, unknown> = {};
+
+    switch (operation) {
+        case "correct":
+        case "improve":
+        case "translate": {
+            const column = operation === "correct" ? "correct_words" : operation === "improve" ? "improve_words" : "translate_words";
+            updateFields[column] = sql`${column} + ${wordCount}`;
+            if (limitsInfo.period === "weekly") {
+                const weekStart = getWeekStart();
+                quotaGuard = sql`(SELECT COALESCE(SUM(correct_words + improve_words + translate_words), 0) FROM ${schema.usage} WHERE user_id = ${userId} AND date >= ${weekStart}) + ${wordCount} <= ${limitsInfo.maxWords}`;
+            } else {
+                quotaGuard = sql`COALESCE(correct_words, 0) + COALESCE(improve_words, 0) + COALESCE(translate_words, 0) + ${wordCount} <= ${limitsInfo.maxWords}`;
+            }
+            break;
+        }
+        case "summarize":
+            updateFields.summarizeCount = sql`summarize_count + 1`;
+            updateFields.summarizeWords = sql`summarize_words + ${wordCount}`;
+            quotaGuard = sql`COALESCE(summarize_count, 0) + 1 <= ${TIER_LIMITS[tier].summarize.dailyLimit}`;
+            break;
+        case "toPrompt":
+            updateFields.toPromptCount = sql`to_prompt_count + 1`;
+            quotaGuard = sql`COALESCE(to_prompt_count, 0) + 1 <= ${TIER_LIMITS[tier].toPrompt?.dailyLimit ?? 0}`;
+            break;
+    }
+
+    const [updated] = await db
+        .update(schema.usage)
+        .set(updateFields)
+        .where(
+            and(
+                eq(schema.usage.userId, userId),
+                eq(schema.usage.date, today),
+                quotaGuard
+            )
+        )
+        .returning({ id: schema.usage.id });
+
+    if (!updated) {
+        return {
+            reserved: false,
+            reason:
+                operation === "summarize"
+                    ? "Daily summarize limit reached"
+                    : operation === "toPrompt"
+                      ? "Daily ToPrompt limit reached"
+                      : `Word limit (${limitsInfo.maxWords}) exceeded for ${limitsInfo.period} period`,
+        };
+    }
+
+    return { reserved: true };
+}
+
+/**
+ * Update usage after successful operation (legacy non-guarded helper).
+ * Kept for backward compatibility; new flows should prefer
+ * reserveAndUpdateUsage which enforces the limit atomically.
+ */
+export async function updateUsage(
+    userId: string,
+    operation: AIOperation,
+    wordCount: number
+): Promise<void> {
+    const today = getToday();
+
+    const updateFields: Record<string, unknown> = {};
+
+    switch (operation) {
+        case "correct":
+            updateFields.correctWords = sql`correct_words + ${wordCount}`;
+            break;
+        case "improve":
+            updateFields.improveWords = sql`improve_words + ${wordCount}`;
+            break;
+        case "translate":
+            updateFields.translateWords = sql`translate_words + ${wordCount}`;
+            break;
+        case "summarize":
+            updateFields.summarizeCount = sql`summarize_count + 1`;
+            updateFields.summarizeWords = sql`summarize_words + ${wordCount}`;
+            break;
+        case "toPrompt":
+            updateFields.toPromptCount = sql`to_prompt_count + 1`;
+            break;
+    }
+
+    await db
+        .update(schema.usage)
+        .set(updateFields)
+        .where(
+            and(
+                eq(schema.usage.userId, userId),
+                eq(schema.usage.date, today)
+            )
+        );
+}
+
+/**
+ * Server Action: Process text with AI
+ */
+export async function processText(
+    operation: AIOperation,
+    text: string
+): Promise<{ success: boolean; data?: string; error?: string }> {
+    try {
+        // Get authenticated user
+        const user = await getUser();
+        if (!user) {
+            return { success: false, error: "Authentication required" };
+        }
+
+        const wordCount = countWords(text);
+
+        // Get user tier once (needed for the atomic quota reservation)
+        const tier = await getUserTier(user.id);
+
+        // Atomic quota reservation + counter update (replaces the old
+        // checkQuota() -> processWithAI() -> updateUsage() flow which was
+        // vulnerable to a TOCTOU race between check and update).
+        const reservation = await reserveAndUpdateUsage(user.id, operation, wordCount, tier);
+        if (!reservation.reserved) {
+            return { success: false, error: reservation.reason };
+        }
+
+        // Process with AI (quota already reserved; counter will not be
+        // incremented twice — the reservation did it conditionally).
+        const result = await processWithAI(operation, text, tier as Tier);
+
+        return { success: true, data: result };
+
+    } catch (error) {
+        console.error(`AI operation ${operation} failed:`, error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "An error occurred",
+        };
+    }
+}
+
+/**
+ * Server Action: Get remaining quota for current user
+ */
+export async function getRemainingQuota(): Promise<{
+    tier: TierName;
+    correctImproveTranslate: { remaining: number; limit: number; period: string };
+    summarize: { remaining: number; limit: number; maxWordsPerRequest: number };
+    toPrompt: { remaining: number; limit: number } | null;
+} | null> {
+    try {
+        const user = await getUser();
+        if (!user) return null;
+
+        const tier = await getUserTier(user.id);
+        const limits = TIER_LIMITS[tier];
+        const usage = await getTodayUsage(user.id);
+
+        // Get word usage based on period
+        let wordUsage: number;
+        if (limits.correctImproveTranslate.period === "weekly") {
+            wordUsage = await getWeeklyWordUsage(user.id);
+        } else {
+            wordUsage =
+                (usage.correctWords || 0) +
+                (usage.improveWords || 0) +
+                (usage.translateWords || 0);
+        }
+
+        // Calculate remaining quotas
+        const wordsRemaining = Math.max(0, limits.correctImproveTranslate.words - wordUsage);
+        const summarizeRemaining = Math.max(0, limits.summarize.dailyLimit - (usage.summarizeCount || 0));
+
+        return {
+            tier,
+            correctImproveTranslate: {
+                remaining: wordsRemaining,
+                limit: limits.correctImproveTranslate.words,
+                period: limits.correctImproveTranslate.period,
+            },
+            summarize: {
+                remaining: summarizeRemaining,
+                limit: limits.summarize.dailyLimit,
+                maxWordsPerRequest: limits.summarize.maxWordsPerRequest,
+            },
+            toPrompt: limits.toPrompt
+                ? {
+                    remaining: Math.max(0, limits.toPrompt.dailyLimit - (usage.toPromptCount || 0)),
+                    limit: limits.toPrompt.dailyLimit,
+                }
+                : null,
+        };
+
+    } catch (error) {
+        console.error("Failed to get quota:", error);
+        return null;
+    }
+}
