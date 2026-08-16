@@ -87,18 +87,41 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             }), { status: 412, headers });
         }
 
+        // Optimistic-locking guard (unified with the file-ops lost-update guard,
+        // closing the theoretical race window documented in the architectural
+        // re-verification report): the UPDATE only succeeds while the row still
+        // carries the version we read. A concurrent writer moving the version in
+        // the read-write gap produces rowCount 0 → explicit 412, never silent
+        // data loss.
         const now = new Date();
-        const newVersion = (currentFile.version || 0) + 1;
+        const currentVersion = currentFile.version || 0;
+        const newVersion = currentVersion + 1;
         const newContent = content !== undefined ? content : currentFile.content;
         const newTitle = title !== undefined ? title : currentFile.title;
         const newEtag = generateETagSync({ id: fileId, content: newContent || '', updatedAt: now });
 
         const [updatedFile] = await db.update(schema.files)
             .set({ content: newContent, title: newTitle, etag: newEtag, version: newVersion, updatedAt: now })
-            .where(and(eq(schema.files.id, fileId), eq(schema.files.userId, user.id)))
+            .where(and(eq(schema.files.id, fileId), eq(schema.files.userId, user.id), eq(schema.files.version, currentVersion)))
             .returning();
 
-        if (!updatedFile) return NextResponse.json({ error: 'Failed to update file' }, { status: 500 });
+        if (!updatedFile) {
+            // Zero rows: either the file vanished (404) or another session moved
+            // the version inside the read-write window (412 conflict).
+            const refreshed = await db.query.files.findFirst({
+                where: and(eq(schema.files.id, fileId), eq(schema.files.userId, user.id)),
+            });
+            const headers = new Headers({ 'Content-Type': 'application/json' });
+            if (refreshed) {
+                headers.set('ETag', formatETagHeader(refreshed.etag!));
+                addRateLimitHeaders(headers, rateLimitResult);
+                return new Response(JSON.stringify({
+                    error: 'Conflict: this file was modified by another session. Please reload and try again',
+                    serverVersion: { etag: refreshed.etag, version: refreshed.version, content: refreshed.content, updatedAt: refreshed.updatedAt.toISOString() },
+                }), { status: 412, headers });
+            }
+            return NextResponse.json({ error: 'File not found' }, { status: 404 });
+        }
 
         const headers = new Headers({
             'Content-Type': 'application/json',

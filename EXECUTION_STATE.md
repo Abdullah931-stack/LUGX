@@ -229,3 +229,12 @@ Remaining after route.test green: W3 log sanitization (grep [Import Debug], emoj
 - npx vitest run: 222/222 ALL PASS (18 files) · npx tsc --noEmit: 0 errors
 - git branch production-readiness @ 7145ba7; uncommitted: W1-W8 changes + todo.md
 - Archive plan: tar from working tree (git ls-files -z) + explicitly append .gitignore + .env.example + .env (git excludes env files — canonical copies at /home/ubuntu/audit_assets/) → LUGX_merge_branch.tar.gz
+
+
+## F1 FINAL CLOSURE ROUND (16 Aug 2026)
+- Re-verification audit (user report vs GitHub lq. d107e3b @ merge) confirmed honest; single remaining item: PUT /api/files/[id] had read-then-write with no SQL version guard.
+- route.ts PUT: UPDATE now conditioned on version read (WHERE id+userId+version) + RETURNING; rowCount==0 -> 404 or 412 with full serverVersion payload. Unified with file-ops guard.
+- New test file src/app/api/files/[id]/route.putguard.test.ts (3 real-Postgres tests: normal advance, concurrent same-version race exactly-one-wins, stale-writer rejected).
+- vitest.config.ts: pool=forks + singleFork=true (documented) to fix flaky cross-file DB pollution; suite stable 225/225; tsc clean.
+- README.md rewritten (architecture, quickstart, tests, env, security matrix, deployment).
+- docs/W10-Final-Closure-Round.md added.

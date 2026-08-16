@@ -25,8 +25,8 @@ export const metadata: Metadata = {
   keywords: ["AI", "text editor", "writing", "translation", "summarization", "cloud"],
   authors: [{ name: "LUGX Team" }],
   icons: {
-    icon: "/icon.png",
-    apple: "/icon.png",
+    icon: "/lugx-icon.svg",
+    apple: "/lugx-icon.svg",
   },
 };
 

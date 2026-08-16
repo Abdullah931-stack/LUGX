@@ -1,0 +1,21 @@
+LUGX - Enterprise AI Proofreading, Linguistic Enhancement & Intelligent Translation Platform
+Copyright 2026 Abdullah (Abdullah931-stack) and LUGX Contributors.
+
+This product includes software developed by the LUGX Project.
+Original Repository: https://github.com/Abdullah931-stack/LUGX
+
+===============================================================================
+ATTRIBUTION REQUIREMENT NOTICE (Apache License 2.0, Section 4d)
+===============================================================================
+
+Any reproduction, modification, translation, or derivative distribution of 
+this codebase or its core architectural subsystems—including but not limited to:
+  1. The Offline-First Distributed Synchronization Engine & IndexedDB Architecture
+  2. The Optimistic Concurrency Control & SQL-Level Versioning Handlers
+  3. The Atomic Quota Reservation & TOCTOU-Proof LLM Accounting System
+  4. The Fail-Closed Stripe Lifecycle Webhook Integration
+
+MUST retain this NOTICE file and display prominent, human-readable attribution 
+to the original author and repository (https://github.com/Abdullah931-stack/LUGX) 
+in all derivative distributions, technical documentation, licensing disclosures, 
+and user-facing interface about/credits screens.
