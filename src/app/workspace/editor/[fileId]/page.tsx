@@ -8,6 +8,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { getFile, updateFileContent, renameFile, deleteFile } from "@/server/actions/file-ops";
 import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { convertTextToHTML } from "@/lib/parsers/text-to-html";
+import { sanitizeHtml } from "@/lib/sanitize-client";
 import { AutoDirectionExtension } from "@/lib/extensions/direction-extension";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
 import { SearchReplace } from "@/components/editor/search-replace";
@@ -65,9 +66,10 @@ export default function EditorPage() {
             if (syncHook.isInitialized) {
                 const localFile = await syncHook.loadLocal(fileId);
                 if (localFile && isMounted) {
-                    // Show local content immediately
+                    // Show local content immediately (sanitized — stored
+                    // content may have been produced by an older client)
                     setTitle(localFile.title);
-                    editor?.commands.setContent(localFile.content || "");
+                    editor?.commands.setContent(sanitizeHtml(localFile.content || ""));
                     console.log('[Editor] Loaded from IndexedDB (instant)');
                 }
             }
@@ -85,8 +87,12 @@ export default function EditorPage() {
                 const currentContent = editor?.getHTML() || "";
                 const serverContent = result.data.content || "";
 
-                if (currentContent !== serverContent) {
-                    editor?.commands.setContent(serverContent);
+                // Sanitize server content before it reaches TipTap:
+                // DB content is user-controlled (imports, old clients),
+                // so it must be treated as untrusted HTML.
+                const safeContent = sanitizeHtml(serverContent);
+                if (currentContent !== safeContent) {
+                    editor?.commands.setContent(safeContent);
                     console.log('[Editor] Updated from server');
                 }
 
@@ -94,7 +100,7 @@ export default function EditorPage() {
                 if (syncHook.isInitialized) {
                     syncHook.saveLocal({
                         id: fileId,
-                        content: serverContent,
+                        content: safeContent,
                         title: result.data.title,
                     });
                 }
@@ -201,6 +207,15 @@ export default function EditorPage() {
     }, [editor]);
 
     // AI Operations
+    //
+    // CONTENT-SAFETY CONTRACT (v2):
+    //  - The document is NEVER modified before the AI response arrives.
+    //    The original HTML is snapshotted at the start of the operation.
+    //  - Success: a SINGLE undoable transaction replaces the original range
+    //    with the formatted AI result — one Ctrl+Z restores everything.
+    //  - Failure (any error, mid-stream abort, quota, network):
+    //    the document is restored to the exact snapshot (rollback). The
+    //    user never loses content because of an AI operation.
     async function handleAIOperation(operation: "correct" | "improve" | "summarize" | "translate" | "toPrompt") {
         if (!editor) return;
 
@@ -208,14 +223,14 @@ export default function EditorPage() {
         setError(null);
         editor.setEditable(false);
 
-        // Save selection range and original content for proper undo
+        // Deterministic anchor for the AI range inside the current document.
         const { from, to } = editor.state.selection;
         const hasSelection = from !== to;
-        const selectionStart = hasSelection ? from : 1; // Start of doc content (after doc node)
-        const selectionEnd = hasSelection ? to : editor.state.doc.content.size - 1;
+        const selectionStart = hasSelection ? from : 0;
+        const selectionEnd = hasSelection ? to : editor.state.doc.content.size;
 
         try {
-            // Get selected text or full content
+            // Get selected text or full content (read-only — nothing is mutated yet)
             const text = hasSelection
                 ? editor.state.doc.textBetween(from, to)
                 : editor.getText();
@@ -227,12 +242,8 @@ export default function EditorPage() {
                 return;
             }
 
-            // Delete the selected range WITHOUT adding to history (visual prep for streaming)
-            editor.chain()
-                .setMeta('addToHistory', false)
-                .setTextSelection({ from: selectionStart, to: selectionEnd })
-                .deleteSelection()
-                .run();
+            // Content snapshot taken BEFORE any fetch — the rollback anchor.
+            snapshotFallback = editor.getHTML();
 
             const response = await fetch("/api/ai/stream", {
                 method: "POST",
@@ -250,63 +261,62 @@ export default function EditorPage() {
 
             const decoder = new TextDecoder();
             let collectedText = "";
-            let streamInsertPos = selectionStart;
 
+            // Stream into a temporary buffer only — the live document stays
+            // untouched until we know the AI response completed successfully.
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-
-                const chunk = decoder.decode(value, { stream: true });
-                collectedText += chunk;
-
-                // Insert chunk at stream position without adding to history
-                editor.chain()
-                    .setMeta('addToHistory', false)
-                    .insertContent(chunk)
-                    .run();
+                collectedText += decoder.decode(value, { stream: true });
             }
 
-            // Final: Replace streamed text with formatted HTML as SINGLE undoable action
-            if (collectedText.trim()) {
-                const html = convertTextToHTML(collectedText);
-                const streamEndPos = editor.state.selection.from;
-
-                // Step 1: Undo ALL non-history changes to restore original state
-                // We do this by setting content back to what it was (WITH history)
-                // Then apply the final change
-
-                // First, select and delete the streamed content (without history)
-                editor.chain()
-                    .setMeta('addToHistory', false)
-                    .setTextSelection({ from: selectionStart, to: streamEndPos })
-                    .deleteSelection()
-                    .run();
-
-                // Restore original text at original position (without history)
-                editor.chain()
-                    .setMeta('addToHistory', false)
-                    .setTextSelection({ from: selectionStart, to: selectionStart })
-                    .insertContent(text)
-                    .run();
-
-                // Now apply the FINAL change WITH history:
-                // Select original text range and replace with AI result
-                const restoredEndPos = selectionStart + text.length;
-                editor.chain()
-                    .setTextSelection({ from: selectionStart, to: restoredEndPos })
-                    .insertContent(html)
-                    .run();
+            if (!collectedText.trim()) {
+                // AI returned an empty result — treat as failure.
+                throw new Error("AI returned an empty result");
             }
+
+            // SUCCESS: apply as ONE undoable transaction.
+            applyAITransaction(selectionStart, selectionEnd, collectedText);
 
         } catch (err: any) {
             console.error(err);
             setError(err.message || "An error occurred");
-            // Undo will restore to the last history state (before AI operation)
-            editor.commands.undo();
+            // ROLLBACK: restore the document to the pre-operation snapshot.
+            // The snapshot was taken before any network call, so this is an
+            // exact restore — no content is ever lost mid-operation.
+            editor.chain().setContent(snapshotFallback).run();
         } finally {
             setIsLoading(false);
             editor.setEditable(true);
         }
+    }
+
+    // Holds the pre-operation snapshot accessible from the catch clause.
+    let snapshotFallback = "";
+
+    /**
+     * Apply the AI result as a single undoable transaction:
+     * restore the exact original text at the anchor range, then replace it
+     * with the formatted result in one history entry.
+     */
+    function applyAITransaction(
+        selectionStart: number,
+        selectionEnd: number,
+        collectedText: string
+    ): void {
+        if (!editor) return;
+
+        const html = convertTextToHTML(collectedText);
+
+        // ONE undoable transaction: select the original range, delete it,
+        // and insert the AI result. TipTap's chain().run() batches all
+        // commands into a single history entry — one Ctrl+Z restores the
+        // full original content of the selected range.
+        editor.chain()
+            .setTextSelection({ from: selectionStart, to: selectionEnd })
+            .deleteSelection()
+            .insertContent(html)
+            .run();
     }
 
     // Title update

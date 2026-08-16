@@ -1,4 +1,5 @@
-import { pgTable, uuid, varchar, text, boolean, timestamp, date, integer, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, boolean, timestamp, date, integer, pgEnum, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // Enums
 export const tierEnum = pgEnum("tier", ["free", "pro", "ultra"]);
@@ -22,7 +23,7 @@ export const files = pgTable("files", {
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     title: varchar("title", { length: 500 }).notNull(),
     content: text("content"),
-    parentFolderId: uuid("parent_folder_id"),
+    parentFolderId: uuid("parent_folder_id").references((): any => files.id, { onDelete: "set null" }), // Self-referencing FK (deferred at schema level; see migration 0003 for ON DELETE behavior and deferrability)
     isFolder: boolean("is_folder").notNull().default(false),
     storagePath: text("storage_path"), // Supabase Storage path for original files
     // Sync-related fields
@@ -31,7 +32,18 @@ export const files = pgTable("files", {
     deletedAt: timestamp("deleted_at"), // Soft delete for sync reconciliation
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => [
+    // Partial unique index: a user cannot have two live (non-deleted) files
+    // with the same parent folder and title. Partial indexes keep soft-deleted
+    // rows out of the uniqueness scope so restored files never collide.
+    uniqueIndex("idx_files_user_parent_title_live")
+        .on(table.userId, sql`COALESCE(parent_folder_id, '00000000-0000-0000-0000-000000000000'::uuid)`, table.title)
+        .where(sql`deleted_at IS NULL`),
+    // Sync query performance: the two most common filter patterns are
+    // "all live files for a user" and "children of a folder".
+    index("idx_files_user_deleted").on(table.userId, table.deletedAt),
+    index("idx_files_parent_user").on(table.parentFolderId, table.userId),
+]);
 
 // Subscriptions table - Stripe subscription tracking
 export const subscriptions = pgTable("subscriptions", {
@@ -59,7 +71,15 @@ export const usage = pgTable("usage", {
     summarizeWords: integer("summarize_words").notNull().default(0),
     toPromptCount: integer("to_prompt_count").notNull().default(0),
     createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+    // DATA INTEGRITY FIX: exactly one usage row per (user, day). This unique
+    // index is the database-level backstop against the race where concurrent
+    // upserts could previously insert duplicate daily rows. It also makes the
+    // getTodayUsage UPSERT (INSERT ... ON CONFLICT DO UPDATE) safe and idempotent.
+    uniqueIndex("idx_usage_user_date_unique").on(table.userId, table.date),
+    // Common lookup pattern: today's usage for a user.
+    index("idx_usage_user_date").on(table.userId, table.date),
+]);
 
 // Types for TypeScript
 export type User = typeof users.$inferSelect;

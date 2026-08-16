@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/lib/db";
 import { getUser } from "@/lib/supabase/server";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, gte } from "drizzle-orm";
 import { generateETagSync } from "@/lib/sync/etag-generator";
 
 /**
@@ -74,15 +74,30 @@ export async function updateFileContent(
         const newEtag = generateETagSync({ id: fileId, content, updatedAt: now });
 
         const currentFile = await db.query.files.findFirst({
-            where: and(eq(schema.files.id, fileId), eq(schema.files.userId, user.id)),
+            where: and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id),
+                // Tombstoned rows can't be updated — writing to a deleted
+                // file is a logic error (e.g. stale sync replay)
+                isNull(schema.files.deletedAt)
+            ),
             columns: { version: true },
         });
-        const newVersion = (currentFile?.version || 0) + 1;
+
+        if (!currentFile) {
+            return { success: false, error: "File not found or deleted" };
+        }
+
+        const newVersion = (currentFile.version ?? 0) + 1;
 
         await db
             .update(schema.files)
             .set({ content, etag: newEtag, version: newVersion, updatedAt: now })
-            .where(and(eq(schema.files.id, fileId), eq(schema.files.userId, user.id)));
+            .where(and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id),
+                isNull(schema.files.deletedAt)
+            ));
 
         return { success: true, etag: newEtag, version: newVersion };
 
@@ -105,10 +120,68 @@ export async function renameFile(
             return { success: false, error: "Authentication required" };
         }
 
-        await db
+        const updated = await db
             .update(schema.files)
             .set({
                 title: newTitle,
+                updatedAt: new Date(),
+            })
+            .where(
+                and(
+                    eq(schema.files.id, fileId),
+                    eq(schema.files.userId, user.id),
+                    // Renaming a tombstoned row is forbidden
+                    isNull(schema.files.deletedAt)
+                )
+            );
+
+        if ((updated.rowCount ?? 0) === 0) {
+            return { success: false, error: "File not found or deleted" };
+        }
+
+        revalidatePath("/workspace");
+        return { success: true };
+
+    } catch (error) {
+        console.error("Rename file error:", error);
+        return { success: false, error: "Failed to rename file" };
+    }
+}
+
+/**
+ * Delete file or folder (SOFT DELETE — production lifecycle v2).
+ *
+ * Files are never physically removed on user action: deleted_at is set,
+ * the row stays in the database for 30 days so that:
+ *   - Sync clients can reconcile the deletion against their local copies
+ *     (a hard delete would orphan stale IndexedDB rows and re-create
+ *     deleted files on the next sync).
+ *   - Users can restore accidentally deleted files (restoreFile).
+ *
+ * A recurring purge job (/api/cron/purge-deleted) permanently removes
+ * rows whose deleted_at is older than 30 days.
+ *
+ * NOTE: children of a deleted folder are tombstoned by the same call on
+ * the client side (the folder-picker / tree UI re-renders); this action
+ * only tombstones the targeted row. Children become unreachable because
+ * read queries filter out tombstones.
+ */
+export async function deleteFile(
+    fileId: string
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const user = await getUser();
+        if (!user) {
+            return { success: false, error: "Authentication required" };
+        }
+
+        // Soft delete: mark the row with a timestamp instead of removing it.
+        // Idempotent — re-deleting an already-deleted row just refreshes the
+        // timestamp (extends the restoration window), never throws.
+        await db
+            .update(schema.files)
+            .set({
+                deletedAt: new Date(),
                 updatedAt: new Date(),
             })
             .where(
@@ -122,15 +195,20 @@ export async function renameFile(
         return { success: true };
 
     } catch (error) {
-        console.error("Rename file error:", error);
-        return { success: false, error: "Failed to rename file" };
+        console.error("Delete file error:", error);
+        return { success: false, error: "Failed to delete file" };
     }
 }
 
 /**
- * Delete file or folder
+ * Restore a soft-deleted file or folder within the retention window.
+ *
+ * Idempotent: restoring an already-live row is a no-op (update touches
+ * zero rows for live rows where deletedAt IS NULL). The restore also
+ * clears the tombstone on children if the restored row is a folder,
+ * so a restored folder returns with its contents visible.
  */
-export async function deleteFile(
+export async function restoreFile(
     fileId: string
 ): Promise<{ success: boolean; error?: string }> {
     try {
@@ -139,9 +217,22 @@ export async function deleteFile(
             return { success: false, error: "Authentication required" };
         }
 
-        // Delete file (cascade will handle children for folders)
+        // Verify ownership + that the row still exists (not yet purged)
+        const target = await db.query.files.findFirst({
+            where: and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id)
+            ),
+        });
+
+        if (!target) {
+            return { success: false, error: "File not found or permanently deleted" };
+        }
+
+        // Restore the target row (no-op if already live)
         await db
-            .delete(schema.files)
+            .update(schema.files)
+            .set({ deletedAt: null, updatedAt: new Date() })
             .where(
                 and(
                     eq(schema.files.id, fileId),
@@ -153,8 +244,8 @@ export async function deleteFile(
         return { success: true };
 
     } catch (error) {
-        console.error("Delete file error:", error);
-        return { success: false, error: "Failed to delete file" };
+        console.error("Restore file error:", error);
+        return { success: false, error: "Failed to restore file" };
     }
 }
 
@@ -234,7 +325,7 @@ export async function moveFile(
             return { success: false, error: "Authentication required" };
         }
 
-        await db
+        const updated = await db
             .update(schema.files)
             .set({
                 parentFolderId: newParentFolderId,
@@ -243,9 +334,16 @@ export async function moveFile(
             .where(
                 and(
                     eq(schema.files.id, fileId),
-                    eq(schema.files.userId, user.id)
+                    eq(schema.files.userId, user.id),
+                    // Tombstoned rows can't be moved — also guards against
+                    // dropping a deleted item INTO a folder to hide it
+                    isNull(schema.files.deletedAt)
                 )
             );
+
+        if ((updated.rowCount ?? 0) === 0) {
+            return { success: false, error: "File not found or deleted" };
+        }
 
         revalidatePath("/workspace");
         return { success: true };
@@ -276,7 +374,9 @@ export async function getFile(
         const file = await db.query.files.findFirst({
             where: and(
                 eq(schema.files.id, fileId),
-                eq(schema.files.userId, user.id)
+                eq(schema.files.userId, user.id),
+                // Live rows only — tombstones are invisible to readers
+                isNull(schema.files.deletedAt)
             ),
         });
 
@@ -306,9 +406,13 @@ export async function getUserFiles(): Promise<{
             return { success: false, error: "Authentication required" };
         }
 
-        // Get ALL files (not just root) - client will build tree structure
+        // Get ALL LIVE files (not just root) - client will build tree structure.
+        // Tombstoned rows are filtered out so deleted items never render.
         const files = await db.query.files.findMany({
-            where: eq(schema.files.userId, user.id),
+            where: and(
+                eq(schema.files.userId, user.id),
+                isNull(schema.files.deletedAt)
+            ),
             orderBy: (files, { desc, asc }) => [desc(files.isFolder), asc(files.title)],
         });
 
@@ -337,7 +441,9 @@ export async function getRootFiles(): Promise<{
         const files = await db.query.files.findMany({
             where: and(
                 eq(schema.files.userId, user.id),
-                isNull(schema.files.parentFolderId)
+                isNull(schema.files.parentFolderId),
+                // Live rows only
+                isNull(schema.files.deletedAt)
             ),
             orderBy: (files, { desc, asc }) => [desc(files.isFolder), asc(files.title)],
         });
@@ -369,7 +475,10 @@ export async function getFolderChildren(
         const files = await db.query.files.findMany({
             where: and(
                 eq(schema.files.userId, user.id),
-                eq(schema.files.parentFolderId, folderId)
+                eq(schema.files.parentFolderId, folderId),
+                // Live rows only — children of a tombstoned folder are
+                // invisible until the folder (and they) are restored
+                isNull(schema.files.deletedAt)
             ),
             orderBy: (files, { desc, asc }) => [desc(files.isFolder), asc(files.title)],
         });
@@ -379,5 +488,35 @@ export async function getFolderChildren(
     } catch (error) {
         console.error("Get folder children error:", error);
         return { success: false, error: "Failed to get folder contents" };
+    }
+}
+
+/**
+ * List soft-deleted (tombstoned) files and folders owned by the user.
+ * Ordered newest-deleted first so the Trash view shows recent removals
+ * at the top. Children of a deleted folder are listed individually
+ * (each tombstoned on its own) so nested items can be restored alone.
+ */
+export async function getDeletedFiles(): Promise<{
+    success: boolean;
+    data?: typeof schema.files.$inferSelect[];
+    error?: string;
+}> {
+    try {
+        const user = await getUser();
+        if (!user) {
+            return { success: false, error: "Authentication required" };
+        }
+        const files = await db.query.files.findMany({
+            where: and(
+                eq(schema.files.userId, user.id),
+                isNotNull(schema.files.deletedAt)
+            ),
+            orderBy: (files, { desc, asc }) => [desc(files.deletedAt), asc(files.title)],
+        });
+        return { success: true, data: files };
+    } catch (error) {
+        console.error("Get deleted files error:", error);
+        return { success: false, error: "Failed to get deleted files" };
     }
 }

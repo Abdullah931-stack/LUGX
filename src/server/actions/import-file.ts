@@ -9,7 +9,7 @@ import { getUser } from "@/lib/supabase/server";
 import { db } from "@/lib/db";
 import { files } from "@/lib/db/schema";
 import { extractPdfText, isValidPDF } from "@/lib/parsers/pdf-parser";
-import { smartConvertToHTML } from "@/lib/parsers/text-to-html";
+import { smartConvertToHTML } from "@/lib/parsers/text-to-html.server";
 
 export interface ImportFileResult {
     success: boolean;

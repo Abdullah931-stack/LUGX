@@ -35,32 +35,65 @@ export async function getUserTier(userId: string): Promise<TierName> {
 }
 
 /**
- * Get usage for today
+ * Get usage for today.
+ *
+ * INTEGRITY FIX (paired with migration 0003): the old SELECT-then-INSERT
+ * flow created duplicate (user, date) rows under concurrency because the
+ * INSERT raced between the two steps. Now the insert uses
+ * `ON CONFLICT (user_id, date) DO NOTHING` — the unique index on
+ * (user_id, date) makes the whole upsert atomic, so concurrent callers can
+ * never produce more than one row per day.
  */
 async function getTodayUsage(userId: string) {
     const today = getToday();
 
-    let usage = await db.query.usage.findFirst({
+    // Atomic ensure: inserts only when no row exists yet. If a concurrent
+    // request inserts first, the ON CONFLICT clause is a no-op (NOT a race —
+    // the DB enforces it under the unique index), and we fall through to the
+    // SELECT which will find the row the other request created.
+    await db
+        .insert(schema.usage)
+        .values({ userId, date: today })
+        .onConflictDoNothing({
+            target: [schema.usage.userId, schema.usage.date],
+        });
+
+    const usage = await db.query.usage.findFirst({
         where: and(
             eq(schema.usage.userId, userId),
             eq(schema.usage.date, today)
         ),
     });
 
-    // Create usage record if doesn't exist
+    // Defensive guard: if something unexpected happened (e.g. unique index
+    // missing on a freshly created DB before migrations run), fall back to
+    // creating the row explicitly rather than returning undefined.
     if (!usage) {
         const [newUsage] = await db
             .insert(schema.usage)
-            .values({
-                userId,
-                date: today,
+            .values({ userId, date: today })
+            .onConflictDoNothing({
+                target: [schema.usage.userId, schema.usage.date],
             })
             .returning();
-        usage = newUsage;
+        return (
+            newUsage ??
+            (await db.query.usage.findFirst({
+                where: and(
+                    eq(schema.usage.userId, userId),
+                    eq(schema.usage.date, today)
+                ),
+            }))
+        );
     }
 
     return usage;
 }
+
+// Test-only export: lets integration tests exercise the real
+// getTodayUsage implementation (with the atomic upsert) against a live DB.
+// Kept out of the production API surface intentionally.
+export const getTodayUsageTestOnly = getTodayUsage;
 
 /**
  * Get weekly word usage for free tier

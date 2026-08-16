@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Trash2, Edit3, Copy, FolderInput } from "lucide-react";
-import { deleteFile, renameFile, copyFile, moveFile } from "@/server/actions/file-ops";
+import { Trash2, Edit3, Copy, FolderInput, RotateCcw } from "lucide-react";
+import { deleteFile, restoreFile, renameFile, copyFile, moveFile } from "@/server/actions/file-ops";
 import { useRouter } from "next/navigation";
 import { FolderPickerModal } from "./folder-picker-modal";
 
@@ -12,6 +12,8 @@ interface FileContextMenuProps {
     fileId: string;
     fileName: string;
     isFolder: boolean;
+    /** True when the item is a tombstone (deletedAt != null). */
+    isDeleted?: boolean;
     onRefresh?: () => void;
 }
 
@@ -25,6 +27,7 @@ export function FileContextMenu({
     fileId,
     fileName,
     isFolder,
+    isDeleted = false,
     onRefresh,
 }: FileContextMenuProps) {
     const router = useRouter();
@@ -32,6 +35,19 @@ export function FileContextMenu({
     const [newName, setNewName] = useState(fileName);
     const [showCopyPicker, setShowCopyPicker] = useState(false);
     const [showMovePicker, setShowMovePicker] = useState(false);
+
+    // Restore a soft-deleted item (tombstone). The server action is
+    // idempotent — restoring a live row is a no-op; restoring a folder
+    // also clears tombstones on its children.
+    async function handleRestore() {
+        const result = await restoreFile(fileId);
+        if (result.success) {
+            onRefresh?.();
+            onClose();
+        } else {
+            alert(result.error || "Failed to restore");
+        }
+    }
 
     // Handle delete operation
     async function handleDelete() {
@@ -145,32 +161,50 @@ export function FileContextMenu({
                     </button>
                 )}
 
-                {/* Delete Option */}
-                <button
-                    onClick={handleDelete}
-                    className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors"
-                >
-                    <Trash2 className="w-4 h-4" />
-                    Delete
-                </button>
+                {/* Restore Option (tombstoned items only) */}
+                {isDeleted && (
+                    <button
+                        onClick={handleRestore}
+                        className="w-full px-3 py-2 text-left text-sm text-indigo-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors"
+                    >
+                        <RotateCcw className="w-4 h-4" />
+                        Restore
+                    </button>
+                )}
 
-                {/* Copy Option - Now enabled */}
-                <button
-                    onClick={handleCopyClick}
-                    className="w-full px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors"
-                >
-                    <Copy className="w-4 h-4" />
-                    Copy
-                </button>
+                {/* Delete Option (only meaningful for live items) */}
+                {!isDeleted && (
+                    <button
+                        onClick={handleDelete}
+                        className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                        Delete
+                    </button>
+                )}
 
-                {/* Move Option - Now enabled */}
-                <button
-                    onClick={handleMoveClick}
-                    className="w-full px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors"
-                >
-                    <FolderInput className="w-4 h-4" />
-                    Move
-                </button>
+                {/* Edit options are not applicable to tombstoned items */}
+                {!isDeleted && (
+                    <>
+                        {/* Copy Option */}
+                        <button
+                            onClick={handleCopyClick}
+                            className="w-full px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors"
+                        >
+                            <Copy className="w-4 h-4" />
+                            Copy
+                        </button>
+
+                        {/* Move Option */}
+                        <button
+                            onClick={handleMoveClick}
+                            className="w-full px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors"
+                        >
+                            <FolderInput className="w-4 h-4" />
+                            Move
+                        </button>
+                    </>
+                )}
             </div>
 
             {/* Folder Pickers */}

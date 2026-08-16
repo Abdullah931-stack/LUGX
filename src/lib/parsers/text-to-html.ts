@@ -1,6 +1,14 @@
 /**
- * Text to HTML Converter
- * Converts plain text with newlines to HTML format for TipTap editor
+ * Text to HTML Converter (safe for BOTH client and server).
+ * Converts plain text with newlines to HTML format for TipTap editor.
+ *
+ * XSS DEFENSE (client-safe path): user-supplied text is ALWAYS escaped
+ * via escapeHtml() before being wrapped in tags, so plain-text and
+ * markdown input can never carry live HTML.
+ *
+ * XSS DEFENSE (server path, imports): smartConvertToHTML additionally
+ * sanitizes raw HTML input through DOMPurify (see src/lib/sanitize.ts)
+ * because imported .html content may contain tags.
  */
 
 /**
@@ -107,27 +115,6 @@ export function isHTML(text: string): boolean {
         /<br\s*\/?>/.test(text); // Also check for self-closing br tags
 }
 
-/**
- * Smart convert: detect format and convert appropriately
- */
-export function smartConvertToHTML(text: string, fileType: 'md' | 'txt' | 'pdf'): string {
-    // Debug logging
-    console.log('[smartConvertToHTML] Input fileType:', fileType);
-    console.log('[smartConvertToHTML] isHTML check:', isHTML(text));
-    console.log('[smartConvertToHTML] First 100 chars:', text.substring(0, 100));
-
-    // If already HTML, return as-is
-    if (isHTML(text)) {
-        console.log('[smartConvertToHTML] Detected as HTML, returning as-is');
-        return text;
-    }
-
-    // Convert based on file type
-    if (fileType === 'md') {
-        console.log('[smartConvertToHTML] Converting as Markdown');
-        return convertMarkdownToHTML(text);
-    } else {
-        console.log('[smartConvertToHTML] Converting as plain text');
-        return convertTextToHTML(text);
-    }
-}
+// NOTE: smartConvertToHTML lives in ./text-to-html.server.ts (server-only,
+// jsdom-backed DOMPurify chokepoint for imports) so this client-safe
+// module carries zero DOMPurify/jsdom bytes into the editor bundle.

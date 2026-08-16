@@ -13,13 +13,15 @@ import {
     FolderPlus,
     Upload,
     MoreHorizontal,
+    Trash2,
 } from "lucide-react";
-import { getUserFiles, createFile, moveFile } from "@/server/actions/file-ops";
+import { getUserFiles, getDeletedFiles, createFile, moveFile } from "@/server/actions/file-ops";
 import { importFile } from "@/server/actions/import-file";
 import { validateFile } from "@/lib/parsers/file-validator";
 import { parseFileContent } from "@/lib/parsers/text-parser";
 import { useToast } from "@/hooks/use-toast";
 import { FileTreeItem } from "@/components/files/file-tree-item";
+import { FileContextMenu } from "@/components/files/file-context-menu";
 
 interface FileItem {
     id: string;
@@ -27,6 +29,7 @@ interface FileItem {
     isFolder: boolean;
     parentFolderId: string | null;
     updatedAt: Date;
+    deletedAt: Date | null;
 }
 
 export function Sidebar() {
@@ -35,6 +38,8 @@ export function Sidebar() {
     const [loading, setLoading] = useState(true);
     const [isDragOver, setIsDragOver] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+    const [deletedFiles, setDeletedFiles] = useState<FileItem[]>([]);
+    const [showTrash, setShowTrash] = useState(false);
     const { toast } = useToast();
 
     useEffect(() => {
@@ -55,6 +60,20 @@ export function Sidebar() {
             console.error("Failed to load files:", error);
         } finally {
             setLoading(false);
+        }
+    }
+
+    // Load tombstoned (soft-deleted) items for the Trash view. These rows
+    // never reach the normal tree (server filters deletedAt IS NULL), so
+    // they are listed here as a flat, collapsible section.
+    async function loadDeletedFiles() {
+        try {
+            const result = await getDeletedFiles();
+            if (result.success && result.data) {
+                setDeletedFiles(result.data);
+            }
+        } catch (error) {
+            console.error("Failed to load deleted files:", error);
         }
     }
 
@@ -353,6 +372,58 @@ export function Sidebar() {
                 )}
             </div>
 
+            {/* Trash Section (soft-deleted files awaiting restoration or purge) */}
+            {!collapsed && (
+                <div className="border-t border-zinc-800/50">
+                    <button
+                        onClick={() => {
+                            setShowTrash(!showTrash);
+                            if (!showTrash) void loadDeletedFiles();
+                        }}
+                        className="w-full px-3 py-2 flex items-center justify-between text-sm text-zinc-400 hover:text-zinc-50 hover:bg-zinc-800/50 transition-colors"
+                    >
+                        <span className="flex items-center gap-2">
+                            <Trash2 className="w-4 h-4" />
+                            Deleted Files
+                        </span>
+                        <span className="flex items-center gap-2">
+                            {deletedFiles.length > 0 && (
+                                <span className="bg-zinc-800 text-zinc-500 text-xs px-1.5 py-0.5 rounded">
+                                    {deletedFiles.length}
+                                </span>
+                            )}
+                            <ChevronRight
+                                className="w-3 h-3 transition-transform"
+                                style={{ transform: showTrash ? "rotate(90deg)" : "rotate(0deg)" }}
+                            />
+                        </span>
+                    </button>
+
+                    {showTrash && (
+                        <div className="px-2 pb-2 pt-1 custom-scrollbar overflow-y-auto max-h-40">
+                            {deletedFiles.length === 0 ? (
+                                <div className="text-center text-zinc-600 text-xs py-3">
+                                    No deleted files
+                                </div>
+                            ) : (
+                                <ul className="space-y-1">
+                                    {deletedFiles.map((file) => (
+                                        <TrashFileRow
+                                            key={file.id}
+                                            file={file}
+                                            onRefresh={() => {
+                                                void loadFiles();
+                                                void loadDeletedFiles();
+                                            }}
+                                        />
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Drag Overlay */}
             {isDragOver && !collapsed && (
                 <div className="absolute inset-0 bg-indigo-500/10 border-2 border-dashed border-indigo-500 rounded-lg flex items-center justify-center pointer-events-none z-10">
@@ -381,4 +452,76 @@ export function Sidebar() {
             )}
         </aside>
     );
+}
+
+/**
+ * Row for a soft-deleted (tombstoned) item inside the Trash section.
+ * Follows the same visual language as FileTreeItem but with muted
+ * styling, a strike-through title and a strikethrough date hint.
+ * The context menu is shown with isDeleted so that only "Restore"
+ * applies (rename/copy/move/delete are disabled for tombstones).
+ */
+function TrashFileRow({
+    file,
+    onRefresh,
+}: {
+    file: FileItem;
+    onRefresh: () => void;
+}) {
+    const [showContextMenu, setShowContextMenu] = useState(false);
+
+    return (
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-zinc-500 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors group">
+            {file.isFolder ? (
+                <Folder className="w-4 h-4 text-amber-500/40 shrink-0" />
+            ) : (
+                <FileText className="w-4 h-4 text-zinc-600 shrink-0" />
+            )}
+
+            <span className="truncate flex-1 line-through decoration-zinc-700">
+                {file.title}
+            </span>
+
+            {file.deletedAt && (
+                <span className="hidden sm:inline text-xs text-zinc-600">
+                    {formatDate(file.deletedAt)}
+                </span>
+            )}
+
+            <div className="relative">
+                <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="opacity-0 group-hover:opacity-100 h-6 w-6"
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowContextMenu(!showContextMenu);
+                    }}
+                >
+                    <MoreHorizontal className="w-3 h-3" />
+                </Button>
+
+                <FileContextMenu
+                    isOpen={showContextMenu}
+                    onClose={() => setShowContextMenu(false)}
+                    fileId={file.id}
+                    fileName={file.title}
+                    isFolder={file.isFolder}
+                    isDeleted
+                    onRefresh={onRefresh}
+                />
+            </div>
+        </div>
+    );
+}
+
+function formatDate(date: Date): string {
+    const now = new Date();
+    const diffMs = now.getTime() - new Date(date).getTime();
+    const diffDays = Math.floor(diffMs / 86400000);
+    if (diffDays <= 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 30) return `${diffDays}d left`;
+    return "30d+";
 }
