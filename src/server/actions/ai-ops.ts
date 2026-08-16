@@ -4,6 +4,7 @@ import { db, schema } from "@/lib/db";
 import { processWithAI, Tier } from "@/lib/ai/client";
 import { AIOperation } from "@/lib/ai/prompts";
 import { getUser } from "@/lib/supabase/server";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config";
 import { countWords } from "@/lib/utils";
 import { eq, and, sql } from "drizzle-orm";
@@ -306,6 +307,62 @@ export async function reserveAndUpdateUsage(
 }
 
 /**
+ * Refund a previously reserved quota when the AI operation ultimately fails
+ * (network outage, provider error, key rotation exhaustion, etc.).
+ *
+ * ENGINEERING UPGRADE (W1): previously a failed `processWithAI` call left the
+ * reservation in place forever — every failure permanently consumed quota
+ * the user never benefited from (a tangible financial loss per failed call).
+ * This function reverses the exact counters that `reserveAndUpdateUsage`
+ * added, using bounded subtraction (GREATEST(..., 0) for counts and word
+ * totals) so a refund can never underflow a counter below zero even if the
+ * row was concurrently modified by another refund (idempotent, safe under
+ * concurrency — refunds are bounded by the reservation, which happened
+ * first and is enforced by the row's own row-level lock in Postgres).
+ */
+async function refundUsage(
+    userId: string,
+    operation: AIOperation,
+    wordCount: number,
+    tier: TierName
+): Promise<void> {
+    const today = getToday();
+    const limitsInfo = getLimitsForOperation(operation, tier, wordCount);
+
+    const undoFields: Record<string, unknown> = {};
+    switch (operation) {
+        case "correct":
+        case "improve":
+        case "translate": {
+            const column = operation === "correct" ? "correct_words" : operation === "improve" ? "improve_words" : "translate_words";
+            undoFields[column] = sql`GREATEST(${column} - ${wordCount}, 0)`;
+            break;
+        }
+        case "summarize":
+            undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
+            undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
+            break;
+        case "toPrompt":
+            undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
+            break;
+    }
+
+    await db
+        .update(schema.usage)
+        .set(undoFields)
+        .where(
+            and(eq(schema.usage.userId, userId), eq(schema.usage.date, today))
+        );
+
+    // `limitsInfo.allowed` is only false for toPrompt-disabled tiers or
+    // oversized summarize input — cases that `reserveAndUpdateUsage`
+    // rejects without reserving, so a refund cannot occur for them. The
+    // word limits were checked under the guard at reservation time; the
+    // reverse update simply subtracts the words that were added.
+    void limitsInfo;
+}
+
+/**
  * Update usage after successful operation (legacy non-guarded helper).
  * Kept for backward compatibility; new flows should prefer
  * reserveAndUpdateUsage which enforces the limit atomically.
@@ -356,22 +413,31 @@ export async function processText(
     operation: AIOperation,
     text: string
 ): Promise<{ success: boolean; data?: string; error?: string }> {
+    // ENGINEERING UPGRADE (W1): reservation state must survive a thrown
+    // error to decide whether a refund is owed. Declared before `try` so the
+    // catch block can inspect them (they remain `undefined` if the failure
+    // happened before reservation — nothing to refund in that case).
+    let user: SupabaseUser | null = null;
+    let wordCount = 0;
+    let tier: TierName | null = null;
+    let reservation: { reserved: boolean; reason?: string } | undefined;
+
     try {
         // Get authenticated user
-        const user = await getUser();
+        user = await getUser();
         if (!user) {
             return { success: false, error: "Authentication required" };
         }
 
-        const wordCount = countWords(text);
+        wordCount = countWords(text);
 
         // Get user tier once (needed for the atomic quota reservation)
-        const tier = await getUserTier(user.id);
+        tier = await getUserTier(user.id);
 
         // Atomic quota reservation + counter update (replaces the old
         // checkQuota() -> processWithAI() -> updateUsage() flow which was
         // vulnerable to a TOCTOU race between check and update).
-        const reservation = await reserveAndUpdateUsage(user.id, operation, wordCount, tier);
+        reservation = await reserveAndUpdateUsage(user.id, operation, wordCount, tier);
         if (!reservation.reserved) {
             return { success: false, error: reservation.reason };
         }
@@ -383,7 +449,15 @@ export async function processText(
         return { success: true, data: result };
 
     } catch (error) {
-        console.error(`AI operation ${operation} failed:`, error);
+        // ENGINEERING UPGRADE (W1): compensate the reservation. The quota was
+        // reserved atomically BEFORE the AI call; if the AI provider call
+        // fails (after reservation), the user must get their quota back.
+        // Errors thrown BEFORE reservation (auth, tier lookup) leave nothing
+        // to refund, so `reservation?.reserved` is the gate.
+        if (reservation && reservation.reserved && tier) {
+            await refundUsage(user!.id, operation, wordCount, tier);
+        }
+        console.error(`AI operation ${operation} failed (quota refunded):`, error);
         return {
             success: false,
             error: error instanceof Error ? error.message : "An error occurred",

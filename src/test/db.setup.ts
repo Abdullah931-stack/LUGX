@@ -48,9 +48,17 @@ export async function ensureTestDb() {
         { cwd: ROOT, stdio: "ignore", env }
     );
 
-    // 2. Official hand-written migration 0003 (idempotent via IF NOT EXISTS).
+    // 2. Official hand-written migrations 0003 + 0004 (idempotent via
+    //    DO $$ EXCEPTION blocks), guaranteeing the UNIQUE index on
+    //    usage(user_id, date), the sync indexes, the extended
+    //    subscription_status enum, and the unique constraint on
+    //    stripe_subscription_id exist on the DB being tested.
     execSync(
         `psql "${dbUrl}" -f ${path.join(MIGRATIONS_DIR, "0003_integrity_constraints.sql")}`,
+        { cwd: ROOT, stdio: "ignore", env }
+    );
+    execSync(
+        `psql "${dbUrl}" -f ${path.join(MIGRATIONS_DIR, "0004_stripe_constraints.sql")}`,
         { cwd: ROOT, stdio: "ignore", env }
     );
     ensured = true;

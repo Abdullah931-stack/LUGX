@@ -41,6 +41,10 @@ export const RATE_LIMITS = {
     FILE_API: { limit: 200, windowSeconds: 15 * 60 },
     /** General API: 300 requests per 15 minutes */
     GENERAL: { limit: 300, windowSeconds: 15 * 60 },
+    /** Auth (sign-in/sign-up): 20 requests per 15 minutes — brute-force
+     * credential stuffing is the primary attack surface for login
+     * endpoints; a tight window buys time for IP-based blocking to react. */
+    AUTH: { limit: 20, windowSeconds: 15 * 60 },
 } as const;
 
 /**
@@ -155,6 +159,7 @@ export class RateLimiter {
  */
 export const syncApiRateLimiter = new RateLimiter('sync', RATE_LIMITS.SYNC_API);
 export const fileApiRateLimiter = new RateLimiter('file', RATE_LIMITS.FILE_API);
+export const authRateLimiter = new RateLimiter('auth', RATE_LIMITS.AUTH);
 
 /**
  * Helper to add rate limit headers to response

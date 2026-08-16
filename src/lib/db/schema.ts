@@ -3,7 +3,21 @@ import { sql } from "drizzle-orm";
 
 // Enums
 export const tierEnum = pgEnum("tier", ["free", "pro", "ultra"]);
-export const subscriptionStatusEnum = pgEnum("subscription_status", ["active", "canceled", "past_due", "trialing"]);
+// ENGINEERING UPGRADE (W2): extended (migration 0004) with the Stripe
+// payment-failure states ("incomplete", "incomplete_expired", "unpaid") so
+// the webhook handler can map every real Stripe status explicitly and fail
+// CLOSED on unknown ones — previously any unrecognized status silently
+// fell back to "active", potentially granting paid-tier privileges on
+// payment failures.
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+    "active",
+    "canceled",
+    "past_due",
+    "trialing",
+    "incomplete",
+    "incomplete_expired",
+    "unpaid",
+]);
 
 // Users table - linked to Supabase Auth via UUID
 export const users = pgTable("users", {

@@ -12,6 +12,7 @@ import { concurrencyManager } from './concurrency-manager';
 import { syncRollback } from './rollback';
 import { syncErrorHandler, SyncErrorType } from './error-handler';
 import { compareETags } from './etag-generator';
+import { runWithConcurrency, DEFAULT_PUSH_CONCURRENCY } from './parallel';
 
 /**
  * Sync status
@@ -288,15 +289,27 @@ class SyncManager {
         const dirtyFiles = await indexedDBManager.getDirtyFiles();
         console.log(`[SyncManager] Pushing ${dirtyFiles.length} dirty files`);
 
-        for (const file of dirtyFiles) {
-            const fileResult = await this.pushFile(file);
+        // ENGINEERING UPGRADE (W7): bounded parallel push. The old loop was
+        // strictly sequential (200 files = 200 sequential round-trips),
+        // while unbounded Promise.all would open unlimited in-flight
+        // requests and hit server rate limits. Fixed concurrency keeps the
+        // pipeline full without flooding the network.
+        const { results, errors } = await runWithConcurrency(
+            dirtyFiles.map((file) => () => this.pushFile(file)),
+            DEFAULT_PUSH_CONCURRENCY
+        );
 
-            if (fileResult.success) {
+        for (let i = 0; i < dirtyFiles.length; i++) {
+            const fileResult = results[i];
+            if (fileResult?.success) {
                 result.pushed++;
-            } else if (fileResult.action === 'conflict') {
-                result.conflicts.push(file.id);
-            } else if (fileResult.error) {
-                result.errors.push(`${file.id}: ${fileResult.error}`);
+            } else if (fileResult?.action === 'conflict') {
+                result.conflicts.push(dirtyFiles[i].id);
+            } else {
+                // Explicit per-task error or captured worker error — both
+                // feed the errors array so nothing is silently dropped.
+                const message = fileResult?.error ?? errors[i]?.message ?? 'Unknown push error';
+                result.errors.push(`${dirtyFiles[i].id}: ${message}`);
             }
         }
 

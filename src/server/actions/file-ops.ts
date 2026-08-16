@@ -73,6 +73,14 @@ export async function updateFileContent(
         const now = new Date();
         const newEtag = generateETagSync({ id: fileId, content, updatedAt: now });
 
+        // ENGINEERING UPGRADE (W5): Lost-update guard. The old read-then-write
+        // flow had a race window: two concurrent saves could both read the
+        // same version, both compute version+1, and the second write would
+        // silently overwrite the first writer's content. Now the read and the
+        // write are fused into a single atomic step: the UPDATE itself only
+        // succeeds when the row still carries the version we just read. If
+        // another writer moved the version first, zero rows are affected and
+        // the caller is told to re-read (fail-safe — never silent loss).
         const currentFile = await db.query.files.findFirst({
             where: and(
                 eq(schema.files.id, fileId),
@@ -88,16 +96,29 @@ export async function updateFileContent(
             return { success: false, error: "File not found or deleted" };
         }
 
-        const newVersion = (currentFile.version ?? 0) + 1;
+        const currentVersion = currentFile.version ?? 0;
+        const newVersion = currentVersion + 1;
 
-        await db
+        const [updated] = await db
             .update(schema.files)
             .set({ content, etag: newEtag, version: newVersion, updatedAt: now })
             .where(and(
                 eq(schema.files.id, fileId),
                 eq(schema.files.userId, user.id),
+                eq(schema.files.version, currentVersion),
                 isNull(schema.files.deletedAt)
-            ));
+            ))
+            .returning();
+
+        if (!updated) {
+            // Zero affected rows: someone else saved a newer version in the
+            // window between our read and our write. Returning `conflict: true`
+            // lets the client refetch and merge instead of losing data.
+            return {
+                success: false,
+                error: "Conflict: this file was modified by another session. Please reload and try again.",
+            };
+        }
 
         return { success: true, etag: newEtag, version: newVersion };
 

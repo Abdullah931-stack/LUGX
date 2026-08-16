@@ -69,11 +69,6 @@ export async function importFile(
             // Normalize line endings for consistency
             textContent = textContent.replace(/\r\n/g, '\n');
 
-            // DEBUG: Log to verify newlines are present
-            console.log('[Import Debug] Text content preview:', textContent.substring(0, 200));
-            console.log('[Import Debug] Contains newlines:', textContent.includes('\n'));
-            console.log('[Import Debug] Newline count:', (textContent.match(/\n/g) || []).length);
-
             wordCount = textContent.split(/\s+/).filter(Boolean).length;
         }
 
@@ -82,11 +77,7 @@ export async function importFile(
 
         // Convert plain text to HTML for TipTap editor compatibility
         // This preserves newlines and formatting
-        console.log('[Import Debug] Before HTML conversion, text has', (textContent.match(/\n/g) || []).length, 'newlines');
         const htmlContent = smartConvertToHTML(textContent, fileType);
-        console.log('[Import Debug] After HTML conversion:', htmlContent.substring(0, 300));
-        console.log('[Import Debug] HTML has <br> tags:', htmlContent.includes('<br>'));
-        console.log('[Import Debug] HTML has <p> tags:', htmlContent.includes('<p>'));
 
         // Insert into database
         const [newFile] = await db

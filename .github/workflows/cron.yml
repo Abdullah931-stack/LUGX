@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+# Daily purge of expired soft-deleted files (30-day retention).
+#
+# Calls the hardened /api/cron/purge-deleted endpoint (CRON_SECRET auth,
+# bounded batches of 500 rows per run — see the route file).
+#
+# Setup:
+#   1. Generate a secret: openssl rand -base64 32
+#   2. Add CRON_SECRET to this repository's Actions secrets (Settings >
+#      Secrets and variables > Actions).
+#   3. Add DEPLOY_URL to the same place (e.g. https://your-app.vercel.app).
+#
+# The workflow never fails the whole pipeline on cron issues: cron jobs are
+# operationally important but non-blocking for development, so errors are
+# logged and surfaced without a failing check.
+# ---------------------------------------------------------------------------
+name: Cron — purge deleted files
+
+on:
+  schedule:
+    # Daily at 03:00 UTC
+    - cron: "0 3 * * *"
+  # Manual trigger for catch-up runs or testing
+  workflow_dispatch:
+
+jobs:
+  purge:
+    name: Purge expired tombstones
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Run purge cron endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$DEPLOY_URL" ]; then
+            echo "ERROR: CRON_SECRET or DEPLOY_URL secret not configured."
+            echo "Add them in repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          RESPONSE=$(curl -fsS -w "\n__HTTP__%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$DEPLOY_URL/api/cron/purge-deleted" || true)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1 | sed 's/__HTTP__//')
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP $HTTP_CODE"
+          echo "$BODY"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: purge endpoint returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          # `done: true` means fewer than 500 rows were deleted — retention
+          # backlog fully drained for today.
+          if echo "$BODY" | grep -q '"done":true'; then
+            echo "Retention backlog drained."
+          fi

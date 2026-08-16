@@ -85,7 +85,10 @@ export async function upsertSubscription(
     subscriptionData: {
         stripeSubscriptionId: string;
         tier: TierName;
-        status: 'active' | 'canceled' | 'past_due' | 'trialing';
+        // ENGINEERING UPGRADE (W2): full Stripe lifecycle (fail-closed):
+        // payment-failure states are now legal values instead of silently
+        // falling back to 'active'.
+        status: 'active' | 'canceled' | 'past_due' | 'trialing' | 'incomplete' | 'incomplete_expired' | 'unpaid';
         currentPeriodStart: Date;
         currentPeriodEnd: Date;
         cancelAtPeriodEnd?: boolean;
