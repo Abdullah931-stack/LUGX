@@ -3,7 +3,7 @@
  */
 
 // Types
-export type { IDBFile, IDBOperation, IDBSyncMetadata, OperationType, SyncConflict, SyncQueueItem, IDBSchemaInfo } from './idb-types';
+export type { IDBFile, IDBOperation, IDBSyncMetadata, OperationType, OperationStatus, SyncConflict, SyncQueueItem, IDBSchemaInfo } from './idb-types';
 export { IDB_CONFIG, getDatabaseName } from './idb-types';
 
 // IndexedDB
@@ -13,11 +13,11 @@ export { indexedDBManager, IndexedDBManager, createIndexedDBManager } from './in
 export { generateETag, generateETagSync, isValidETag, compareETags, parseETagHeader, formatETagHeader } from './etag-generator';
 
 // Error Handling
-export { SyncErrorType, syncErrorHandler, SyncErrorHandler } from './error-handler';
+export { SyncErrorType, syncErrorHandler, SyncErrorHandler, isRetryableError } from './error-handler';
 export type { SyncError, ErrorCallback } from './error-handler';
 
 // Rollback
-export { syncRollback, SyncRollback } from './rollback';
+export { syncRollback, SyncRollback, createSyncRollback } from './rollback';
 export type { SyncCheckpoint } from './rollback';
 
 // Connection

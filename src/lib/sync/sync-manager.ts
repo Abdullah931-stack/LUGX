@@ -6,11 +6,11 @@
  */
 
 import { indexedDBManager, createIndexedDBManager, IndexedDBManager } from './indexeddb';
-import { IDBFile, IDBSyncMetadata, SyncQueueItem } from './idb-types';
+import { IDBFile, IDBOperation, IDBSyncMetadata, SyncQueueItem, OperationStatus } from './idb-types';
 import { connectionDetector, withBackoff } from './connection-detector';
 import { concurrencyManager } from './concurrency-manager';
-import { syncRollback } from './rollback';
-import { syncErrorHandler, SyncErrorType } from './error-handler';
+import { syncRollback, createSyncRollback, SyncRollback } from './rollback';
+import { syncErrorHandler, SyncErrorType, isRetryableError } from './error-handler';
 import { compareETags } from './etag-generator';
 import { runWithConcurrency, DEFAULT_PUSH_CONCURRENCY } from './parallel';
 
@@ -86,6 +86,8 @@ export interface SyncManagerConfig {
     maxRetries?: number;
     /** Optional injected IndexedDB manager instance */
     idb?: IndexedDBManager;
+    /** Enable randomized backoff jitter (defaults to false for deterministic testing) */
+    enableJitter?: boolean;
 }
 
 /**
@@ -103,15 +105,22 @@ class SyncManager {
     private isDestroyed = false;
     private idb: IndexedDBManager;
     private ownsIdb = false;
+    private rollback: SyncRollback;
     private activeAbortController: AbortController | null = null;
     private isConsumerRunning = false;
     private hasPendingOnlineConsumer = false;
+    private isQueueProcessing = false;
+    private maxRetries = 5;
+    private baseBackoffMs = 1000;
+    private maxBackoffMs = 30000;
+    private enableJitter = false;
     private unsubscribeConnection?: () => void;
 
     constructor(initialConfig?: SyncManagerConfig) {
         if (initialConfig?.idb) {
             this.idb = initialConfig.idb;
             this.ownsIdb = false;
+            this.rollback = createSyncRollback(this.idb);
             if (initialConfig.userId && initialConfig.userId.trim()) {
                 this.config = { ...initialConfig, userId: initialConfig.userId.trim() };
             }
@@ -119,9 +128,17 @@ class SyncManager {
             this.config = { ...initialConfig, userId: initialConfig.userId.trim() };
             this.idb = createIndexedDBManager(this.config.userId);
             this.ownsIdb = true;
+            this.rollback = createSyncRollback(this.idb);
         } else {
             this.idb = indexedDBManager;
             this.ownsIdb = false;
+            this.rollback = syncRollback;
+        }
+        if (initialConfig?.maxRetries) {
+            this.maxRetries = initialConfig.maxRetries;
+        }
+        if (initialConfig?.enableJitter !== undefined) {
+            this.enableJitter = initialConfig.enableJitter;
         }
     }
 
@@ -172,6 +189,14 @@ class SyncManager {
             this.ownsIdb = true;
         }
         await this.idb.init(this.config.userId);
+        this.rollback = createSyncRollback(this.idb);
+
+        // Crash recovery: reset any operations stuck in 'syncing' back to 'queued'
+        await this.idb.resetSyncingOperations();
+
+        if (config.maxRetries) {
+            this.maxRetries = config.maxRetries;
+        }
 
         // Initialize connection detector
         connectionDetector.init();
@@ -233,6 +258,8 @@ class SyncManager {
         this.conflictCallback = undefined;
         this.isConsumerRunning = false;
         this.hasPendingOnlineConsumer = false;
+        this.isQueueProcessing = false;
+        this.rollback?.clearAll();
         this.setStatus('stopped');
         console.log('[SyncManager] Destroyed and resources released');
     }
@@ -389,9 +416,21 @@ class SyncManager {
         };
 
         try {
-            // Step 1: Push dirty files
+            // Step 1: Process queued operations deterministically
+            const queueResult = await this.processOperationsQueue(signal);
+            result.filesPushed += queueResult.succeeded;
+            result.conflicts.push(...queueResult.conflicts);
+            if (queueResult.failed > 0) {
+                result.errors.push(`Failed to sync ${queueResult.failed} queued operations`);
+            }
+
+            if (signal.aborted) {
+                throw new Error('Sync aborted');
+            }
+
+            // Step 2: Push dirty files
             const pushResult = await this.pushDirtyFiles(signal);
-            result.filesPushed = pushResult.pushed;
+            result.filesPushed += pushResult.pushed;
             result.conflicts.push(...pushResult.conflicts);
             result.errors.push(...pushResult.errors);
 
@@ -399,7 +438,7 @@ class SyncManager {
                 throw new Error('Sync aborted');
             }
 
-            // Step 2: Pull updates from server
+            // Step 3: Pull updates from server
             const pullResult = await this.pullUpdates(signal);
             result.filesPulled = pullResult.pulled;
             result.conflicts.push(...pullResult.conflicts);
@@ -439,7 +478,198 @@ class SyncManager {
     }
 
     /**
-     * Push all dirty files to server
+     * Deterministically process pending operations in the queue with exponential backoff & dead-lettering
+     */
+    async processOperationsQueue(signal?: AbortSignal): Promise<{
+        processed: number;
+        succeeded: number;
+        failed: number;
+        conflicts: string[];
+    }> {
+        const stats = { processed: 0, succeeded: 0, failed: 0, conflicts: [] as string[] };
+
+        if (this.isDestroyed || !this.initialized || this.status === 'stopped') {
+            return stats;
+        }
+
+        if (this.isQueueProcessing) {
+            return stats;
+        }
+
+        if (!connectionDetector.isOnline()) {
+            return stats;
+        }
+
+        this.isQueueProcessing = true;
+
+        try {
+            const dueOperations = await this.idb.getDueOperations(Date.now(), this.config?.maxRetries || this.maxRetries);
+            if (dueOperations.length === 0) {
+                return stats;
+            }
+
+            for (const op of dueOperations) {
+                if (signal?.aborted || this.isDestroyed || !connectionDetector.isOnline()) {
+                    break;
+                }
+
+                stats.processed++;
+
+                // Mark operation as actively syncing
+                await this.idb.updateOperationStatus(op.id, 'syncing');
+
+                const opResult = await this.processSingleOperation(op, signal);
+
+                if (opResult.success) {
+                    stats.succeeded++;
+                } else if (opResult.action === 'conflict') {
+                    stats.conflicts.push(op.fileId);
+                } else {
+                    stats.failed++;
+                }
+            }
+        } catch (error) {
+            console.error('[SyncManager] Error in operations queue processor:', error);
+        } finally {
+            this.isQueueProcessing = false;
+        }
+
+        return stats;
+    }
+
+    /**
+     * Process a single queued operation with file-level concurrency locking, error handling and rollback
+     */
+    private async processSingleOperation(op: IDBOperation, signal?: AbortSignal): Promise<FileSyncResult> {
+        return concurrencyManager.withLock(op.fileId, async () => {
+            if (signal?.aborted || this.isDestroyed) {
+                await this.idb.updateOperationStatus(op.id, 'queued');
+                return { fileId: op.fileId, success: false, action: 'skipped', error: 'Aborted' };
+            }
+
+            const checkpointId = await this.rollback.createCheckpoint(op.fileId, 'pre_sync', op.id);
+            const file = await this.idb.getFile(op.fileId);
+
+            if (!file) {
+                await this.idb.updateOperationStatus(op.id, 'failed', {
+                    lastError: 'Local file not found for operation',
+                });
+                return { fileId: op.fileId, success: false, action: 'skipped', error: 'Local file not found' };
+            }
+
+            const currentAttempts = (op.attempts || 0) + 1;
+            const maxAllowedRetries = this.config?.maxRetries || this.maxRetries;
+
+            try {
+                const response = await withBackoff(async () => {
+                    return fetch(`/api/files/${op.fileId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'If-Match': `"${file.etag}"`,
+                            'X-Operation-ID': op.operationId || op.id,
+                        },
+                        body: JSON.stringify({
+                            content: file.content,
+                            title: file.title,
+                            operationId: op.operationId || op.id,
+                            baseVersion: op.baseVersion,
+                        }),
+                        signal,
+                    });
+                }, 1, undefined, signal);
+
+                if (response.status === 412 || response.status === 409) {
+                    const serverData = await response.json().catch(() => ({}));
+                    await this.idb.updateOperationStatus(op.id, 'conflict', {
+                        attempts: currentAttempts,
+                        lastError: 'Conflict detected on server',
+                    });
+                    if (serverData.serverVersion) {
+                        await this.handleConflict(file, serverData.serverVersion);
+                    }
+                    return {
+                        fileId: op.fileId,
+                        success: false,
+                        action: 'conflict' as const,
+                    };
+                }
+
+                if (response.status === 404) {
+                    // File deleted on server -> non-retryable fatal failure
+                    await this.idb.updateOperationStatus(op.id, 'failed', {
+                        attempts: currentAttempts,
+                        lastError: 'File deleted on server (404)',
+                    });
+                    return {
+                        fileId: op.fileId,
+                        success: false,
+                        action: 'skipped' as const,
+                        error: 'File not found on server',
+                    };
+                }
+
+                if (!response.ok) {
+                    const syncErr = await syncErrorHandler.fromResponse(response, `Operation ${op.id}`);
+                    throw new Error(syncErr.message);
+                }
+
+                const data = await response.json();
+
+                // Atomically mark file clean and operation synced in a single multi-store transaction
+                await this.idb.commitFileAndOperationSync(file.id, data.etag, op.id, currentAttempts);
+
+                // Remove checkpoint
+                this.rollback.removeCheckpoint(checkpointId);
+
+                return {
+                    fileId: op.fileId,
+                    success: true,
+                    action: 'pushed' as const,
+                    newEtag: data.etag,
+                };
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown operation sync error';
+                const isRetryable = isRetryableError(error);
+
+                if (currentAttempts >= maxAllowedRetries || !isRetryable) {
+                    // Move to dead_letter / fatal failed status
+                    await this.idb.updateOperationStatus(op.id, isRetryable ? 'dead_letter' : 'failed', {
+                        attempts: currentAttempts,
+                        lastError: `Max retries exceeded or fatal error: ${errorMessage}`,
+                    });
+                } else {
+                    // Exponential backoff with optional jitter
+                    const baseDelay = Math.min(
+                        this.baseBackoffMs * Math.pow(2, currentAttempts - 1),
+                        this.maxBackoffMs
+                    );
+                    const jitterMultiplier = this.enableJitter ? (0.85 + 0.3 * Math.random()) : 1;
+                    const delay = Math.round(baseDelay * jitterMultiplier);
+                    const nextRetryAt = Date.now() + delay;
+
+                    await this.idb.updateOperationStatus(op.id, 'failed', {
+                        attempts: currentAttempts,
+                        nextRetryAt,
+                        lastError: errorMessage,
+                    });
+                }
+
+                // Execute rollback to restore safe state
+                await this.rollback.rollback(checkpointId, op.id);
+
+                return {
+                    fileId: op.fileId,
+                    success: false,
+                    action: 'skipped' as const,
+                    error: errorMessage,
+                };
+            }
+        });
+    }
+
+    /**
+     * Push all dirty files to server (filtering out files already tracked in pending operations to avoid double-pushes)
      */
     private async pushDirtyFiles(signal?: AbortSignal): Promise<{
         pushed: number;
@@ -449,22 +679,34 @@ class SyncManager {
         const result = { pushed: 0, conflicts: [] as string[], errors: [] as string[] };
 
         const dirtyFiles = await this.idb.getDirtyFiles();
-        console.log(`[SyncManager] Pushing ${dirtyFiles.length} dirty files for ${this.config?.userId}`);
+        if (dirtyFiles.length === 0) return result;
+
+        // Filter out files that already have active/queued operations to prevent double-pushing
+        const queuedOps = await this.idb.getOperationsByStatus('queued');
+        const syncingOps = await this.idb.getOperationsByStatus('syncing');
+        const pendingFileIds = new Set([...queuedOps, ...syncingOps].map(o => o.fileId));
+        const filesToPush = dirtyFiles.filter(f => !pendingFileIds.has(f.id));
+
+        if (filesToPush.length === 0) {
+            return result;
+        }
+
+        console.log(`[SyncManager] Pushing ${filesToPush.length} standalone dirty files for ${this.config?.userId}`);
 
         const { results, errors } = await runWithConcurrency(
-            dirtyFiles.map((file) => () => this.pushFile(file, signal)),
+            filesToPush.map((file) => () => this.pushFile(file, signal)),
             DEFAULT_PUSH_CONCURRENCY
         );
 
-        for (let i = 0; i < dirtyFiles.length; i++) {
+        for (let i = 0; i < filesToPush.length; i++) {
             const fileResult = results[i];
             if (fileResult?.success) {
                 result.pushed++;
             } else if (fileResult?.action === 'conflict') {
-                result.conflicts.push(dirtyFiles[i].id);
+                result.conflicts.push(filesToPush[i].id);
             } else {
                 const message = fileResult?.error ?? errors[i]?.message ?? 'Unknown push error';
-                result.errors.push(`${dirtyFiles[i].id}: ${message}`);
+                result.errors.push(`${filesToPush[i].id}: ${message}`);
             }
         }
 
@@ -480,7 +722,7 @@ class SyncManager {
                 return { fileId: file.id, success: false, action: 'skipped', error: 'Aborted' };
             }
 
-            const checkpointId = await syncRollback.createCheckpoint(file.id, 'pre_sync');
+            const checkpointId = await this.rollback.createCheckpoint(file.id, 'pre_sync');
 
             try {
                 const response = await withBackoff(async () => {
@@ -498,7 +740,7 @@ class SyncManager {
                     });
                 }, 3, undefined, signal);
 
-                if (response.status === 412) {
+                if (response.status === 412 || response.status === 409) {
                     const serverData = await response.json();
                     await this.handleConflict(file, serverData.serverVersion);
 
@@ -519,7 +761,7 @@ class SyncManager {
                 await this.idb.markFileClean(file.id, data.etag);
 
                 // Remove checkpoint
-                syncRollback.removeCheckpoint(checkpointId);
+                this.rollback.removeCheckpoint(checkpointId);
 
                 return {
                     fileId: file.id,
@@ -530,7 +772,7 @@ class SyncManager {
 
             } catch (error) {
                 // Rollback on error
-                await syncRollback.rollback(checkpointId);
+                await this.rollback.rollback(checkpointId);
 
                 return {
                     fileId: file.id,
@@ -606,7 +848,7 @@ class SyncManager {
     }
 
     /**
-     * Pull and merge a single file from server
+     * Pull and merge a single file from server with tombstone (soft-deletion) handling
      */
     private async pullFile(serverFile: {
         id: string;
@@ -616,8 +858,27 @@ class SyncManager {
         title: string;
         parentFolderId: string | null;
         isFolder: boolean;
+        deletedAt?: string | null;
         updatedAt: string;
     }): Promise<FileSyncResult> {
+        // Handle server tombstone (soft-deleted file)
+        if (serverFile.deletedAt) {
+            const localFile = await this.idb.getFile(serverFile.id);
+            if (localFile) {
+                await this.idb.deleteFile(serverFile.id);
+                // Mark any pending operations for the deleted file as failed
+                const ops = await this.idb.getOperations(serverFile.id);
+                for (const op of ops) {
+                    if (op.status === 'queued' || op.status === 'syncing') {
+                        await this.idb.updateOperationStatus(op.id, 'failed', {
+                            lastError: 'File deleted on server (tombstone received)',
+                        });
+                    }
+                }
+            }
+            return { fileId: serverFile.id, success: true, action: 'pulled' };
+        }
+
         const localFile = await this.idb.getFile(serverFile.id);
 
         // New file from server
@@ -711,7 +972,7 @@ class SyncManager {
     /**
      * Queue a file for sync with priority and deterministic operation tracking
      */
-    queueSync(fileId: string, priority: 1 | 2 | 3 = 2, operationId?: string): void {
+    async queueSync(fileId: string, priority: 1 | 2 | 3 = 2, operationId?: string): Promise<void> {
         if (this.isDestroyed || !this.initialized) {
             return;
         }
@@ -730,6 +991,31 @@ class SyncManager {
 
         this.syncQueue.sort((a, b) => a.priority - b.priority);
         this.setStatus('queued');
+
+        // Record operation in IDB if file exists
+        const file = await this.idb.getFile(fileId);
+        const newOp: IDBOperation = {
+            id: opId,
+            operationId: opId,
+            userId: this.config?.userId || 'anon',
+            fileId,
+            baseVersion: file?.version || 1,
+            status: 'queued',
+            attempts: 0,
+            operationType: 'update',
+            position: 0,
+            content: file?.content || '',
+            timestamp: Date.now(),
+            synced: false,
+            snapshot: file ? { content: file.content, etag: file.etag, version: file.version } : undefined,
+        };
+        await this.idb.addOperation(newOp);
+
+        if (connectionDetector.isOnline() && (this.status === 'idle' || this.status === 'queued')) {
+            this.processOperationsQueue().catch(err => {
+                console.error('[SyncManager] Error running queue consumer:', err);
+            });
+        }
     }
 
     /**

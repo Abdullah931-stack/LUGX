@@ -13,6 +13,8 @@ export enum SyncErrorType {
     NETWORK_ERROR = 'NETWORK_ERROR',
     /** ETag mismatch - conflict detected */
     CONFLICT_ERROR = 'CONFLICT_ERROR',
+    /** File not found on server (404) */
+    NOT_FOUND_ERROR = 'NOT_FOUND_ERROR',
     /** IndexedDB quota exceeded */
     QUOTA_EXCEEDED = 'QUOTA_EXCEEDED',
     /** Encryption/decryption failure */
@@ -21,12 +23,16 @@ export enum SyncErrorType {
     DATABASE_ERROR = 'DATABASE_ERROR',
     /** Local storage operation failure */
     STORAGE_ERROR = 'STORAGE_ERROR',
-    /** Server returned error response */
+    /** Server returned error response (5xx) */
     SERVER_ERROR = 'SERVER_ERROR',
-    /** Authentication/authorization failure */
+    /** Authentication/authorization failure (401/403) */
     AUTH_ERROR = 'AUTH_ERROR',
-    /** Rate limit exceeded */
+    /** Rate limit exceeded (429) */
     RATE_LIMIT_ERROR = 'RATE_LIMIT_ERROR',
+    /** Exceeded maximum retries, moved to dead-letter */
+    DEAD_LETTER_ERROR = 'DEAD_LETTER_ERROR',
+    /** Rollback failure after push/sync failure */
+    ROLLBACK_ERROR = 'ROLLBACK_ERROR',
     /** Unknown error */
     UNKNOWN_ERROR = 'UNKNOWN_ERROR',
 }
@@ -90,22 +96,43 @@ export class SyncErrorHandler {
     /**
      * Determine if an error type is typically recoverable
      */
+    /**
+     * Determine if an error type is typically recoverable/retryable
+     */
     private isRecoverableType(type: SyncErrorType): boolean {
         switch (type) {
             case SyncErrorType.NETWORK_ERROR:
             case SyncErrorType.RATE_LIMIT_ERROR:
             case SyncErrorType.SERVER_ERROR:
                 return true;
+            case SyncErrorType.NOT_FOUND_ERROR:
             case SyncErrorType.CONFLICT_ERROR:
             case SyncErrorType.QUOTA_EXCEEDED:
             case SyncErrorType.AUTH_ERROR:
             case SyncErrorType.ENCRYPTION_ERROR:
             case SyncErrorType.DATABASE_ERROR:
+            case SyncErrorType.DEAD_LETTER_ERROR:
+            case SyncErrorType.ROLLBACK_ERROR:
             case SyncErrorType.UNKNOWN_ERROR:
                 return false;
             default:
                 return false;
         }
+    }
+
+    /**
+     * Check if an error or status code is retryable
+     */
+    isRetryable(error: SyncError | unknown): boolean {
+        if (!error) return false;
+        if (typeof error === 'object' && 'recoverable' in (error as Record<string, unknown>)) {
+            return (error as SyncError).recoverable === true;
+        }
+        if (error instanceof Error) {
+            const syncErr = this.fromException(error);
+            return syncErr.recoverable;
+        }
+        return false;
     }
 
     /**
@@ -213,11 +240,18 @@ export class SyncErrorHandler {
             case 403:
                 type = SyncErrorType.AUTH_ERROR;
                 message = 'Authentication required';
+                recoverable = false;
+                break;
+            case 404:
+                type = SyncErrorType.NOT_FOUND_ERROR;
+                message = 'File not found on server';
+                recoverable = false;
                 break;
             case 409:
             case 412:
                 type = SyncErrorType.CONFLICT_ERROR;
                 message = 'Conflict detected - file was modified on server';
+                recoverable = false;
                 break;
             case 429:
                 type = SyncErrorType.RATE_LIMIT_ERROR;
@@ -237,6 +271,7 @@ export class SyncErrorHandler {
             default:
                 type = SyncErrorType.UNKNOWN_ERROR;
                 message = `Request failed with status ${response.status}`;
+                recoverable = false;
         }
 
         if (context) {
@@ -261,19 +296,25 @@ export class SyncErrorHandler {
         const originalError = error instanceof Error ? error : new Error(String(error));
         let type = SyncErrorType.UNKNOWN_ERROR;
         let message = originalError.message;
+        let recoverable = false;
 
         // Detect network errors
         if (
-            originalError.name === 'TypeError' &&
-            (message.includes('fetch') || message.includes('network'))
+            (originalError.name === 'TypeError' &&
+                (message.includes('fetch') || message.includes('network') || message.includes('Failed to fetch'))) ||
+            originalError.name === 'AbortError' ||
+            message.includes('Network connection failed') ||
+            message.includes('Offline')
         ) {
             type = SyncErrorType.NETWORK_ERROR;
             message = 'Network connection failed';
+            recoverable = true;
         }
 
         // Detect quota errors
         if (message.includes('quota') || message.includes('QuotaExceeded')) {
             type = SyncErrorType.QUOTA_EXCEEDED;
+            recoverable = false;
         }
 
         if (context) {
@@ -282,9 +323,17 @@ export class SyncErrorHandler {
 
         return this.createError(type, message, {
             originalError,
+            recoverable,
         });
     }
 }
 
 // Export singleton instance
 export const syncErrorHandler = new SyncErrorHandler();
+
+/**
+ * Global helper to check if an error is retryable
+ */
+export function isRetryableError(error: SyncError | unknown): boolean {
+    return syncErrorHandler.isRetryable(error);
+}

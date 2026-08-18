@@ -37,14 +37,40 @@ export interface IDBFile {
 export type OperationType = 'insert' | 'delete' | 'update' | 'create' | 'rename' | 'move';
 
 /**
+ * Status lifecycle of a sync operation
+ */
+export type OperationStatus =
+    | 'queued'
+    | 'syncing'
+    | 'synced'
+    | 'failed'
+    | 'conflict'
+    | 'rollback_failed'
+    | 'dead_letter';
+
+/**
  * Represents a single edit operation for Operation Log
- * Used for delta sync and conflict resolution
+ * Used for deterministic queueing, delta sync, conflict resolution and rollback
  */
 export interface IDBOperation {
-    /** Unique operation identifier */
+    /** Unique operation identifier (keyPath in IndexedDB) */
     id: string;
+    /** Unique idempotent operation identifier (matches id) */
+    operationId?: string;
+    /** Owner user ID for security and isolation */
+    userId?: string;
     /** File this operation belongs to */
     fileId: string;
+    /** Base version expected for optimistic concurrency control */
+    baseVersion?: number;
+    /** Current lifecycle status of the operation */
+    status?: OperationStatus;
+    /** Number of sync attempts executed */
+    attempts?: number;
+    /** Next retry timestamp in ms (for exponential backoff) */
+    nextRetryAt?: number;
+    /** Last error message if failed */
+    lastError?: string;
     /** Type of operation performed */
     operationType: OperationType;
     /** Position in content where operation occurred */
@@ -57,6 +83,12 @@ export interface IDBOperation {
     synced: boolean;
     /** Previous content (for undo/conflict resolution) */
     previousContent?: string;
+    /** Pre-operation snapshot for safe rollback on failure */
+    snapshot?: {
+        content: string;
+        etag: string;
+        version: number;
+    };
 }
 
 /**

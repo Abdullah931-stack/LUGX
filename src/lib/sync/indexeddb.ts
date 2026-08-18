@@ -5,6 +5,7 @@
 import {
     IDBFile,
     IDBOperation,
+    OperationStatus,
     IDBSyncMetadata,
     IDB_CONFIG,
     getDatabaseName,
@@ -94,6 +95,8 @@ class IndexedDBManager {
             opsStore.createIndex('fileId', 'fileId', { unique: false });
             opsStore.createIndex('synced', 'synced', { unique: false });
             opsStore.createIndex('timestamp', 'timestamp', { unique: false });
+            opsStore.createIndex('status', 'status', { unique: false });
+            opsStore.createIndex('nextRetryAt', 'nextRetryAt', { unique: false });
             opsStore.createIndex('fileId_synced', ['fileId', 'synced'], { unique: false });
         }
 
@@ -180,12 +183,110 @@ class IndexedDBManager {
         }
     }
 
+    /**
+     * Atomically mark a file clean and mark its corresponding operation as synced in a single multi-store transaction
+     */
+    async commitFileAndOperationSync(fileId: string, newEtag: string, opId: string, attempts: number): Promise<void> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction([IDB_CONFIG.STORES.FILES, IDB_CONFIG.STORES.OPERATIONS], 'readwrite');
+            const filesStore = tx.objectStore(IDB_CONFIG.STORES.FILES);
+            const opsStore = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+
+            const fileReq = filesStore.get(fileId);
+            fileReq.onsuccess = () => {
+                const file = fileReq.result as IDBFile;
+                if (file) {
+                    file.isDirty = false;
+                    file.etag = newEtag;
+                    file.lastSyncedAt = Date.now();
+                    filesStore.put(file);
+                }
+            };
+
+            const opReq = opsStore.get(opId);
+            opReq.onsuccess = () => {
+                const op = opReq.result as IDBOperation;
+                if (op) {
+                    op.status = 'synced';
+                    op.synced = true;
+                    op.attempts = attempts;
+                    op.lastError = undefined;
+                    opsStore.put(op);
+                }
+            };
+
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('Atomic sync transaction aborted'));
+        });
+    }
+
     async addOperation(operation: IDBOperation): Promise<void> {
+        const db = await this.getDB();
+        const opToStore: IDBOperation = {
+            ...operation,
+            operationId: operation.operationId || operation.id,
+            status: operation.status || (operation.synced ? 'synced' : 'queued'),
+            attempts: operation.attempts || 0,
+            userId: operation.userId || this.userId || 'anon',
+        };
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
+            const request = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).put(opToStore);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getOperation(id: string): Promise<IDBOperation | undefined> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readonly');
+            const request = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).get(id);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async saveOperation(operation: IDBOperation): Promise<void> {
+        return this.addOperation(operation);
+    }
+
+    async updateOperation(operation: IDBOperation): Promise<void> {
+        return this.addOperation(operation);
+    }
+
+    async updateOperationStatus(
+        id: string,
+        status: OperationStatus,
+        updates?: Partial<IDBOperation>
+    ): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
-            const request = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).add(operation);
-            request.onsuccess = () => resolve();
+            const store = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+            const request = store.get(id);
+
+            request.onsuccess = () => {
+                const op = request.result as IDBOperation;
+                if (!op) {
+                    resolve();
+                    return;
+                }
+
+                const updatedOp: IDBOperation = {
+                    ...op,
+                    ...updates,
+                    status,
+                    synced: status === 'synced' ? true : op.synced,
+                };
+
+                const putRequest = store.put(updatedOp);
+                putRequest.onsuccess = () => resolve();
+                putRequest.onerror = () => reject(putRequest.error);
+            };
+
             request.onerror = () => reject(request.error);
         });
     }
@@ -197,6 +298,30 @@ class IndexedDBManager {
             const index = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).index('fileId');
             const request = index.getAll(IDBKeyRange.only(fileId));
             request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getAllOperations(): Promise<IDBOperation[]> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readonly');
+            const request = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getOperationsByStatus(status: OperationStatus): Promise<IDBOperation[]> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readonly');
+            const request = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).getAll();
+            request.onsuccess = () => {
+                const all = (request.result as IDBOperation[]) || [];
+                const filtered = all.filter(op => op.status === status);
+                resolve(filtered);
+            };
             request.onerror = () => reject(request.error);
         });
     }
@@ -217,6 +342,78 @@ class IndexedDBManager {
         });
     }
 
+    async getDueOperations(now: number = Date.now(), maxRetries = 5): Promise<IDBOperation[]> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readonly');
+            const request = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).getAll();
+            request.onsuccess = () => {
+                const all = (request.result as IDBOperation[]) || [];
+                const due = all.filter(op => {
+                    // Must not be synced already
+                    if (op.synced) return false;
+
+                    // Exclude blocked or terminal statuses
+                    if (
+                        op.status === 'conflict' ||
+                        op.status === 'rollback_failed' ||
+                        op.status === 'dead_letter' ||
+                        op.status === 'syncing'
+                    ) {
+                        return false;
+                    }
+
+                    // Queued operations are due
+                    if (op.status === 'queued' || !op.status) {
+                        return true;
+                    }
+
+                    // Failed operations are due only if under maxRetries and backoff delay passed
+                    if (op.status === 'failed') {
+                        const attempts = op.attempts || 0;
+                        if (attempts >= maxRetries) return false;
+                        if (op.nextRetryAt && op.nextRetryAt > now) return false;
+                        return true;
+                    }
+
+                    return false;
+                });
+
+                // Sort due operations deterministically by timestamp ascending
+                due.sort((a, b) => a.timestamp - b.timestamp);
+                resolve(due);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Resets operations stuck in 'syncing' back to 'queued' on startup/crash recovery
+     */
+    async resetSyncingOperations(): Promise<number> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
+            const store = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+            const request = store.getAll();
+            let resetCount = 0;
+
+            request.onsuccess = () => {
+                const all = (request.result as IDBOperation[]) || [];
+                for (const op of all) {
+                    if (op.status === 'syncing') {
+                        op.status = 'queued';
+                        store.put(op);
+                        resetCount++;
+                    }
+                }
+            };
+
+            tx.oncomplete = () => resolve(resetCount);
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
     async markOperationsSynced(operationIds: string[]): Promise<void> {
         const db = await this.getDB();
         const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
@@ -228,6 +425,7 @@ class IndexedDBManager {
                 const op = request.result as IDBOperation;
                 if (op) {
                     op.synced = true;
+                    op.status = 'synced';
                     store.put(op);
                 }
             };
@@ -239,25 +437,37 @@ class IndexedDBManager {
         });
     }
 
-    async deleteOldOperations(maxAgeMs: number = IDB_CONFIG.MAX_OPERATION_AGE_MS): Promise<number> {
+    async deleteOldOperations(maxAgeMs: number = IDB_CONFIG.MAX_OPERATION_AGE_MS, now: number = Date.now()): Promise<number> {
         const db = await this.getDB();
-        const cutoffTime = Date.now() - maxAgeMs;
+        const cutoffTime = now - maxAgeMs;
         let deletedCount = 0;
 
         return new Promise((resolve, reject) => {
             const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
-            const index = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).index('timestamp');
-            const request = index.openCursor(IDBKeyRange.upperBound(cutoffTime));
+            const store = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+            const request = store.getAll();
 
             request.onsuccess = () => {
-                const cursor = request.result;
-                if (cursor) {
-                    const op = cursor.value as IDBOperation;
-                    if (op.synced) {
-                        cursor.delete();
+                const all = (request.result as IDBOperation[]) || [];
+                for (const op of all) {
+                    // Critical safety check: Never delete syncing, conflict, rollback_failed, or pending queued operations
+                    if (
+                        op.status === 'syncing' ||
+                        op.status === 'conflict' ||
+                        op.status === 'rollback_failed' ||
+                        op.status === 'queued'
+                    ) {
+                        continue;
+                    }
+
+                    // Delete old synced operations or old dead_letter operations
+                    const isOld = op.timestamp <= cutoffTime;
+                    const canDelete = (op.synced || op.status === 'synced' || op.status === 'dead_letter') && isOld;
+
+                    if (canDelete) {
+                        store.delete(op.id);
                         deletedCount++;
                     }
-                    cursor.continue();
                 }
             };
 

@@ -230,16 +230,30 @@ describe('Sync Error Handler', () => {
 
             expect(error.type).toBe(SyncErrorType.AUTH_ERROR);
             expect(error.statusCode).toBe(401);
+            expect(error.recoverable).toBe(false);
+            expect(handler.isRetryable(error)).toBe(false);
         });
 
-        it('should create error from 412 conflict response', async () => {
+        it('should create error from 404 response as non-retryable', async () => {
+            const response = new Response(null, { status: 404 });
+            const error = await handler.fromResponse(response);
+
+            expect(error.type).toBe(SyncErrorType.NOT_FOUND_ERROR);
+            expect(error.statusCode).toBe(404);
+            expect(error.recoverable).toBe(false);
+            expect(handler.isRetryable(error)).toBe(false);
+        });
+
+        it('should create error from 412 conflict response as non-retryable', async () => {
             const response = new Response(null, { status: 412 });
             const error = await handler.fromResponse(response);
 
             expect(error.type).toBe(SyncErrorType.CONFLICT_ERROR);
+            expect(error.recoverable).toBe(false);
+            expect(handler.isRetryable(error)).toBe(false);
         });
 
-        it('should create error from 429 rate limit response', async () => {
+        it('should create error from 429 rate limit response as retryable', async () => {
             const response = new Response(null, {
                 status: 429,
                 headers: { 'Retry-After': '30' },
@@ -249,14 +263,33 @@ describe('Sync Error Handler', () => {
             expect(error.type).toBe(SyncErrorType.RATE_LIMIT_ERROR);
             expect(error.recoverable).toBe(true);
             expect(error.retryAfter).toBe(30);
+            expect(handler.isRetryable(error)).toBe(true);
         });
 
-        it('should create error from 500 server error', async () => {
+        it('should create error from 500 server error as retryable', async () => {
             const response = new Response(null, { status: 500 });
             const error = await handler.fromResponse(response);
 
             expect(error.type).toBe(SyncErrorType.SERVER_ERROR);
             expect(error.recoverable).toBe(true);
+            expect(handler.isRetryable(error)).toBe(true);
+        });
+    });
+
+    describe('isRetryable helper', () => {
+        it('should return true for network error and 5xx errors', () => {
+            const netErr = handler.createError(SyncErrorType.NETWORK_ERROR, 'Offline');
+            const srvErr = handler.createError(SyncErrorType.SERVER_ERROR, '500 Internal Error');
+            expect(handler.isRetryable(netErr)).toBe(true);
+            expect(handler.isRetryable(srvErr)).toBe(true);
+        });
+
+        it('should return false for auth, not found, dead letter and conflict errors', () => {
+            expect(handler.isRetryable(handler.createError(SyncErrorType.AUTH_ERROR, 'Unauthorized'))).toBe(false);
+            expect(handler.isRetryable(handler.createError(SyncErrorType.NOT_FOUND_ERROR, 'Not found'))).toBe(false);
+            expect(handler.isRetryable(handler.createError(SyncErrorType.CONFLICT_ERROR, 'Conflict'))).toBe(false);
+            expect(handler.isRetryable(handler.createError(SyncErrorType.DEAD_LETTER_ERROR, 'Max attempts'))).toBe(false);
+            expect(handler.isRetryable(handler.createError(SyncErrorType.ROLLBACK_ERROR, 'Rollback fail'))).toBe(false);
         });
     });
 
@@ -264,8 +297,11 @@ describe('Sync Error Handler', () => {
         it('should have all expected error types', () => {
             expect(SyncErrorType.NETWORK_ERROR).toBeDefined();
             expect(SyncErrorType.CONFLICT_ERROR).toBeDefined();
+            expect(SyncErrorType.NOT_FOUND_ERROR).toBeDefined();
             expect(SyncErrorType.QUOTA_EXCEEDED).toBeDefined();
             expect(SyncErrorType.AUTH_ERROR).toBeDefined();
+            expect(SyncErrorType.DEAD_LETTER_ERROR).toBeDefined();
+            expect(SyncErrorType.ROLLBACK_ERROR).toBeDefined();
             expect(SyncErrorType.UNKNOWN_ERROR).toBeDefined();
         });
     });

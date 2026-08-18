@@ -142,6 +142,158 @@ describe('OperationsGarbageCollector Integration Tests', () => {
         expect(compactedOps.map(o => o.id)).toContain('op-compact-5');
     });
 
+    it('should never delete syncing, conflict, rollback_failed, or queued operations even if old', async () => {
+        const fileId = 'file-gc-protected';
+        const testFile: IDBFile = {
+            id: fileId,
+            content: 'protected content',
+            title: 'Protected Test',
+            etag: 'etag-prot',
+            version: 1,
+            lastModified: Date.now(),
+            lastSyncedAt: Date.now(),
+            isDirty: false,
+            parentFolderId: null,
+            isFolder: false,
+        };
+        await idbManager.saveFile(testFile);
+
+        const oldTimestamp = 1000; // Very old timestamp
+
+        // 1. Syncing operation (in-flight)
+        await idbManager.addOperation({
+            id: 'op-syncing',
+            operationId: 'op-syncing',
+            fileId,
+            operationType: 'update',
+            position: 0,
+            content: 'syncing',
+            timestamp: oldTimestamp,
+            synced: false,
+            status: 'syncing',
+        });
+
+        // 2. Conflict operation (unresolved)
+        await idbManager.addOperation({
+            id: 'op-conflict',
+            operationId: 'op-conflict',
+            fileId,
+            operationType: 'update',
+            position: 0,
+            content: 'conflict',
+            timestamp: oldTimestamp,
+            synced: false,
+            status: 'conflict',
+        });
+
+        // 3. Rollback failed operation (forensic protection)
+        await idbManager.addOperation({
+            id: 'op-rb-failed',
+            operationId: 'op-rb-failed',
+            fileId,
+            operationType: 'update',
+            position: 0,
+            content: 'rollback_failed',
+            timestamp: oldTimestamp,
+            synced: false,
+            status: 'rollback_failed',
+        });
+
+        // 4. Queued operation (pending)
+        await idbManager.addOperation({
+            id: 'op-queued',
+            operationId: 'op-queued',
+            fileId,
+            operationType: 'update',
+            position: 0,
+            content: 'queued',
+            timestamp: oldTimestamp,
+            synced: false,
+            status: 'queued',
+        });
+
+        // 5. Old synced operation (eligible for deletion)
+        await idbManager.addOperation({
+            id: 'op-old-synced',
+            operationId: 'op-old-synced',
+            fileId,
+            operationType: 'update',
+            position: 0,
+            content: 'synced',
+            timestamp: oldTimestamp,
+            synced: true,
+            status: 'synced',
+        });
+
+        // 6. Old dead_letter operation (eligible for deletion)
+        await idbManager.addOperation({
+            id: 'op-dead-letter',
+            operationId: 'op-dead-letter',
+            fileId,
+            operationType: 'update',
+            position: 0,
+            content: 'dead',
+            timestamp: oldTimestamp,
+            synced: false,
+            status: 'dead_letter',
+        });
+
+        // Run GC with future clock (now = 1,000,000)
+        const result = await gc.run(true, 1000000);
+
+        // Expect exactly 2 operations deleted (synced & dead_letter)
+        expect(result.operationsDeleted).toBe(2);
+
+        const remainingOps = await idbManager.getOperations(fileId);
+        const remainingIds = remainingOps.map(o => o.id);
+
+        expect(remainingIds).toContain('op-syncing');
+        expect(remainingIds).toContain('op-conflict');
+        expect(remainingIds).toContain('op-rb-failed');
+        expect(remainingIds).toContain('op-queued');
+        expect(remainingIds).not.toContain('op-old-synced');
+        expect(remainingIds).not.toContain('op-dead-letter');
+    });
+
+    it('should support controllable clock injection via setClock', async () => {
+        let simulatedTime = 10000;
+        gc.setClock(() => simulatedTime);
+
+        const fileId = 'file-clock-test';
+        await idbManager.saveFile({
+            id: fileId,
+            content: 'clock',
+            title: 'Clock',
+            etag: 'etag-c',
+            version: 1,
+            lastModified: 0,
+            lastSyncedAt: 0,
+            isDirty: false,
+            parentFolderId: null,
+            isFolder: false,
+        });
+
+        await idbManager.addOperation({
+            id: 'op-clock-1',
+            fileId,
+            operationType: 'insert',
+            position: 0,
+            content: 'a',
+            timestamp: 9500, // 500ms old at t=10000 (within 1000ms maxAge)
+            synced: true,
+            status: 'synced',
+        });
+
+        // At t=10000, op is 500ms old -> should NOT be deleted
+        const result1 = await gc.run(true);
+        expect(result1.operationsDeleted).toBe(0);
+
+        // Advance time to t=12000 (op is 2500ms old -> exceeds 1000ms maxAge)
+        simulatedTime = 12000;
+        const result2 = await gc.run(true);
+        expect(result2.operationsDeleted).toBe(1);
+    });
+
     it('should schedule and cleanup timers reliably without leaking', () => {
         vi.useFakeTimers();
 

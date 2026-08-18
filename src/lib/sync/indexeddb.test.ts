@@ -176,6 +176,174 @@ describe('IndexedDB Manager (Real IndexedDB & Multi-User Isolation)', () => {
             expect(meta?.lastSyncedAt).toBeGreaterThan(0);
         });
 
+        it('should query due operations deterministically based on status, attempts, and nextRetryAt', async () => {
+            await manager1.init('user-1');
+
+            const now = 50000;
+
+            // 1. Queued operation (due)
+            await manager1.addOperation({
+                id: 'op-due-queued',
+                operationId: 'op-due-queued',
+                fileId: 'f1',
+                operationType: 'insert',
+                position: 0,
+                content: 'q',
+                timestamp: 1000,
+                synced: false,
+                status: 'queued',
+            });
+
+            // 2. Failed operation with nextRetryAt <= now (due)
+            await manager1.addOperation({
+                id: 'op-due-retryable',
+                operationId: 'op-due-retryable',
+                fileId: 'f1',
+                operationType: 'insert',
+                position: 1,
+                content: 'r',
+                timestamp: 2000,
+                synced: false,
+                status: 'failed',
+                attempts: 1,
+                nextRetryAt: 45000, // passed
+            });
+
+            // 3. Failed operation with nextRetryAt in future (NOT due yet)
+            await manager1.addOperation({
+                id: 'op-future-retry',
+                operationId: 'op-future-retry',
+                fileId: 'f1',
+                operationType: 'insert',
+                position: 2,
+                content: 'f',
+                timestamp: 3000,
+                synced: false,
+                status: 'failed',
+                attempts: 1,
+                nextRetryAt: 60000, // future
+            });
+
+            // 4. Failed operation exceeding maxRetries (NOT due)
+            await manager1.addOperation({
+                id: 'op-max-retries',
+                operationId: 'op-max-retries',
+                fileId: 'f1',
+                operationType: 'insert',
+                position: 3,
+                content: 'm',
+                timestamp: 4000,
+                synced: false,
+                status: 'failed',
+                attempts: 5,
+                nextRetryAt: 40000,
+            });
+
+            // 5. Conflict & rollback_failed operations (NOT due)
+            await manager1.addOperation({
+                id: 'op-blocked-conflict',
+                fileId: 'f1',
+                operationType: 'insert',
+                position: 4,
+                content: 'c',
+                timestamp: 5000,
+                synced: false,
+                status: 'conflict',
+            });
+
+            const due = await manager1.getDueOperations(now, 5);
+            expect(due.length).toBe(2);
+            expect(due[0].id).toBe('op-due-queued');
+            expect(due[1].id).toBe('op-due-retryable');
+        });
+
+        it('should reset syncing operations to queued on resetSyncingOperations()', async () => {
+            await manager1.init('user-1');
+
+            await manager1.addOperation({
+                id: 'op-stuck-syncing',
+                fileId: 'f2',
+                operationType: 'update',
+                position: 0,
+                content: 'stuck',
+                timestamp: 1000,
+                synced: false,
+                status: 'syncing',
+            });
+
+            const resetCount = await manager1.resetSyncingOperations();
+            expect(resetCount).toBe(1);
+
+            const op = await manager1.getOperation('op-stuck-syncing');
+            expect(op?.status).toBe('queued');
+        });
+
+        it('should update operation status and sync flag via updateOperationStatus', async () => {
+            await manager1.init('user-1');
+
+            await manager1.addOperation({
+                id: 'op-status-test',
+                fileId: 'f3',
+                operationType: 'update',
+                position: 0,
+                content: 'status update',
+                timestamp: 1000,
+                synced: false,
+                status: 'queued',
+            });
+
+            await manager1.updateOperationStatus('op-status-test', 'synced', {
+                attempts: 1,
+            });
+
+            const updated = await manager1.getOperation('op-status-test');
+            expect(updated?.status).toBe('synced');
+            expect(updated?.synced).toBe(true);
+            expect(updated?.attempts).toBe(1);
+        });
+
+        it('should atomically mark file clean and operation synced via commitFileAndOperationSync', async () => {
+            await manager1.init('user-1');
+
+            await manager1.saveFile({
+                id: 'atomic-file-1',
+                content: 'atomic content',
+                title: 'Atomic File',
+                etag: 'etag-old',
+                version: 1,
+                lastModified: 1000,
+                lastSyncedAt: 0,
+                isDirty: true,
+                parentFolderId: null,
+                isFolder: false,
+            });
+
+            await manager1.addOperation({
+                id: 'atomic-op-1',
+                operationId: 'atomic-op-1',
+                fileId: 'atomic-file-1',
+                operationType: 'update',
+                position: 0,
+                content: 'atomic content',
+                timestamp: 1000,
+                synced: false,
+                status: 'syncing',
+            });
+
+            await manager1.commitFileAndOperationSync('atomic-file-1', 'etag-new-atomic', 'atomic-op-1', 1);
+
+            const file = await manager1.getFile('atomic-file-1');
+            const op = await manager1.getOperation('atomic-op-1');
+
+            expect(file?.isDirty).toBe(false);
+            expect(file?.etag).toBe('etag-new-atomic');
+            expect(file?.lastSyncedAt).toBeGreaterThan(0);
+
+            expect(op?.status).toBe('synced');
+            expect(op?.synced).toBe(true);
+            expect(op?.attempts).toBe(1);
+        });
+
         it('should delete the user database completely on deleteDatabase()', async () => {
             await manager1.init('user-1');
             await manager1.saveFile({
