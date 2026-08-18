@@ -7,22 +7,61 @@ import {
     IDBOperation,
     IDBSyncMetadata,
     IDB_CONFIG,
+    getDatabaseName,
 } from './idb-types';
 
 class IndexedDBManager {
     private db: IDBDatabase | null = null;
     private initPromise: Promise<IDBDatabase> | null = null;
+    private userId: string | null = null;
 
-    async init(): Promise<IDBDatabase> {
+    constructor(userId?: string) {
+        if (userId && userId.trim()) {
+            this.userId = userId.trim();
+        }
+    }
+
+    /**
+     * Get current scoped userId
+     */
+    getUserId(): string | null {
+        return this.userId;
+    }
+
+    /**
+     * Initialize IndexedDB database scoped to a specific user
+     */
+    async init(userId?: string): Promise<IDBDatabase> {
+        const targetUserId = userId?.trim() || this.userId;
+
+        if (!targetUserId) {
+            throw new Error('Valid userId is required to initialize IndexedDB');
+        }
+
+        // If user changed, close existing connection
+        if (this.userId && this.userId !== targetUserId) {
+            this.close();
+        }
+
+        this.userId = targetUserId;
+
         if (this.initPromise) return this.initPromise;
         if (this.db) return this.db;
 
+        const dbName = getDatabaseName(this.userId);
+
         this.initPromise = new Promise((resolve, reject) => {
-            const request = indexedDB.open(IDB_CONFIG.DB_NAME, IDB_CONFIG.DB_VERSION);
+            if (typeof indexedDB === 'undefined') {
+                this.initPromise = null;
+                reject(new Error('IndexedDB is not available in the current environment'));
+                return;
+            }
+
+            const request = indexedDB.open(dbName, IDB_CONFIG.DB_VERSION);
 
             request.onerror = () => {
                 this.initPromise = null;
-                reject(request.error);
+                reject(request.error || new Error(`Failed to open database: ${dbName}`));
             };
 
             request.onsuccess = () => {
@@ -40,6 +79,7 @@ class IndexedDBManager {
 
         return this.initPromise;
     }
+
 
     private createInitialStores(db: IDBDatabase): void {
         if (!db.objectStoreNames.contains(IDB_CONFIG.STORES.FILES)) {
@@ -228,24 +268,26 @@ class IndexedDBManager {
 
     async replaceOperations(fileId: string, operations: IDBOperation[]): Promise<void> {
         const db = await this.getDB();
-        const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
-        const store = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
-        const index = store.index('fileId');
-
-        const deleteRequest = index.openCursor(IDBKeyRange.only(fileId));
-        deleteRequest.onsuccess = () => {
-            const cursor = deleteRequest.result;
-            if (cursor) {
-                cursor.delete();
-                cursor.continue();
-            }
-        };
-
-        for (const op of operations) {
-            store.add(op);
-        }
-
         return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
+            const store = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+            const index = store.index('fileId');
+
+            const deleteRequest = index.openCursor(IDBKeyRange.only(fileId));
+            deleteRequest.onsuccess = () => {
+                const cursor = deleteRequest.result;
+                if (cursor) {
+                    cursor.delete();
+                    cursor.continue();
+                } else {
+                    // Cursor finished deleting old operations for this file; now save new operations
+                    for (const op of operations) {
+                        store.put(op);
+                    }
+                }
+            };
+            deleteRequest.onerror = () => reject(deleteRequest.error);
+
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
@@ -326,7 +368,36 @@ class IndexedDBManager {
             this.initPromise = null;
         }
     }
+
+    /**
+     * Delete the entire IndexedDB database for a user
+     */
+    async deleteDatabase(): Promise<void> {
+        this.close();
+        if (!this.userId) return;
+
+        const dbName = getDatabaseName(this.userId);
+        if (typeof indexedDB === 'undefined') return;
+
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.deleteDatabase(dbName);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+            request.onblocked = () => {
+                console.warn(`[IndexedDB] Database ${dbName} deletion was blocked by open connection`);
+                resolve();
+            };
+        });
+    }
+}
+
+/**
+ * Factory for user-scoped IndexedDB managers
+ */
+export function createIndexedDBManager(userId?: string): IndexedDBManager {
+    return new IndexedDBManager(userId);
 }
 
 export const indexedDBManager = new IndexedDBManager();
 export { IndexedDBManager };
+

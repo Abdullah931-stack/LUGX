@@ -4,10 +4,10 @@
 
 // Types
 export type { IDBFile, IDBOperation, IDBSyncMetadata, OperationType, SyncConflict, SyncQueueItem, IDBSchemaInfo } from './idb-types';
-export { IDB_CONFIG } from './idb-types';
+export { IDB_CONFIG, getDatabaseName } from './idb-types';
 
 // IndexedDB
-export { indexedDBManager, IndexedDBManager } from './indexeddb';
+export { indexedDBManager, IndexedDBManager, createIndexedDBManager } from './indexeddb';
 
 // ETag
 export { generateETag, generateETagSync, isValidETag, compareETags, parseETagHeader, formatETagHeader } from './etag-generator';
@@ -29,8 +29,9 @@ export { concurrencyManager, ConcurrencyManager } from './concurrency-manager';
 export type { LockStatus } from './concurrency-manager';
 
 // Sync Manager
-export { syncManager, SyncManager } from './sync-manager';
+export { syncManager, SyncManager, createSyncManager } from './sync-manager';
 export type { SyncStatus, FileSyncResult, SyncResult, SyncStatusCallback, ConflictCallback, SyncManagerConfig } from './sync-manager';
+
 
 // Conflict Resolution
 export { conflictResolver, ConflictResolver } from './conflict-resolver';
@@ -41,7 +42,7 @@ export { syncPerformanceMonitor, SyncPerformanceMonitor } from './performance-mo
 export type { MetricType, PerformanceMetric, MetricStats, PerformanceReport } from './performance-monitor';
 
 // GC
-export { operationsGC, OperationsGarbageCollector } from './operations-gc';
+export { operationsGC, OperationsGarbageCollector, createOperationsGC } from './operations-gc';
 export type { GCConfig, GCResult } from './operations-gc';
 
 // Encryption

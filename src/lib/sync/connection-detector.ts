@@ -86,6 +86,9 @@ class ConnectionDetector {
      * Handle online event
      */
     private handleOnline = (): void => {
+        if (this.state === 'online') {
+            return;
+        }
         this.state = 'online';
         console.log('[ConnectionDetector] Online');
         this.notifyCallbacks();
@@ -95,6 +98,9 @@ class ConnectionDetector {
      * Handle offline event
      */
     private handleOffline = (): void => {
+        if (this.state === 'offline') {
+            return;
+        }
         this.state = 'offline';
         console.log('[ConnectionDetector] Offline');
         this.notifyCallbacks();
@@ -112,6 +118,7 @@ class ConnectionDetector {
             }
         }
     }
+
 
     /**
      * Get current connection state
@@ -194,26 +201,36 @@ export function calculateBackoffDelay(
  * @param fn - Async function to execute
  * @param maxAttempts - Maximum number of attempts
  * @param config - Backoff configuration
+ * @param signal - Optional AbortSignal for immediate cancellation
  * @returns Function result
  */
 export async function withBackoff<T>(
     fn: () => Promise<T>,
     maxAttempts: number = 5,
-    config: BackoffConfig = DEFAULT_BACKOFF
+    config: BackoffConfig = DEFAULT_BACKOFF,
+    signal?: AbortSignal
 ): Promise<T> {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (signal?.aborted) {
+            throw new Error('Operation aborted');
+        }
+
         try {
             return await fn();
         } catch (error) {
+            if (signal?.aborted) {
+                throw new Error('Operation aborted');
+            }
+
             lastError = error instanceof Error ? error : new Error(String(error));
 
             // Don't wait after the last attempt
             if (attempt < maxAttempts - 1) {
                 const delay = calculateBackoffDelay(attempt, config);
                 console.log(`[Backoff] Attempt ${attempt + 1} failed, retrying in ${delay}ms`);
-                await sleep(delay);
+                await sleep(delay, signal);
             }
         }
     }
@@ -222,10 +239,32 @@ export async function withBackoff<T>(
 }
 
 /**
- * Sleep helper
+ * Sleep helper with AbortSignal support
  */
-function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new Error('Operation aborted'));
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            if (signal) {
+                signal.removeEventListener('abort', onAbort);
+            }
+            resolve();
+        }, ms);
+
+        const onAbort = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
+            reject(new Error('Operation aborted'));
+        };
+
+        if (signal) {
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
+    });
 }
 
 // Export singleton instance

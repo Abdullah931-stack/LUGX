@@ -105,6 +105,8 @@ export interface SyncConflict {
  * Sync queue item for prioritized synchronization
  */
 export interface SyncQueueItem {
+    /** Unique operation identifier */
+    operationId?: string;
     /** File ID to sync */
     fileId: string;
     /** Priority level (1 = highest, 3 = lowest) */
@@ -133,7 +135,9 @@ export interface IDBSchemaInfo {
  * Constants for IndexedDB configuration
  */
 export const IDB_CONFIG = {
-    /** Database name */
+    /** Default database name prefix */
+    DB_NAME_PREFIX: 'textai_db',
+    /** Default database name for backward compatibility */
     DB_NAME: 'textai_db',
     /** Current database version */
     DB_VERSION: 1,
@@ -148,3 +152,17 @@ export const IDB_CONFIG = {
     /** Maximum operations per file before compaction */
     MAX_OPERATIONS_PER_FILE: 1000,
 } as const;
+
+/**
+ * Get user-scoped database name
+ * 
+ * @param userId - Unique user identifier
+ * @returns Partitioned database name for the user
+ */
+export function getDatabaseName(userId?: string): string {
+    if (!userId || !userId.trim()) {
+        throw new Error('Valid userId is required for IndexedDB operations');
+    }
+    return `${IDB_CONFIG.DB_NAME_PREFIX}_${userId.trim()}`;
+}
+

@@ -5,7 +5,7 @@
  * cleaning up old synced operations and compacting operation logs.
  */
 
-import { indexedDBManager } from './indexeddb';
+import { indexedDBManager, IndexedDBManager } from './indexeddb';
 import { IDB_CONFIG, IDBOperation } from './idb-types';
 
 /**
@@ -51,10 +51,12 @@ const DEFAULT_CONFIG: GCConfig = {
  */
 export class OperationsGarbageCollector {
     private config: GCConfig;
+    private idb: IndexedDBManager;
     private lastGCTime = 0;
     private isRunning = false;
 
-    constructor(config: Partial<GCConfig> = {}) {
+    constructor(idb?: IndexedDBManager, config: Partial<GCConfig> = {}) {
+        this.idb = idb || indexedDBManager;
         this.config = { ...DEFAULT_CONFIG, ...config };
     }
 
@@ -90,7 +92,7 @@ export class OperationsGarbageCollector {
 
         try {
             // Check if we need aggressive GC
-            const storageInfo = await indexedDBManager.getStorageEstimate();
+            const storageInfo = await this.idb.getStorageEstimate();
             const wasAggressive = storageInfo.percentage / 100 > this.config.aggressiveGCThreshold;
 
             // Adjust max age for aggressive GC (reduce to 1 day)
@@ -99,7 +101,7 @@ export class OperationsGarbageCollector {
                 : this.config.maxOperationAgeMs;
 
             // Delete old operations
-            const operationsDeleted = await indexedDBManager.deleteOldOperations(maxAge);
+            const operationsDeleted = await this.idb.deleteOldOperations(maxAge);
 
             // Compact files with too many operations
             const filesCompacted = await this.compactOperations();
@@ -127,16 +129,16 @@ export class OperationsGarbageCollector {
      * Compact operations for files with too many entries
      */
     private async compactOperations(): Promise<number> {
-        const allFiles = await indexedDBManager.getAllFiles();
+        const allFiles = await this.idb.getAllFiles();
         let compactedCount = 0;
 
         for (const file of allFiles) {
-            const operations = await indexedDBManager.getOperations(file.id);
+            const operations = await this.idb.getOperations(file.id);
 
             if (operations.length > this.config.maxOperationsPerFile) {
                 // Keep only the most recent operations
                 const toKeep = this.selectOperationsToKeep(operations);
-                await indexedDBManager.replaceOperations(file.id, toKeep);
+                await this.idb.replaceOperations(file.id, toKeep);
                 compactedCount++;
 
                 console.log(`[GC] Compacted ${file.id}: ${operations.length} -> ${toKeep.length} operations`);
@@ -166,6 +168,8 @@ export class OperationsGarbageCollector {
         return [...unsynced, ...recentSynced];
     }
 
+    private activeTimers = new Set<ReturnType<typeof setInterval>>();
+
     /**
      * Schedule periodic garbage collection
      * Returns cleanup function
@@ -177,7 +181,23 @@ export class OperationsGarbageCollector {
             });
         }, intervalMs);
 
-        return () => clearInterval(timer);
+        this.activeTimers.add(timer);
+
+        return () => {
+            clearInterval(timer);
+            this.activeTimers.delete(timer);
+        };
+    }
+
+    /**
+     * Stop all active scheduled GC timers and cleanup
+     */
+    cleanup(): void {
+        for (const timer of this.activeTimers) {
+            clearInterval(timer);
+        }
+        this.activeTimers.clear();
+        this.isRunning = false;
     }
 
     /**
@@ -203,5 +223,13 @@ export class OperationsGarbageCollector {
     }
 }
 
-// Export singleton instance
+/**
+ * Factory for creating scoped OperationsGarbageCollector instances
+ */
+export function createOperationsGC(idb?: IndexedDBManager, config?: Partial<GCConfig>): OperationsGarbageCollector {
+    return new OperationsGarbageCollector(idb, config);
+}
+
+// Export singleton instance for default usage
 export const operationsGC = new OperationsGarbageCollector();
+
