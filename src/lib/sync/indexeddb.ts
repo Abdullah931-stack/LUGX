@@ -173,12 +173,22 @@ class IndexedDBManager {
         }
     }
 
-    async markFileClean(id: string, newEtag: string): Promise<void> {
+    async markFileClean(id: string, newEtag: string, newVersion?: number): Promise<void> {
         const file = await this.getFile(id);
         if (file) {
             file.isDirty = false;
             file.etag = newEtag;
+            if (newVersion !== undefined) {
+                file.version = newVersion;
+            }
             file.lastSyncedAt = Date.now();
+            file.baseSnapshot = {
+                content: file.content,
+                etag: newEtag,
+                version: file.version,
+                title: file.title,
+                parentFolderId: file.parentFolderId,
+            };
             await this.saveFile(file);
         }
     }
@@ -186,7 +196,7 @@ class IndexedDBManager {
     /**
      * Atomically mark a file clean and mark its corresponding operation as synced in a single multi-store transaction
      */
-    async commitFileAndOperationSync(fileId: string, newEtag: string, opId: string, attempts: number): Promise<void> {
+    async commitFileAndOperationSync(fileId: string, newEtag: string, opId: string, attempts: number, newVersion?: number): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction([IDB_CONFIG.STORES.FILES, IDB_CONFIG.STORES.OPERATIONS], 'readwrite');
@@ -199,7 +209,17 @@ class IndexedDBManager {
                 if (file) {
                     file.isDirty = false;
                     file.etag = newEtag;
+                    if (newVersion !== undefined) {
+                        file.version = newVersion;
+                    }
                     file.lastSyncedAt = Date.now();
+                    file.baseSnapshot = {
+                        content: file.content,
+                        etag: newEtag,
+                        version: file.version,
+                        title: file.title,
+                        parentFolderId: file.parentFolderId,
+                    };
                     filesStore.put(file);
                 }
             };
@@ -235,6 +255,51 @@ class IndexedDBManager {
             const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
             const request = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS).put(opToStore);
             request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Coalesce pending operation for the same fileId or add a new one
+     */
+    async coalesceOperation(operation: IDBOperation): Promise<void> {
+        const db = await this.getDB();
+        const opToStore: IDBOperation = {
+            ...operation,
+            operationId: operation.operationId || operation.id,
+            status: operation.status || (operation.synced ? 'synced' : 'queued'),
+            attempts: operation.attempts || 0,
+            userId: operation.userId || this.userId || 'anon',
+        };
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
+            const store = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+            const index = store.index('fileId');
+            const request = index.getAll(IDBKeyRange.only(operation.fileId));
+
+            request.onsuccess = () => {
+                const ops = (request.result || []) as IDBOperation[];
+                const existingPendingOp = ops.find(o => 
+                    !o.synced && 
+                    o.status !== 'synced' && 
+                    (o.operationType === operation.operationType || (o.operationType === 'create' && operation.operationType === 'update'))
+                );
+
+                if (existingPendingOp) {
+                    const coalesced: IDBOperation = {
+                        ...existingPendingOp,
+                        content: operation.content,
+                        timestamp: operation.timestamp || Date.now(),
+                    };
+                    const putReq = store.put(coalesced);
+                    putReq.onsuccess = () => resolve();
+                    putReq.onerror = () => reject(putReq.error);
+                } else {
+                    const putReq = store.put(opToStore);
+                    putReq.onsuccess = () => resolve();
+                    putReq.onerror = () => reject(putReq.error);
+                }
+            };
             request.onerror = () => reject(request.error);
         });
     }

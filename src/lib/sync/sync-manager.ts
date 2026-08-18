@@ -66,6 +66,8 @@ export type ConflictCallback = (conflict: {
     serverContent: string;
     localEtag: string;
     serverEtag: string;
+    serverVersion?: number;
+    serverUpdatedAt?: string;
 }) => Promise<'local' | 'server' | 'merge'>;
 
 /**
@@ -586,6 +588,27 @@ class SyncManager {
 
                 if (response.status === 412 || response.status === 409) {
                     const serverData = await response.json().catch(() => ({}));
+                    if (serverData.serverVersion) {
+                        // Check if content or ETag is actually identical (false conflict)
+                        if (file.content === serverData.serverVersion.content || compareETags(file.etag, serverData.serverVersion.etag)) {
+                            console.log(`[SyncManager] False conflict for ${file.id} (identical content/ETag), auto-adopting server version`);
+                            await this.idb.commitFileAndOperationSync(file.id, serverData.serverVersion.etag, op.id, currentAttempts);
+                            const updatedFile = await this.idb.getFile(file.id);
+                            if (updatedFile) {
+                                updatedFile.version = serverData.serverVersion.version;
+                                updatedFile.isDirty = false;
+                                await this.idb.saveFile(updatedFile);
+                            }
+                            this.rollback.removeCheckpoint(checkpointId);
+                            return {
+                                fileId: op.fileId,
+                                success: true,
+                                action: 'pushed' as const,
+                                newEtag: serverData.serverVersion.etag,
+                            };
+                        }
+                    }
+
                     await this.idb.updateOperationStatus(op.id, 'conflict', {
                         attempts: currentAttempts,
                         lastError: 'Conflict detected on server',
@@ -964,7 +987,28 @@ class SyncManager {
         localFile: IDBFile,
         serverVersion: { content: string; etag: string; version: number; updatedAt: string }
     ): Promise<void> {
-        console.log(`[SyncManager] Conflict detected for file ${localFile.id}`);
+        console.log(`[SyncManager] Conflict checking for file ${localFile.id}`);
+
+        // If local content and server content are identical, or ETags match: auto-resolve
+        if (localFile.content === serverVersion.content || compareETags(localFile.etag, serverVersion.etag)) {
+            console.log(`[SyncManager] Content/ETags match for file ${localFile.id}, auto-clearing conflict`);
+            const cleanFile: IDBFile = {
+                ...localFile,
+                etag: serverVersion.etag,
+                version: serverVersion.version,
+                lastSyncedAt: Date.now(),
+                isDirty: false,
+            };
+            await this.idb.saveFile(cleanFile);
+
+            const ops = await this.idb.getOperations(localFile.id);
+            for (const op of ops) {
+                if (!op.synced) {
+                    await this.idb.updateOperationStatus(op.id, 'synced', { synced: true });
+                }
+            }
+            return;
+        }
 
         if (this.conflictCallback) {
             const resolution = await this.conflictCallback({
@@ -973,13 +1017,11 @@ class SyncManager {
                 serverContent: serverVersion.content,
                 localEtag: localFile.etag,
                 serverEtag: serverVersion.etag,
+                serverVersion: serverVersion.version,
+                serverUpdatedAt: serverVersion.updatedAt,
             });
 
-            if (resolution === 'local') {
-                localFile.etag = serverVersion.etag;
-                await this.idb.saveFile(localFile);
-                await this.pushFile(localFile);
-            } else if (resolution === 'server') {
+            if (resolution === 'server') {
                 const updatedFile: IDBFile = {
                     ...localFile,
                     content: serverVersion.content,
@@ -989,6 +1031,12 @@ class SyncManager {
                     isDirty: false,
                 };
                 await this.idb.saveFile(updatedFile);
+                const ops = await this.idb.getOperations(localFile.id);
+                for (const op of ops) {
+                    if (!op.synced) {
+                        await this.idb.updateOperationStatus(op.id, 'synced', { synced: true });
+                    }
+                }
             }
         }
     }

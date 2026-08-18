@@ -23,6 +23,10 @@ import { FEATURES } from "@/config/features.config";
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { AIStreamStatus } from "@/components/editor/ai-stream-status";
 import { AIStreamPreview } from "@/components/editor/ai-stream-preview";
+import { ConflictDialog, ConflictResolutionPayload } from "@/components/sync/conflict-dialog";
+import { SyncConflict } from "@/lib/sync/idb-types";
+import { broadcastCrossTabEvent, subscribeCrossTabSync } from "@/lib/sync/cross-tab-sync";
+import { AlertTriangle } from "lucide-react";
 
 export default function EditorPage() {
     const params = useParams();
@@ -39,6 +43,14 @@ export default function EditorPage() {
     const [selectedText, setSelectedText] = useState("");
     const [userId, setUserId] = useState<string | null>(null);
 
+    // Active conflict management state
+    const [activeConflict, setActiveConflict] = useState<SyncConflict | null>(null);
+    const [isConflictDialogOpen, setIsConflictDialogOpen] = useState(false);
+    const [isResolvingConflict, setIsResolvingConflict] = useState(false);
+    const activeConflictRef = useRef<SyncConflict | null>(null);
+    const hasUnresolvedConflictRef = useRef<boolean>(false);
+    const isProgrammaticUpdateRef = useRef<boolean>(false);
+
     // Invariant tracking refs for generation guard and optimistic version lock
     const fileVersionRef = useRef<number>(1);
     const fileEtagRef = useRef<string | null>(null);
@@ -47,11 +59,41 @@ export default function EditorPage() {
     // Abort controller ref for legacy AI streaming fallback
     const abortControllerRef = useRef<AbortController | null>(null);
 
+    const syncHookRef = useRef<any>(null);
+
+    // Conflict handler from useSync
+    const handleSyncConflict = useCallback(async (conflict: SyncConflict): Promise<'local' | 'server' | 'merge'> => {
+        // If content is identical or ETags match, auto-resolve immediately without popping dialog
+        if (conflict.localVersion.content === conflict.serverVersion.content || (conflict.localVersion.etag && conflict.serverVersion.etag && conflict.localVersion.etag === conflict.serverVersion.etag)) {
+            console.log('[Editor] Auto-resolving identical conflict without modal');
+            if (syncHookRef.current?.isInitialized) {
+                await syncHookRef.current.saveLocal({
+                    id: fileId,
+                    content: conflict.serverVersion.content,
+                    version: conflict.serverVersion.version,
+                    etag: conflict.serverVersion.etag,
+                    isDirty: false,
+                });
+            }
+            fileVersionRef.current = conflict.serverVersion.version;
+            if (conflict.serverVersion.etag) fileEtagRef.current = conflict.serverVersion.etag;
+            return 'server';
+        }
+
+        activeConflictRef.current = conflict;
+        hasUnresolvedConflictRef.current = true;
+        setActiveConflict(conflict);
+        setIsConflictDialogOpen(true);
+        return 'server';
+    }, [fileId]);
+
     // Initialize useSync hook (only when userId is available)
     const syncHook = useSync({
         userId: userId || "",
         autoSyncInterval: 30000,
+        onConflict: handleSyncConflict,
     });
+    syncHookRef.current = syncHook;
 
     const editor = useEditor({
         extensions: [
@@ -85,6 +127,9 @@ export default function EditorPage() {
                     id: fileId,
                     content: editor.getHTML(),
                     title,
+                    version,
+                    etag: etag || '',
+                    isDirty: false,
                 });
             }
         },
@@ -114,38 +159,49 @@ export default function EditorPage() {
                 }
             }
 
-            // Step 2: Fetch from server in background
-            const result = await getFile(fileId);
+            try {
+                // Step 2: Fetch from server in background
+                const result = await getFile(fileId);
 
-            if (!isMounted) return;
+                if (!isMounted) return;
 
-            if (result.success && result.data) {
-                setTitle(result.data.title);
-                fileVersionRef.current = result.data.version ?? 1;
-                fileEtagRef.current = result.data.etag ?? null;
-                editorGenerationRef.current += 1;
+                if (result.success && result.data) {
+                    setTitle(result.data.title);
+                    fileVersionRef.current = result.data.version ?? 1;
+                    fileEtagRef.current = result.data.etag ?? null;
+                    editorGenerationRef.current += 1;
 
-                const currentContent = editor?.getHTML() || "";
-                const serverContent = result.data.content || "";
+                    const currentContent = editor?.getHTML() || "";
+                    const serverContent = result.data.content || "";
 
-                const safeContent = sanitizeHtml(serverContent);
-                if (currentContent !== safeContent) {
-                    editor?.commands.setContent(safeContent);
-                    console.log('[Editor] Updated from server');
+                    const safeContent = sanitizeHtml(serverContent);
+                    if (currentContent !== safeContent) {
+                        isProgrammaticUpdateRef.current = true;
+                        editor?.commands.setContent(safeContent);
+                        setTimeout(() => {
+                            isProgrammaticUpdateRef.current = false;
+                        }, 100);
+                        console.log('[Editor] Updated from server');
+                    }
+
+                    if (syncHook.isInitialized) {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content: safeContent,
+                            title: result.data.title,
+                            version: result.data.version || 1,
+                            etag: result.data.etag || '',
+                            isDirty: false,
+                        });
+                    }
+                } else {
+                    const localFile = await syncHook.loadLocal(fileId);
+                    if (!localFile) {
+                        router.push("/workspace");
+                    }
                 }
-
-                if (syncHook.isInitialized) {
-                    syncHook.saveLocal({
-                        id: fileId,
-                        content: safeContent,
-                        title: result.data.title,
-                    });
-                }
-            } else {
-                const localFile = await syncHook.loadLocal(fileId);
-                if (!localFile) {
-                    router.push("/workspace");
-                }
+            } catch (fetchErr) {
+                console.warn('[Editor] Background server fetch failed (network/offline):', fetchErr);
             }
         }
 
@@ -159,10 +215,14 @@ export default function EditorPage() {
     // Fetch userId from Supabase client
     useEffect(() => {
         async function fetchUser() {
-            const supabase = createClient();
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                setUserId(user.id);
+            try {
+                const supabase = createClient();
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) {
+                    setUserId(user.id);
+                }
+            } catch (authErr) {
+                console.warn('[Editor] fetchUser network exception:', authErr);
             }
         }
         fetchUser();
@@ -171,8 +231,12 @@ export default function EditorPage() {
     // Check ToPrompt availability
     useEffect(() => {
         async function checkQuota() {
-            const quota = await getRemainingQuota();
-            setShowToPrompt(quota?.toPrompt !== null);
+            try {
+                const quota = await getRemainingQuota();
+                setShowToPrompt(quota?.toPrompt !== null);
+            } catch (quotaErr) {
+                console.warn('[Editor] checkQuota error:', quotaErr);
+            }
         }
         checkQuota();
     }, []);
@@ -180,38 +244,274 @@ export default function EditorPage() {
     // Auto-save with debounce (server + local for sync)
     const saveContent = useCallback(
         debounce(async (content: string) => {
-            // G5: Do NOT auto-save during active AI streaming or committing
-            if (aiStream.isLoading) {
+            // Do NOT auto-save during programmatic updates, active AI streaming, resolving, or unresolved conflict
+            if (isProgrammaticUpdateRef.current || aiStream.isLoading || activeConflictRef.current || hasUnresolvedConflictRef.current || isResolvingConflict) {
                 return;
             }
 
             setSaving(true);
 
-            // Save to server
-            const saveRes = await updateFileContent(fileId, content);
+            try {
+                // Save to server with optimistic version precondition
+                const saveRes = await updateFileContent(fileId, content, {
+                    expectedVersion: fileVersionRef.current,
+                    expectedETag: fileEtagRef.current || undefined,
+                });
+
+                if (saveRes.success && saveRes.version) {
+                    fileVersionRef.current = saveRes.version;
+                    fileEtagRef.current = saveRes.etag || null;
+                    editorGenerationRef.current += 1;
+                    setLastSaved(new Date());
+
+                    // Broadcast save to other tabs
+                    broadcastCrossTabEvent({
+                        type: 'file_saved',
+                        fileId,
+                        version: saveRes.version,
+                        etag: saveRes.etag || undefined,
+                    });
+
+                    // Update local storage clean
+                    if (syncHook.isInitialized) {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content,
+                            title,
+                            version: saveRes.version,
+                            etag: saveRes.etag || fileEtagRef.current || '',
+                            isDirty: false,
+                        });
+                    }
+                } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
+                    // False conflict check: if local content is identical to server content or ETags match
+                    if (content === saveRes.serverVersion.content || (saveRes.serverVersion.etag && saveRes.serverVersion.etag === fileEtagRef.current)) {
+                        console.log('[Editor] Server conflict has identical content, auto-synchronizing version');
+                        fileVersionRef.current = saveRes.serverVersion.version || fileVersionRef.current;
+                        fileEtagRef.current = saveRes.serverVersion.etag || null;
+                        if (syncHook.isInitialized) {
+                            await syncHook.saveLocal({
+                                id: fileId,
+                                content,
+                                title,
+                                version: saveRes.serverVersion.version ?? fileVersionRef.current,
+                                etag: saveRes.serverVersion.etag || '',
+                                isDirty: false,
+                            });
+                        }
+                        setSaving(false);
+                        return;
+                    }
+
+                    // Real conflict detected (412 Precondition Failed)
+                    console.warn('[Editor] Sync conflict detected during save:', saveRes.serverVersion);
+                    const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
+                    const conflictObj: SyncConflict = {
+                        fileId,
+                        localVersion: {
+                            content,
+                            etag: fileEtagRef.current || '',
+                            lastModified: Date.now(),
+                            version: fileVersionRef.current,
+                            title,
+                            parentFolderId: null,
+                            deleted: false,
+                        },
+                        serverVersion: {
+                            content: saveRes.serverVersion.content || '',
+                            etag: saveRes.serverVersion.etag || '',
+                            lastModified: saveRes.serverVersion.updatedAt ? new Date(saveRes.serverVersion.updatedAt).getTime() : Date.now(),
+                            version: saveRes.serverVersion.version || 0,
+                            title,
+                            parentFolderId: null,
+                            deleted: false,
+                        },
+                        baseVersion: localFile?.baseSnapshot ? {
+                            content: localFile.baseSnapshot.content,
+                            etag: localFile.baseSnapshot.etag,
+                            lastModified: localFile.lastSyncedAt || 0,
+                            version: localFile.baseSnapshot.version,
+                            title: localFile.baseSnapshot.title,
+                            parentFolderId: localFile.baseSnapshot.parentFolderId,
+                            deleted: false,
+                        } : undefined,
+                        operations: [],
+                        detectedAt: Date.now(),
+                        type: 'content',
+                    };
+                    activeConflictRef.current = conflictObj;
+                    hasUnresolvedConflictRef.current = true;
+                    setActiveConflict(conflictObj);
+                    setIsConflictDialogOpen(true);
+
+                    // Save dirty locally
+                    if (syncHook.isInitialized) {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content,
+                            title,
+                            version: fileVersionRef.current,
+                            etag: fileEtagRef.current || '',
+                            isDirty: true,
+                        });
+                    }
+                } else {
+                    // General save failure (offline/network)
+                    if (syncHook.isInitialized) {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content,
+                            title,
+                            version: fileVersionRef.current,
+                            etag: fileEtagRef.current || '',
+                            isDirty: true,
+                        });
+                    }
+                }
+            } catch (serverActionErr) {
+                console.warn('[Editor] updateFileContent action network failure, saving locally dirty:', serverActionErr);
+                if (syncHook.isInitialized) {
+                    await syncHook.saveLocal({
+                        id: fileId,
+                        content,
+                        title,
+                        version: fileVersionRef.current,
+                        etag: fileEtagRef.current || '',
+                        isDirty: true,
+                    });
+                }
+            }
+
+            setSaving(false);
+        }, 1000),
+        [fileId, title, syncHook.isInitialized, aiStream.isLoading, isResolvingConflict]
+    );
+
+    // Resolve conflict handler
+    const handleResolveConflict = useCallback(async (resolution: ConflictResolutionPayload) => {
+        if (!activeConflict) return;
+        setIsResolvingConflict(true);
+        setError(null);
+
+        try {
+            if (resolution.strategy === 'delete') {
+                if (confirm("هل أنت متأكد من تأكيد حذف الملف؟")) {
+                    await deleteFile(fileId);
+                    router.push("/workspace");
+                }
+                setIsResolvingConflict(false);
+                return;
+            }
+
+            // Single authoritative write with expectedVersion conditioned on server's latest version
+            const targetExpectedVersion = activeConflict.serverVersion.version;
+            const targetExpectedETag = activeConflict.serverVersion.etag || undefined;
+
+            const saveRes = await updateFileContent(fileId, resolution.content, {
+                expectedVersion: targetExpectedVersion,
+                expectedETag: targetExpectedETag,
+            });
+
             if (saveRes.success && saveRes.version) {
+                // Server confirmed write succeeded
                 fileVersionRef.current = saveRes.version;
                 fileEtagRef.current = saveRes.etag || null;
                 editorGenerationRef.current += 1;
-            }
 
-            // Also save locally for offline/sync with latest server version & etag
-            if (syncHook.isInitialized) {
-                await syncHook.saveLocal({
-                    id: fileId,
-                    content,
-                    title,
-                    version: saveRes.version || fileVersionRef.current,
-                    etag: saveRes.etag || fileEtagRef.current || '',
-                    isDirty: !saveRes.success,
+                // Update editor content only after server confirmed success and suppress recursive auto-save
+                const safeHtml = sanitizeHtml(resolution.content);
+                isProgrammaticUpdateRef.current = true;
+                editor?.commands.setContent(safeHtml);
+                setTimeout(() => {
+                    isProgrammaticUpdateRef.current = false;
+                }, 100);
+
+                if (resolution.title && resolution.title !== title) {
+                    setTitle(resolution.title);
+                    await renameFile(fileId, resolution.title);
+                }
+
+                // Update IndexedDB as clean
+                if (syncHook.isInitialized) {
+                    await syncHook.saveLocal({
+                        id: fileId,
+                        content: safeHtml,
+                        title: resolution.title || title,
+                        version: saveRes.version,
+                        etag: saveRes.etag || fileEtagRef.current || '',
+                        isDirty: false,
+                    });
+                }
+
+                setLastSaved(new Date());
+
+                // Broadcast conflict resolution to other tabs
+                broadcastCrossTabEvent({
+                    type: 'conflict_resolved',
+                    fileId,
+                    version: saveRes.version,
+                    etag: saveRes.etag || undefined,
                 });
-            }
 
-            setLastSaved(new Date());
-            setSaving(false);
-        }, 1000),
-        [fileId, title, syncHook.isInitialized, aiStream.isLoading]
-    );
+                activeConflictRef.current = null;
+                hasUnresolvedConflictRef.current = false;
+                setActiveConflict(null);
+                setIsConflictDialogOpen(false);
+            } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
+                // Another concurrent change occurred on server
+                const updatedConflict: SyncConflict = {
+                    ...activeConflict,
+                    serverVersion: {
+                        content: saveRes.serverVersion.content || '',
+                        etag: saveRes.serverVersion.etag || '',
+                        lastModified: saveRes.serverVersion.updatedAt ? new Date(saveRes.serverVersion.updatedAt).getTime() : Date.now(),
+                        version: saveRes.serverVersion.version || 0,
+                        title: activeConflict.serverVersion.title,
+                        parentFolderId: activeConflict.serverVersion.parentFolderId,
+                        deleted: false,
+                    },
+                    detectedAt: Date.now(),
+                };
+                activeConflictRef.current = updatedConflict;
+                setActiveConflict(updatedConflict);
+                setError("حدث تعديل جديد على الخادم أثناء حل التعارض. يرجى المراجعة والتأكيد مجدداً.");
+            } else {
+                setError(saveRes.error || "فشل تأكيد حفظ حل التعارض على الخادم");
+            }
+        } catch (err: any) {
+            console.error("[Conflict Resolution Error]", err);
+            setError(err?.message || "حدث خطأ غير متوقع أثناء حل التعارض");
+        } finally {
+            setIsResolvingConflict(false);
+        }
+    }, [activeConflict, fileId, title, editor, syncHook.isInitialized, router]);
+
+    // Cross-tab synchronization listener
+    useEffect(() => {
+        const unsubscribe = subscribeCrossTabSync(async (event) => {
+            if (event.fileId === fileId) {
+                // Invariant: only advance version references if this tab is clean to prevent silent overwrites
+                const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
+                const isLocalDirty = localFile?.isDirty || activeConflictRef.current || hasUnresolvedConflictRef.current;
+
+                if (!isLocalDirty) {
+                    if (event.version && event.version > fileVersionRef.current) {
+                        fileVersionRef.current = event.version;
+                    }
+                    if (event.etag) {
+                        fileEtagRef.current = event.etag;
+                    }
+                    console.log('[Editor] Synchronized file metadata from sibling tab (clean):', event);
+                } else {
+                    console.warn('[Editor] Sibling tab saved file while local tab is dirty. Retaining local expectedVersion for optimistic conflict guard.');
+                }
+            }
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, [fileId, syncHook.isInitialized]);
 
     useEffect(() => {
         if (editor) {
@@ -493,6 +793,34 @@ export default function EditorPage() {
                     errorMessage={aiStream.error}
                     onRetry={() => aiStream.reset()}
                     onCancel={() => aiStream.stopStream()}
+                />
+            )}
+
+            {/* Persistent Conflict Alert Banner */}
+            {activeConflict && !isConflictDialogOpen && (
+                <div className="mx-6 mt-4 p-3.5 rounded-lg bg-amber-950/40 border border-amber-800/60 flex items-center justify-between text-xs text-amber-300 flex-shrink-0 animate-in fade-in">
+                    <div className="flex items-center gap-2.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        <span>
+                            <strong>تنبيه تعارض:</strong> تم اكتشاف تعديلات جديدة على الخادم. الحفظ التلقائي متوقف لحماية بياناتك المحلية حتى تسوية التعارض.
+                        </span>
+                    </div>
+                    <button
+                        onClick={() => setIsConflictDialogOpen(true)}
+                        className="px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-medium transition-colors shadow-sm"
+                    >
+                        مراجعة وحل التعارض
+                    </button>
+                </div>
+            )}
+
+            {/* Conflict Resolution Modal Dialog */}
+            {activeConflict && isConflictDialogOpen && (
+                <ConflictDialog
+                    conflict={activeConflict}
+                    onResolve={handleResolveConflict}
+                    onClose={() => setIsConflictDialogOpen(false)}
+                    isResolving={isResolvingConflict}
                 />
             )}
 

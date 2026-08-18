@@ -37,9 +37,13 @@ export async function middleware(request: NextRequest) {
     }
 
     // Refresh session if expired
-    const {
-        data: { user },
-    } = await supabase.auth.getUser();
+    let user = null;
+    try {
+        const { data } = await supabase.auth.getUser();
+        user = data?.user || null;
+    } catch (err) {
+        console.warn('[Middleware] supabase.auth.getUser error (network/offline):', err);
+    }
 
     // Protected routes - require authentication
     const protectedPaths = ["/workspace", "/account", "/dashboard"];
@@ -47,8 +51,17 @@ export async function middleware(request: NextRequest) {
         request.nextUrl.pathname.startsWith(path)
     );
 
+    // If it's a Server Action or API request, never redirect to HTML login page (which breaks Server Action client runtime)
+    const isActionOrApi = request.headers.has('next-action') || request.nextUrl.pathname.startsWith('/api/');
+
     if (isProtectedPath && !user) {
-        // Redirect to login
+        if (isActionOrApi) {
+            return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
+                status: 401,
+                headers: { "Content-Type": "application/json" }
+            });
+        }
+        // Redirect to login for page navigation
         const url = request.nextUrl.clone();
         url.pathname = "/login";
         url.searchParams.set("redirectTo", request.nextUrl.pathname);

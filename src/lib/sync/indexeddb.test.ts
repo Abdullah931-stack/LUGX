@@ -344,6 +344,59 @@ describe('IndexedDB Manager (Real IndexedDB & Multi-User Isolation)', () => {
             expect(op?.attempts).toBe(1);
         });
 
+        it('should coalesce multiple sequential un-synced operations for the same file without unbounded accumulation', async () => {
+            await manager1.init('user-1');
+
+            const fileId = 'coalesce-file-1';
+
+            // Add first operation
+            await manager1.coalesceOperation({
+                id: 'op-1',
+                operationId: 'op-1',
+                fileId,
+                operationType: 'update',
+                position: 0,
+                content: 'First edit',
+                timestamp: 1000,
+                synced: false,
+                status: 'queued',
+            });
+
+            // Add second sequential operation (should coalesce with op-1)
+            await manager1.coalesceOperation({
+                id: 'op-2',
+                operationId: 'op-2',
+                fileId,
+                operationType: 'update',
+                position: 0,
+                content: 'Second edit',
+                timestamp: 2000,
+                synced: false,
+                status: 'queued',
+            });
+
+            // Add third sequential operation (should coalesce with existing)
+            await manager1.coalesceOperation({
+                id: 'op-3',
+                operationId: 'op-3',
+                fileId,
+                operationType: 'update',
+                position: 0,
+                content: 'Third final edit',
+                timestamp: 3000,
+                synced: false,
+                status: 'queued',
+            });
+
+            const allOps = await manager1.getOperations(fileId);
+
+            // Must have only 1 operation instead of 3
+            expect(allOps.length).toBe(1);
+            expect(allOps[0].id).toBe('op-1');
+            expect(allOps[0].content).toBe('Third final edit');
+            expect(allOps[0].timestamp).toBe(3000);
+        });
+
         it('should delete the user database completely on deleteDatabase()', async () => {
             await manager1.init('user-1');
             await manager1.saveFile({

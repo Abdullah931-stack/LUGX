@@ -21,7 +21,7 @@ import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup"
 import { testDb } from "@/test/test-db";
 import { randomUUID } from "crypto";
 
-const TEST_USER_ID = "66666666-6666-6666-6666-666666666666";
+const TEST_USER_ID = "77777777-7777-7777-7777-777777777777";
 let dbAvailable = false;
 
 beforeAll(async () => {
@@ -31,17 +31,22 @@ beforeAll(async () => {
     await runMigrations();
     await testDb
         .insert(schema.users)
-        .values({ id: TEST_USER_ID, email: "putguard-test@example.com" })
+        .values({ id: TEST_USER_ID, email: `putguard-${TEST_USER_ID}@example.com` })
         .onConflictDoNothing();
     // Remove leftovers from previous runs so the live unique-title index
     // cannot collide across runs.
     try { await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID)); } catch { /* ignore */ }
 });
 
-beforeEach((ctx) => {
+beforeEach(async (ctx) => {
     if (!dbAvailable) {
         ctx.skip();
+        return;
     }
+    await testDb
+        .insert(schema.users)
+        .values({ id: TEST_USER_ID, email: `putguard-${TEST_USER_ID}@example.com` })
+        .onConflictDoNothing();
 });
 
 afterAll(async () => {

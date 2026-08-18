@@ -29,6 +29,14 @@ export interface IDBFile {
     parentFolderId: string | null;
     /** Whether this is a folder */
     isFolder: boolean;
+    /** Pristine base snapshot before local uncommitted edits were made */
+    baseSnapshot?: {
+        content: string;
+        etag: string;
+        version: number;
+        title?: string;
+        parentFolderId?: string | null;
+    };
 }
 
 /**
@@ -108,29 +116,36 @@ export interface IDBSyncMetadata {
 }
 
 /**
+ * State snapshot of a file version involved in a conflict
+ */
+export interface ConflictFileState {
+    content: string;
+    etag: string;
+    lastModified: number;
+    version: number;
+    title?: string;
+    parentFolderId?: string | null;
+    deleted?: boolean;
+}
+
+/**
  * Conflict data structure for resolution UI
  */
 export interface SyncConflict {
     /** File ID with conflict */
     fileId: string;
     /** Local version of the file */
-    localVersion: {
-        content: string;
-        etag: string;
-        lastModified: number;
-        version: number;
-    };
+    localVersion: ConflictFileState;
     /** Server version of the file */
-    serverVersion: {
-        content: string;
-        etag: string;
-        lastModified: number;
-        version: number;
-    };
+    serverVersion: ConflictFileState;
+    /** Pristine base version before local modifications occurred */
+    baseVersion?: ConflictFileState;
     /** Operations performed locally since last sync */
     operations: IDBOperation[];
     /** Timestamp when conflict was detected */
     detectedAt: number;
+    /** Conflict classification */
+    type?: 'content' | 'metadata' | 'delete_conflict';
 }
 
 /**

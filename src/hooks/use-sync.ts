@@ -111,22 +111,39 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
 
                 if (onConflictRef.current) {
                     scopedSyncManager.setConflictCallback(async (conflict) => {
+                        const file = await scopedIdb.getFile(conflict.fileId);
                         const syncConflict: SyncConflict = {
                             fileId: conflict.fileId,
                             localVersion: {
                                 content: conflict.localContent,
                                 etag: conflict.localEtag,
-                                lastModified: Date.now(),
-                                version: 0,
+                                lastModified: file?.lastModified || Date.now(),
+                                version: file?.version || 0,
+                                title: file?.title,
+                                parentFolderId: file?.parentFolderId,
+                                deleted: false,
                             },
                             serverVersion: {
                                 content: conflict.serverContent,
                                 etag: conflict.serverEtag,
-                                lastModified: Date.now(),
-                                version: 0,
+                                lastModified: conflict.serverUpdatedAt ? new Date(conflict.serverUpdatedAt).getTime() : Date.now(),
+                                version: conflict.serverVersion ?? ((file?.version || 0) + 1),
+                                title: file?.title,
+                                parentFolderId: file?.parentFolderId,
+                                deleted: false,
                             },
+                            baseVersion: file?.baseSnapshot ? {
+                                content: file.baseSnapshot.content,
+                                etag: file.baseSnapshot.etag,
+                                lastModified: file.lastSyncedAt || 0,
+                                version: file.baseSnapshot.version,
+                                title: file.baseSnapshot.title,
+                                parentFolderId: file.baseSnapshot.parentFolderId,
+                                deleted: false,
+                            } : undefined,
                             operations: [],
                             detectedAt: Date.now(),
+                            type: 'content',
                         };
                         return onConflictRef.current ? onConflictRef.current(syncConflict) : 'local';
                     });
@@ -236,6 +253,29 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
         const activeIdb = idbManagerRef.current;
         if (!userId?.trim() || !activeIdb) return;
         const existingFile = await activeIdb.getFile(file.id);
+
+        // Preserve or compute baseSnapshot before the file is edited
+        let baseSnapshot = file.baseSnapshot || existingFile?.baseSnapshot;
+        if (!baseSnapshot && existingFile && !existingFile.isDirty) {
+            // First dirty modification on a clean file: record the pristine base snapshot
+            baseSnapshot = {
+                content: existingFile.content,
+                etag: existingFile.etag,
+                version: existingFile.version,
+                title: existingFile.title,
+                parentFolderId: existingFile.parentFolderId,
+            };
+        } else if (file.isDirty === false) {
+            // Clean file: baseSnapshot matches confirmed state
+            baseSnapshot = {
+                content: file.content,
+                etag: file.etag !== undefined ? file.etag : (existingFile?.etag || ''),
+                version: file.version !== undefined ? file.version : (existingFile?.version || 0),
+                title: file.title || existingFile?.title || 'Untitled',
+                parentFolderId: file.parentFolderId || existingFile?.parentFolderId || null,
+            };
+        }
+
         const idbFile: IDBFile = {
             id: file.id,
             content: file.content,
@@ -245,10 +285,45 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             parentFolderId: file.parentFolderId || existingFile?.parentFolderId || null,
             isFolder: file.isFolder ?? existingFile?.isFolder ?? false,
             lastModified: Date.now(),
-            lastSyncedAt: existingFile?.lastSyncedAt || 0,
+            lastSyncedAt: file.isDirty === false ? Date.now() : (existingFile?.lastSyncedAt || 0),
             isDirty: file.isDirty !== undefined ? file.isDirty : true,
+            baseSnapshot,
         };
         await activeIdb.saveFile(idbFile);
+
+        // Record operation in IDB if file has uncommitted local edits (coalesce sequential edits)
+        if (idbFile.isDirty) {
+            const opId = `op_${userId}_${file.id}_${Date.now()}`;
+            await activeIdb.coalesceOperation({
+                id: opId,
+                operationId: opId,
+                userId,
+                fileId: file.id,
+                baseVersion: baseSnapshot?.version || existingFile?.version || 1,
+                status: 'queued',
+                attempts: 0,
+                operationType: 'update',
+                position: 0,
+                content: file.content,
+                previousContent: baseSnapshot?.content || existingFile?.content || '',
+                timestamp: Date.now(),
+                synced: false,
+                snapshot: baseSnapshot ? {
+                    content: baseSnapshot.content,
+                    etag: baseSnapshot.etag,
+                    version: baseSnapshot.version,
+                } : undefined,
+            });
+        } else {
+            // When marking clean, mark all operations for this file as synced to prevent re-sync loops
+            const ops = await activeIdb.getOperations(file.id);
+            for (const op of ops) {
+                if (!op.synced) {
+                    await activeIdb.updateOperationStatus(op.id, 'synced', { synced: true });
+                }
+            }
+        }
+
         const dirtyFiles = await activeIdb.getDirtyFiles();
         setPendingCount(dirtyFiles.length);
     }, [userId]);

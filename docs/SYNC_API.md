@@ -232,12 +232,35 @@ const response = await fetch(`/api/files/${fileId}`, {
     'Content-Type': 'application/json',
     'If-Match': currentEtag,
   },
-  body: JSON.stringify({ content, title }),
+  body: JSON.stringify({ content, title, expectedVersion: currentVersion }),
 });
 
 if (response.status === 412) {
   // Handle conflict
   const { serverVersion } = await response.json();
-  // Show conflict resolution UI
+  // Open ConflictDialog and perform 3-way merge
 }
 ```
+
+---
+
+## Three-Way Conflict Resolution Architecture
+
+### 1. Overview
+The sync system implements a deterministic Three-Way Merge protocol to resolve concurrent edits between local offline/ephemeral writes and upstream server writes:
+
+- **Base Version (`baseSnapshot`):** The clean, confirmed state before local modifications occurred.
+- **Local Version (`localVersion`):** Unsynced changes made locally on the client.
+- **Server Version (`serverVersion`):** The conflicting upstream state returned with 412 Precondition Failed.
+
+### 2. Resolution Lifecycle & Invariants
+1. **Base Snapshot Requirement:** Automatic 3-way merge is rejected with `manual_resolution_required` if `baseSnapshot` is missing or unreadable, preventing blind overwrites.
+2. **Deterministic Merge Engine:**
+   - Non-overlapping line/block changes are cleanly merged.
+   - Overlapping regions insert explicit Git-style conflict markers (`<<<<<<< LOCAL ... ======= ... >>>>>>> REMOTE`).
+   - Title (`title`) and Move (`parentFolderId`) metadata are merged independently.
+   - Delete conflicts (remote delete vs local edit) produce `delete_conflict` requiring explicit "Restore" or "Delete" selection.
+3. **Single Authoritative Write:** After user resolution (Local, Server, 3-Way Merge, or Restore), exactly one write request is dispatched to the server containing `expectedVersion: serverVersion.version`.
+4. **Verified State Transition:** Editor state (TipTap) and IndexedDB cache are only transitioned to clean (`isDirty: false`) after receiving 200 OK confirmation from the server.
+5. **Autosave Lockout:** Autosave is strictly inhibited whenever an unresolved conflict is active.
+
