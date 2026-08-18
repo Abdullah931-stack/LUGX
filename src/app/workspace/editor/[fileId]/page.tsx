@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -10,6 +10,8 @@ import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { convertTextToHTML } from "@/lib/parsers/text-to-html";
 import { sanitizeHtml } from "@/lib/sanitize-client";
 import { AutoDirectionExtension } from "@/lib/extensions/direction-extension";
+import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
+import { consumeAIStream, AIOperationType } from "@/lib/ai/stream-handler";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
 import { SearchReplace } from "@/components/editor/search-replace";
 import { countWords, debounce, detectTextDirection, countCharacters } from "@/lib/utils";
@@ -17,6 +19,10 @@ import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useSync } from "@/hooks/use-sync";
 import { SyncIndicator } from "@/components/sync/sync-indicator";
+import { FEATURES } from "@/config/features.config";
+import { useAIStream } from "@/hooks/use-ai-stream";
+import { AIStreamStatus } from "@/components/editor/ai-stream-status";
+import { AIStreamPreview } from "@/components/editor/ai-stream-preview";
 
 export default function EditorPage() {
     const params = useParams();
@@ -33,6 +39,14 @@ export default function EditorPage() {
     const [selectedText, setSelectedText] = useState("");
     const [userId, setUserId] = useState<string | null>(null);
 
+    // Invariant tracking refs for generation guard and optimistic version lock
+    const fileVersionRef = useRef<number>(1);
+    const fileEtagRef = useRef<string | null>(null);
+    const editorGenerationRef = useRef<number>(1);
+
+    // Abort controller ref for legacy AI streaming fallback
+    const abortControllerRef = useRef<AbortController | null>(null);
+
     // Initialize useSync hook (only when userId is available)
     const syncHook = useSync({
         userId: userId || "",
@@ -47,6 +61,7 @@ export default function EditorPage() {
                 emptyEditorClass: "is-editor-empty",
             }),
             AutoDirectionExtension,
+            StreamingGhostExtension,
         ],
         content: "",
         immediatelyRender: false, // Fix SSR hydration mismatch
@@ -54,6 +69,30 @@ export default function EditorPage() {
             attributes: {
                 class: "tiptap-editor outline-none min-h-[70vh] text-zinc-300 p-6",
             },
+        },
+    });
+
+    // Modern Ephemeral UI Streaming Hook
+    const aiStream = useAIStream({
+        onCommitSuccess: ({ version, etag }) => {
+            fileVersionRef.current = version;
+            fileEtagRef.current = etag;
+            editorGenerationRef.current += 1;
+            setLastSaved(new Date());
+
+            if (syncHook.isInitialized && editor) {
+                syncHook.saveLocal({
+                    id: fileId,
+                    content: editor.getHTML(),
+                    title,
+                });
+            }
+        },
+        onConflict: (serverVersion) => {
+            console.warn('[Editor] AI commit version conflict detected:', serverVersion);
+        },
+        onError: (err) => {
+            setError(err.message);
         },
     });
 
@@ -66,9 +105,10 @@ export default function EditorPage() {
             if (syncHook.isInitialized) {
                 const localFile = await syncHook.loadLocal(fileId);
                 if (localFile && isMounted) {
-                    // Show local content immediately (sanitized — stored
-                    // content may have been produced by an older client)
                     setTitle(localFile.title);
+                    fileVersionRef.current = localFile.version || 1;
+                    fileEtagRef.current = localFile.etag || null;
+                    editorGenerationRef.current += 1;
                     editor?.commands.setContent(sanitizeHtml(localFile.content || ""));
                     console.log('[Editor] Loaded from IndexedDB (instant)');
                 }
@@ -80,23 +120,20 @@ export default function EditorPage() {
             if (!isMounted) return;
 
             if (result.success && result.data) {
-                // Update title and content from server
                 setTitle(result.data.title);
+                fileVersionRef.current = result.data.version ?? 1;
+                fileEtagRef.current = result.data.etag ?? null;
+                editorGenerationRef.current += 1;
 
-                // Only update editor if content is different (to avoid cursor jump)
                 const currentContent = editor?.getHTML() || "";
                 const serverContent = result.data.content || "";
 
-                // Sanitize server content before it reaches TipTap:
-                // DB content is user-controlled (imports, old clients),
-                // so it must be treated as untrusted HTML.
                 const safeContent = sanitizeHtml(serverContent);
                 if (currentContent !== safeContent) {
                     editor?.commands.setContent(safeContent);
                     console.log('[Editor] Updated from server');
                 }
 
-                // Cache the server version locally
                 if (syncHook.isInitialized) {
                     syncHook.saveLocal({
                         id: fileId,
@@ -105,7 +142,6 @@ export default function EditorPage() {
                     });
                 }
             } else {
-                // File doesn't exist on server and no local copy
                 const localFile = await syncHook.loadLocal(fileId);
                 if (!localFile) {
                     router.push("/workspace");
@@ -144,10 +180,20 @@ export default function EditorPage() {
     // Auto-save with debounce (server + local for sync)
     const saveContent = useCallback(
         debounce(async (content: string) => {
+            // G5: Do NOT auto-save during active AI streaming or committing
+            if (aiStream.isLoading) {
+                return;
+            }
+
             setSaving(true);
 
             // Save to server
-            await updateFileContent(fileId, content);
+            const saveRes = await updateFileContent(fileId, content);
+            if (saveRes.success && saveRes.version) {
+                fileVersionRef.current = saveRes.version;
+                fileEtagRef.current = saveRes.etag || null;
+                editorGenerationRef.current += 1;
+            }
 
             // Also save locally for offline/sync
             if (syncHook.isInitialized) {
@@ -161,7 +207,7 @@ export default function EditorPage() {
             setLastSaved(new Date());
             setSaving(false);
         }, 1000),
-        [fileId, title, syncHook.isInitialized]
+        [fileId, title, syncHook.isInitialized, aiStream.isLoading]
     );
 
     useEffect(() => {
@@ -172,26 +218,9 @@ export default function EditorPage() {
         }
     }, [editor, saveContent]);
 
-    // Keyboard shortcut for search (Ctrl+F / Cmd+F)
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-                e.preventDefault();
-                setIsSearchOpen(true);
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown);
-        };
-    }, []);
-
     // Track text selection for dynamic stats
     useEffect(() => {
         if (editor) {
-            // Listen to selection updates
             const handleSelectionUpdate = () => {
                 const { from, to } = editor.state.selection;
                 const text = editor.state.doc.textBetween(from, to, ' ');
@@ -206,31 +235,41 @@ export default function EditorPage() {
         }
     }, [editor]);
 
-    // AI Operations
-    //
-    // CONTENT-SAFETY CONTRACT (v2):
-    //  - The document is NEVER modified before the AI response arrives.
-    //    The original HTML is snapshotted at the start of the operation.
-    //  - Success: a SINGLE undoable transaction replaces the original range
-    //    with the formatted AI result — one Ctrl+Z restores everything.
-    //  - Failure (any error, mid-stream abort, quota, network):
-    //    the document is restored to the exact snapshot (rollback). The
-    //    user never loses content because of an AI operation.
-    async function handleAIOperation(operation: "correct" | "improve" | "summarize" | "translate" | "toPrompt") {
+    // AI Operations with Ephemeral View Streaming & Single-Action Atomic Undo
+    async function handleAIOperation(operation: AIOperationType) {
         if (!editor) return;
 
+        // Modern UI Streaming (Gated behind feature flag during foundation phase)
+        if (FEATURES.AI_STREAMING_ENABLED) {
+            await aiStream.startStream({
+                editor,
+                operation,
+                fileId,
+                expectedVersion: fileVersionRef.current,
+                originalEtag: fileEtagRef.current,
+                editorGeneration: editorGenerationRef.current,
+            });
+            return;
+        }
+
+        // Fallback: Safe snapshot & buffered accumulator path
         setIsLoading(true);
         setError(null);
-        editor.setEditable(false);
 
-        // Deterministic anchor for the AI range inside the current document.
+        // Deterministic anchor for the AI range inside the current document
         const { from, to } = editor.state.selection;
         const hasSelection = from !== to;
         const selectionStart = hasSelection ? from : 0;
         const selectionEnd = hasSelection ? to : editor.state.doc.content.size;
 
+        // Content snapshot taken BEFORE any network activity — the rollback anchor
+        const snapshotBefore = editor.getHTML();
+
+        // Instantiate AbortController for user cancellation
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+
         try {
-            // Get selected text or full content (read-only — nothing is mutated yet)
             const text = hasSelection
                 ? editor.state.doc.textBetween(from, to)
                 : editor.getText();
@@ -238,66 +277,110 @@ export default function EditorPage() {
             if (!text.trim()) {
                 setError("Please enter some text first");
                 setIsLoading(false);
-                editor.setEditable(true);
                 return;
             }
 
-            // Content snapshot taken BEFORE any fetch — the rollback anchor.
-            snapshotFallback = editor.getHTML();
-
-            const response = await fetch("/api/ai/stream", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text, operation }),
+            // Initialize ephemeral streaming ghost preview (doc model remains pristine)
+            editor.commands.startStreamingGhost({
+                from: selectionStart,
+                to: selectionEnd,
+                text: "",
+                operation,
             });
 
-            if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(errText || response.statusText);
-            }
+            await consumeAIStream({
+                operation,
+                text,
+                signal: abortController.signal,
+                onChunk: (accumulatedText) => {
+                    if (editor && !editor.isDestroyed) {
+                        editor.commands.updateStreamingGhost(accumulatedText);
+                    }
+                },
+                onComplete: (finalText) => {
+                    if (!editor || editor.isDestroyed) return;
 
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error("No response stream");
+                    // Dismantle the ephemeral preview
+                    editor.commands.clearStreamingGhost();
 
-            const decoder = new TextDecoder();
-            let collectedText = "";
+                    // SUCCESS: Apply as ONE atomic undoable transaction
+                    applyAITransaction(selectionStart, selectionEnd, finalText);
+                },
+                onError: (err) => {
+                    if (!editor || editor.isDestroyed) return;
 
-            // Stream into a temporary buffer only — the live document stays
-            // untouched until we know the AI response completed successfully.
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                collectedText += decoder.decode(value, { stream: true });
-            }
+                    // Dismantle the ephemeral preview
+                    editor.commands.clearStreamingGhost();
 
-            if (!collectedText.trim()) {
-                // AI returned an empty result — treat as failure.
-                throw new Error("AI returned an empty result");
-            }
+                    if (err.name === "AbortError") {
+                        return;
+                    }
 
-            // SUCCESS: apply as ONE undoable transaction.
-            applyAITransaction(selectionStart, selectionEnd, collectedText);
+                    setError(err.message || "حدث خطأ أثناء معالجة النص");
+
+                    // ROLLBACK DEFENSE: ensure document matches pre-operation snapshot
+                    if (snapshotBefore && editor.getHTML() !== snapshotBefore) {
+                        editor.chain().setContent(snapshotBefore).run();
+                    }
+                },
+            });
 
         } catch (err: any) {
-            console.error(err);
-            setError(err.message || "An error occurred");
-            // ROLLBACK: restore the document to the pre-operation snapshot.
-            // The snapshot was taken before any network call, so this is an
-            // exact restore — no content is ever lost mid-operation.
-            editor.chain().setContent(snapshotFallback).run();
+            console.error("[AI Editor Error]", err);
+            if (editor && !editor.isDestroyed) {
+                editor.commands.clearStreamingGhost();
+                if (snapshotBefore && editor.getHTML() !== snapshotBefore) {
+                    editor.chain().setContent(snapshotBefore).run();
+                }
+            }
+            setError(err?.message || "حدث خطأ غير متوقع أثناء معالجة النص");
         } finally {
+            abortControllerRef.current = null;
             setIsLoading(false);
-            editor.setEditable(true);
         }
     }
 
-    // Holds the pre-operation snapshot accessible from the catch clause.
-    let snapshotFallback = "";
+    /**
+     * Instantly cancel/stop active AI streaming generation
+     */
+    function handleStopAI() {
+        if (FEATURES.AI_STREAMING_ENABLED) {
+            aiStream.stopStream();
+            return;
+        }
+
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+        }
+        if (editor && !editor.isDestroyed) {
+            editor.commands.clearStreamingGhost();
+        }
+        setIsLoading(false);
+    }
+
+    // Keyboard shortcuts (Ctrl+F for search, Escape for stopping AI generation)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                setIsSearchOpen(true);
+            } else if (e.key === 'Escape' && (isLoading || aiStream.isLoading)) {
+                handleStopAI();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [isLoading, aiStream.isLoading]);
 
     /**
      * Apply the AI result as a single undoable transaction:
-     * restore the exact original text at the anchor range, then replace it
-     * with the formatted result in one history entry.
+     * select the original range, delete it, and insert the sanitized AI result
+     * in one history entry.
      */
     function applyAITransaction(
         selectionStart: number,
@@ -307,15 +390,12 @@ export default function EditorPage() {
         if (!editor) return;
 
         const html = convertTextToHTML(collectedText);
+        const safeHtml = sanitizeHtml(html);
 
-        // ONE undoable transaction: select the original range, delete it,
-        // and insert the AI result. TipTap's chain().run() batches all
-        // commands into a single history entry — one Ctrl+Z restores the
-        // full original content of the selected range.
         editor.chain()
             .setTextSelection({ from: selectionStart, to: selectionEnd })
             .deleteSelection()
-            .insertContent(html)
+            .insertContent(safeHtml)
             .run();
     }
 
@@ -350,17 +430,11 @@ export default function EditorPage() {
         if (!editor) return;
 
         try {
-            // Dynamic import to avoid SSR issues
             const { exportContent, downloadBlob } = await import('@/lib/exporters');
-
-            // Get content from editor
             const content = editor.getHTML();
-
-            // Export content in the specified format
             const result = await exportContent(content, title || 'document', format);
 
             if (result.success && result.blob && result.filename) {
-                // Trigger download
                 downloadBlob(result.blob, result.filename);
             } else {
                 setError(result.error || 'Export failed');
@@ -378,6 +452,8 @@ export default function EditorPage() {
     const charCount = countCharacters(textToAnalyze);
     const textDir = detectTextDirection(textToAnalyze);
 
+    const activeLoading = FEATURES.AI_STREAMING_ENABLED ? aiStream.isLoading : isLoading;
+
     return (
         <div className="h-full flex flex-col bg-zinc-950">
             {/* AI Toolbar - Fixed position */}
@@ -392,9 +468,10 @@ export default function EditorPage() {
                 onExport={handleExport}
                 onCopy={handleCopy}
                 onSearch={handleSearch}
+                onStop={handleStopAI}
                 canUndo={editor?.can().undo() || false}
                 canRedo={editor?.can().redo() || false}
-                isLoading={isLoading}
+                isLoading={activeLoading}
                 showToPrompt={showToPrompt}
             />
 
@@ -404,6 +481,17 @@ export default function EditorPage() {
                 isOpen={isSearchOpen}
                 onClose={() => setIsSearchOpen(false)}
             />
+
+            {/* AI Stream Ephemeral Status & Conflict Alerts */}
+            {FEATURES.AI_STREAMING_ENABLED && (
+                <AIStreamStatus
+                    status={aiStream.status}
+                    isConflict={aiStream.isConflict}
+                    errorMessage={aiStream.error}
+                    onRetry={() => aiStream.reset()}
+                    onCancel={() => aiStream.stopStream()}
+                />
+            )}
 
             {/* Error Message */}
             {error && (
@@ -415,14 +503,6 @@ export default function EditorPage() {
                     >
                         Dismiss
                     </button>
-                </div>
-            )}
-
-            {/* Loading Overlay */}
-            {isLoading && (
-                <div className="mx-6 mt-4 p-3 rounded-md bg-indigo-900/20 border border-indigo-500/30 text-indigo-300 text-sm flex items-center gap-2 flex-shrink-0">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Processing with AI...
                 </div>
             )}
 

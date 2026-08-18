@@ -31,7 +31,19 @@ export const SANITIZE_ALLOWED_ATTR = [
     "target", "rel",
 ];
 
-const purify = DOMPurify(window);
+let purifyInstance: ReturnType<typeof DOMPurify> | null = null;
+
+function getPurifier(): ReturnType<typeof DOMPurify> | null {
+    if (typeof window === "undefined") {
+        return null;
+    }
+    if (!purifyInstance) {
+        purifyInstance = typeof (DOMPurify as any).sanitize === "function"
+            ? (DOMPurify as unknown as ReturnType<typeof DOMPurify>)
+            : DOMPurify(window);
+    }
+    return purifyInstance;
+}
 
 /**
  * Sanitize an HTML string so it is safe to render inside TipTap.
@@ -39,6 +51,11 @@ const purify = DOMPurify(window);
  */
 export function sanitizeHtml(input: unknown): string {
     if (typeof input !== "string") return "";
+    const purify = getPurifier();
+    if (!purify) {
+        // Safe SSR pass-through: browser will sanitize upon hydration
+        return input;
+    }
     return purify.sanitize(input, {
         ALLOWED_TAGS: SANITIZE_ALLOWED_TAGS,
         ALLOWED_ATTR: SANITIZE_ALLOWED_ATTR,

@@ -29,13 +29,20 @@ export async function middleware(request: NextRequest) {
         }
     );
 
+    // Intercept OAuth callback codes if they land on root or other pages
+    if (request.nextUrl.searchParams.has("code") && request.nextUrl.pathname !== "/auth/callback") {
+        const url = request.nextUrl.clone();
+        url.pathname = "/auth/callback";
+        return NextResponse.redirect(url);
+    }
+
     // Refresh session if expired
     const {
         data: { user },
     } = await supabase.auth.getUser();
 
     // Protected routes - require authentication
-    const protectedPaths = ["/workspace", "/account"];
+    const protectedPaths = ["/workspace", "/account", "/dashboard"];
     const isProtectedPath = protectedPaths.some((path) =>
         request.nextUrl.pathname.startsWith(path)
     );

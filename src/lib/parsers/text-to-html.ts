@@ -66,9 +66,9 @@ export function convertMarkdownToHTML(text: string): string {
     let html = escapeHtml(text);
 
     // Convert headings
-    html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>');
-    html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>');
-    html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+    html = html.replace(/^### (.*$)/gm, '\n\n<h3>$1</h3>\n\n');
+    html = html.replace(/^## (.*$)/gm, '\n\n<h2>$1</h2>\n\n');
+    html = html.replace(/^# (.*$)/gm, '\n\n<h1>$1</h1>\n\n');
 
     // Convert bold
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
@@ -78,6 +78,9 @@ export function convertMarkdownToHTML(text: string): string {
 
     // Convert code blocks
     html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+
+    // Convert links
+    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
 
     // Convert lists
     html = html.replace(/^\- (.*$)/gm, '<li>$1</li>');

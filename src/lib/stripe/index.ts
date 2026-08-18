@@ -75,7 +75,10 @@ export async function createCheckoutSession(
     tier: 'pro' | 'ultra'
 ): Promise<Stripe.Checkout.Session> {
     try {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        let appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        if (appUrl.includes('localhost') && appUrl.startsWith('https://')) {
+            appUrl = appUrl.replace('https://', 'http://');
+        }
 
         const session = await stripe.checkout.sessions.create({
             customer: customerId,

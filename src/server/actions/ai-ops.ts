@@ -224,22 +224,35 @@ function getLimitsForOperation(
     };
 }
 
+export interface ReservationOptions {
+    operationId?: string;
+    fileId?: string | null;
+    ttlMs?: number;
+}
+
+export interface ReservationResult {
+    reserved: boolean;
+    reason?: string;
+    reservationId?: string;
+    operationId?: string;
+    periodKey?: string;
+}
+
 /**
- * Atomically reserve quota and update usage counters.
+ * Atomically reserve quota and update usage counters with idempotency tracking.
  *
- * SECURITY FIX (TOCTOU race): the old flow did checkQuota() -> processWithAI()
- * -> updateUsage(), which let concurrent requests or quota changes slip past
- * the check. This function enforces the limit inside a single conditional
- * UPDATE so the operation only counts when the user still has quota.
- * Returns { reserved: false, reason } when the quota was exhausted at
- * reservation time — the caller must NOT count the operation.
+ * G1 & G4 COMPLIANCE:
+ * 1. Checks if `operationId` was already reserved (idempotent replay).
+ * 2. Conditionally updates daily/weekly `usage` counters in UTC.
+ * 3. Creates an `ai_reservations` record with status `reserved` and fixed TTL.
  */
 export async function reserveAndUpdateUsage(
     userId: string,
     operation: AIOperation,
     wordCount: number,
-    tier: TierName
-): Promise<{ reserved: boolean; reason?: string }> {
+    tier: TierName,
+    options?: ReservationOptions
+): Promise<ReservationResult> {
     const today = getToday();
     const limitsInfo = getLimitsForOperation(operation, tier, wordCount);
 
@@ -247,8 +260,38 @@ export async function reserveAndUpdateUsage(
         return { reserved: false, reason: limitsInfo.reason };
     }
 
+    // Idempotency check: If operationId is provided, check existing reservation record
+    if (options?.operationId) {
+        const existing = await db.query.aiReservations.findFirst({
+            where: and(
+                eq(schema.aiReservations.userId, userId),
+                eq(schema.aiReservations.operationId, options.operationId)
+            ),
+        });
+
+        if (existing) {
+            if (existing.status === "reserved") {
+                return {
+                    reserved: true,
+                    reservationId: existing.id,
+                    operationId: existing.operationId,
+                    periodKey: existing.periodKey,
+                };
+            }
+            if (existing.status === "committed") {
+                return { reserved: false, reason: "Operation already committed" };
+            }
+            if (existing.status === "refunded") {
+                return { reserved: false, reason: "Operation already refunded" };
+            }
+            if (existing.status === "expired") {
+                return { reserved: false, reason: "Reservation expired" };
+            }
+        }
+    }
+
     // Ensure the daily usage row exists (UPSERT is atomic per row on conflict)
-    const todayUsage = await getTodayUsage(userId);
+    await getTodayUsage(userId);
 
     // Build the SQL that only applies when quota remains
     let quotaGuard = sql`TRUE`;
@@ -256,18 +299,14 @@ export async function reserveAndUpdateUsage(
 
     switch (operation) {
         case "correct":
-        case "improve":
-        case "translate": {
-            const column = operation === "correct" ? "correct_words" : operation === "improve" ? "improve_words" : "translate_words";
-            updateFields[column] = sql`${column} + ${wordCount}`;
-            if (limitsInfo.period === "weekly") {
-                const weekStart = getWeekStart();
-                quotaGuard = sql`(SELECT COALESCE(SUM(correct_words + improve_words + translate_words), 0) FROM ${schema.usage} WHERE user_id = ${userId} AND date >= ${weekStart}) + ${wordCount} <= ${limitsInfo.maxWords}`;
-            } else {
-                quotaGuard = sql`COALESCE(correct_words, 0) + COALESCE(improve_words, 0) + COALESCE(translate_words, 0) + ${wordCount} <= ${limitsInfo.maxWords}`;
-            }
+            updateFields.correctWords = sql`correct_words + ${wordCount}`;
             break;
-        }
+        case "improve":
+            updateFields.improveWords = sql`improve_words + ${wordCount}`;
+            break;
+        case "translate":
+            updateFields.translateWords = sql`translate_words + ${wordCount}`;
+            break;
         case "summarize":
             updateFields.summarizeCount = sql`summarize_count + 1`;
             updateFields.summarizeWords = sql`summarize_words + ${wordCount}`;
@@ -277,6 +316,15 @@ export async function reserveAndUpdateUsage(
             updateFields.toPromptCount = sql`to_prompt_count + 1`;
             quotaGuard = sql`COALESCE(to_prompt_count, 0) + 1 <= ${TIER_LIMITS[tier].toPrompt?.dailyLimit ?? 0}`;
             break;
+    }
+
+    if (operation === "correct" || operation === "improve" || operation === "translate") {
+        if (limitsInfo.period === "weekly") {
+            const weekStart = getWeekStart();
+            quotaGuard = sql`(SELECT COALESCE(SUM(correct_words + improve_words + translate_words), 0) FROM ${schema.usage} WHERE user_id = ${userId} AND date >= ${weekStart}) + ${wordCount} <= ${limitsInfo.maxWords}`;
+        } else {
+            quotaGuard = sql`COALESCE(correct_words, 0) + COALESCE(improve_words, 0) + COALESCE(translate_words, 0) + ${wordCount} <= ${limitsInfo.maxWords}`;
+        }
     }
 
     const [updated] = await db
@@ -298,46 +346,266 @@ export async function reserveAndUpdateUsage(
                 operation === "summarize"
                     ? "Daily summarize limit reached"
                     : operation === "toPrompt"
-                      ? "Daily ToPrompt limit reached"
-                      : `Word limit (${limitsInfo.maxWords}) exceeded for ${limitsInfo.period} period`,
+                        ? "Daily ToPrompt limit reached"
+                        : `Word limit (${limitsInfo.maxWords}) exceeded for ${limitsInfo.period} period`,
         };
     }
 
-    return { reserved: true };
+    // If operationId is provided, persist the reservation record in `ai_reservations`
+    if (options?.operationId) {
+        const ttlMs = options.ttlMs || 5 * 60 * 1000; // 5 minutes default TTL
+        const expiresAt = new Date(Date.now() + ttlMs);
+
+        try {
+            const [newReservation] = await db
+                .insert(schema.aiReservations)
+                .values({
+                    operationId: options.operationId,
+                    userId,
+                    fileId: options.fileId || null,
+                    operation,
+                    reservedAmount: wordCount,
+                    periodKey: today,
+                    status: "reserved",
+                    expiresAt,
+                })
+                .returning();
+
+            return {
+                reserved: true,
+                reservationId: newReservation?.id,
+                operationId: options.operationId,
+                periodKey: today,
+            };
+        } catch (insertError) {
+            // Check if concurrent insert happened
+            const existing = await db.query.aiReservations.findFirst({
+                where: eq(schema.aiReservations.operationId, options.operationId),
+            });
+            if (existing) {
+                return {
+                    reserved: true,
+                    reservationId: existing.id,
+                    operationId: existing.operationId,
+                    periodKey: existing.periodKey,
+                };
+            }
+            throw insertError;
+        }
+    }
+
+    return { reserved: true, periodKey: today };
 }
 
 /**
- * Refund a previously reserved quota when the AI operation ultimately fails
- * (network outage, provider error, key rotation exhaustion, etc.).
+ * Refund a previously reserved quota by operationId (Idempotent).
  *
- * ENGINEERING UPGRADE (W1): previously a failed `processWithAI` call left the
- * reservation in place forever — every failure permanently consumed quota
- * the user never benefited from (a tangible financial loss per failed call).
- * This function reverses the exact counters that `reserveAndUpdateUsage`
- * added, using bounded subtraction (GREATEST(..., 0) for counts and word
- * totals) so a refund can never underflow a counter below zero even if the
- * row was concurrently modified by another refund (idempotent, safe under
- * concurrency — refunds are bounded by the reservation, which happened
- * first and is enforced by the row's own row-level lock in Postgres).
+ * G1 & G4 COMPLIANCE:
+ * 1. Checks if reservation is currently in `reserved` status.
+ * 2. Transition to `refunded` is conditional and atomic.
+ * 3. Uses the EXACT `periodKey` captured at reservation time (cross-midnight safety).
+ * 4. Second call with same operationId returns `{ refunded: false, reason: "already_refunded" }`.
  */
-async function refundUsage(
+export async function refundAIReservation(
+    operationId: string,
+    reason: string = "stream_failed"
+): Promise<{ refunded: boolean; reason?: string }> {
+    const reservation = await db.query.aiReservations.findFirst({
+        where: eq(schema.aiReservations.operationId, operationId),
+    });
+
+    if (!reservation) {
+        return { refunded: false, reason: "reservation_not_found" };
+    }
+
+    if (reservation.status === "committed") {
+        return { refunded: false, reason: "already_committed" };
+    }
+
+    if (reservation.status === "refunded") {
+        return { refunded: false, reason: "already_refunded" };
+    }
+
+    if (reservation.status === "expired") {
+        return { refunded: false, reason: "already_expired" };
+    }
+
+    // Atomic conditional transition: reserved -> refunded
+    const [updatedReservation] = await db
+        .update(schema.aiReservations)
+        .set({
+            status: "refunded",
+            updatedAt: new Date(),
+        })
+        .where(
+            and(
+                eq(schema.aiReservations.id, reservation.id),
+                eq(schema.aiReservations.status, "reserved")
+            )
+        )
+        .returning();
+
+    if (!updatedReservation) {
+        // Raced with another refund or commit call
+        return { refunded: false, reason: "state_conflict" };
+    }
+
+    // Revert usage counters using the recorded `periodKey` (UTC date at reservation time)
+    const undoFields: Record<string, unknown> = {};
+    const wordCount = reservation.reservedAmount;
+
+    switch (reservation.operation as AIOperation) {
+        case "correct":
+            undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
+            break;
+        case "improve":
+            undoFields.improveWords = sql`GREATEST(improve_words - ${wordCount}, 0)`;
+            break;
+        case "translate":
+            undoFields.translateWords = sql`GREATEST(translate_words - ${wordCount}, 0)`;
+            break;
+        case "summarize":
+            undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
+            undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
+            break;
+        case "toPrompt":
+            undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
+            break;
+    }
+
+    await db
+        .update(schema.usage)
+        .set(undoFields)
+        .where(
+            and(
+                eq(schema.usage.userId, reservation.userId),
+                eq(schema.usage.date, reservation.periodKey)
+            )
+        );
+
+    return { refunded: true };
+}
+
+/**
+ * Transition a reservation from reserved -> committed (Idempotent).
+ */
+export async function commitAIReservation(
+    operationId: string
+): Promise<{ committed: boolean; reason?: string }> {
+    const [updated] = await db
+        .update(schema.aiReservations)
+        .set({
+            status: "committed",
+            updatedAt: new Date(),
+        })
+        .where(
+            and(
+                eq(schema.aiReservations.operationId, operationId),
+                eq(schema.aiReservations.status, "reserved")
+            )
+        )
+        .returning();
+
+    if (!updated) {
+        const current = await db.query.aiReservations.findFirst({
+            where: eq(schema.aiReservations.operationId, operationId),
+        });
+        if (current?.status === "committed") {
+            return { committed: true, reason: "already_committed" };
+        }
+        return { committed: false, reason: current?.status || "not_found" };
+    }
+
+    return { committed: true };
+}
+
+/**
+ * Sweep and expire stale reservations that passed their TTL.
+ */
+export async function expireStaleReservations(): Promise<number> {
+    const now = new Date();
+    const staleReservations = await db.query.aiReservations.findMany({
+        where: and(
+            eq(schema.aiReservations.status, "reserved"),
+            sql`expires_at <= ${now}`
+        ),
+    });
+
+    let expiredCount = 0;
+    for (const res of staleReservations) {
+        const [updated] = await db
+            .update(schema.aiReservations)
+            .set({ status: "expired", updatedAt: now })
+            .where(
+                and(
+                    eq(schema.aiReservations.id, res.id),
+                    eq(schema.aiReservations.status, "reserved")
+                )
+            )
+            .returning();
+
+        if (updated) {
+            // Refund the quota on the original periodKey
+            const undoFields: Record<string, unknown> = {};
+            const wordCount = res.reservedAmount;
+
+            switch (res.operation as AIOperation) {
+                case "correct":
+                    undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
+                    break;
+                case "improve":
+                    undoFields.improveWords = sql`GREATEST(improve_words - ${wordCount}, 0)`;
+                    break;
+                case "translate":
+                    undoFields.translateWords = sql`GREATEST(translate_words - ${wordCount}, 0)`;
+                    break;
+                case "summarize":
+                    undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
+                    undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
+                    break;
+                case "toPrompt":
+                    undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
+                    break;
+            }
+
+            await db
+                .update(schema.usage)
+                .set(undoFields)
+                .where(
+                    and(
+                        eq(schema.usage.userId, res.userId),
+                        eq(schema.usage.date, res.periodKey)
+                    )
+                );
+
+            expiredCount++;
+        }
+    }
+
+    return expiredCount;
+}
+
+/**
+ * Refund a previously reserved quota (Legacy wrapper for backward compatibility).
+ */
+export async function refundUsage(
     userId: string,
     operation: AIOperation,
     wordCount: number,
     tier: TierName
 ): Promise<void> {
     const today = getToday();
-    const limitsInfo = getLimitsForOperation(operation, tier, wordCount);
-
     const undoFields: Record<string, unknown> = {};
     switch (operation) {
         case "correct":
-        case "improve":
-        case "translate": {
-            const column = operation === "correct" ? "correct_words" : operation === "improve" ? "improve_words" : "translate_words";
-            undoFields[column] = sql`GREATEST(${column} - ${wordCount}, 0)`;
+            undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
             break;
-        }
+        case "improve":
+            undoFields.improveWords = sql`GREATEST(improve_words - ${wordCount}, 0)`;
+            break;
+        case "translate":
+            undoFields.translateWords = sql`GREATEST(translate_words - ${wordCount}, 0)`;
+            break;
         case "summarize":
             undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
             undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
@@ -353,13 +621,6 @@ async function refundUsage(
         .where(
             and(eq(schema.usage.userId, userId), eq(schema.usage.date, today))
         );
-
-    // `limitsInfo.allowed` is only false for toPrompt-disabled tiers or
-    // oversized summarize input — cases that `reserveAndUpdateUsage`
-    // rejects without reserving, so a refund cannot occur for them. The
-    // word limits were checked under the guard at reservation time; the
-    // reverse update simply subtracts the words that were added.
-    void limitsInfo;
 }
 
 /**

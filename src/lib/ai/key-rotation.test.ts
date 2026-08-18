@@ -11,6 +11,10 @@ const { mockStore, mockExpires, mockRedis, MOCK_REDIS_KEYS, resetMocks } = vi.ho
             mockStore.set(key, value);
             return 'OK';
         }),
+        del: vi.fn(async (key: string) => {
+            mockStore.delete(key);
+            return 1;
+        }),
         incr: vi.fn(async (key: string) => {
             const current = (mockStore.get(key) as number) ?? 0;
             const newValue = current + 1;
@@ -50,6 +54,11 @@ import {
     forceKeyRotationAndGetKey,
     shouldRotateOnError,
     extractErrorCode,
+    is503OrOverloadError,
+    isModelCircuitOpen,
+    tripModelCircuit,
+    recordModelFailure,
+    resetModelCircuit,
     getRotationStatus,
     ROTATION_ERROR_CODES,
 } from './key-rotation';
@@ -69,23 +78,20 @@ describe('Key Rotation System', () => {
     });
 
     describe('getApiKeyForRequest', () => {
-        it('should return first key when no previous usage', async () => {
+        it('should return the first key when starting fresh', async () => {
             const result = await getApiKeyForRequest();
 
             expect(result.key).toBe('test-key-1');
             expect(result.index).toBe(0);
         });
 
-        it('should NOT increment counter when getting key', async () => {
+        it('should NOT increment counter when getting key for request', async () => {
             await getApiKeyForRequest();
 
-            // Counter should still be 0 or undefined
-            const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
-            expect(mockStore.get(usageKey)).toBeUndefined();
+            expect(mockRedis.incr).not.toHaveBeenCalled();
         });
 
-        it('should rotate to next key when counter reaches limit', async () => {
-            // Set counter to limit
+        it('should rotate to next key when current key reaches limit (20)', async () => {
             const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
             mockStore.set(usageKey, 20);
             mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
@@ -94,21 +100,20 @@ describe('Key Rotation System', () => {
 
             expect(result.key).toBe('test-key-2');
             expect(result.index).toBe(1);
+            expect(mockStore.get(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX)).toBe(1);
         });
 
-        it('should set TTL on old counter when rotating', async () => {
+        it('should set TTL on old counter when rotating after reaching limit', async () => {
             const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
             mockStore.set(usageKey, 20);
             mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
 
             await getApiKeyForRequest();
 
-            // Check that expire was called with 1 hour (3600 seconds)
             expect(mockRedis.expire).toHaveBeenCalledWith(usageKey, 3600);
         });
 
-        it('should wrap around to first key after last key', async () => {
-            // Set to last key with max usage
+        it('should wrap around to first key when reaching the end of key list', async () => {
             const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}2`;
             mockStore.set(usageKey, 20);
             mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 2);
@@ -119,29 +124,30 @@ describe('Key Rotation System', () => {
             expect(result.index).toBe(0);
         });
 
-        it('should throw error when no API keys configured', async () => {
-            vi.unstubAllEnvs();
+        it('should throw error when no API keys are configured', async () => {
+            vi.stubEnv('GEMINI_KEY_1', '');
+            vi.stubEnv('GEMINI_KEY_2', '');
+            vi.stubEnv('GEMINI_KEY_3', '');
 
             await expect(getApiKeyForRequest()).rejects.toThrow('No Gemini API keys configured');
         });
     });
 
     describe('confirmApiKeyUsage', () => {
-        it('should increment counter after successful request', async () => {
+        it('should increment usage counter for the specified key', async () => {
             await confirmApiKeyUsage(0);
 
             const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
             expect(mockStore.get(usageKey)).toBe(1);
         });
 
-        it('should set TTL when counter reaches limit', async () => {
-            // Set counter to 19 (one less than limit)
+        it('should set TTL when counter reaches limit (20)', async () => {
             const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
             mockStore.set(usageKey, 19);
 
             await confirmApiKeyUsage(0);
 
-            // After increment, counter is 20, TTL should be set
+            expect(mockStore.get(usageKey)).toBe(20);
             expect(mockRedis.expire).toHaveBeenCalledWith(usageKey, 3600);
         });
 
@@ -172,7 +178,6 @@ describe('Key Rotation System', () => {
 
             await forceKeyRotationAndGetKey();
 
-            // TTL should NOT be set - only set when counter reaches 20
             expect(mockRedis.expire).not.toHaveBeenCalled();
         });
 
@@ -192,6 +197,45 @@ describe('Key Rotation System', () => {
 
             expect(result.key).toBe('test-key-1');
             expect(result.index).toBe(0);
+        });
+    });
+
+    describe('Circuit Breaker (Distributed Model Failover)', () => {
+        it('should report circuit closed by default', async () => {
+            const isOpen = await isModelCircuitOpen('gemini-3.7-flash');
+            expect(isOpen).toBe(false);
+        });
+
+        it('should trip model circuit in Redis for 1 hour', async () => {
+            await tripModelCircuit('gemini-3.7-flash', 3600);
+
+            const isOpen = await isModelCircuitOpen('gemini-3.7-flash');
+            expect(isOpen).toBe(true);
+            expect(mockRedis.expire).toHaveBeenCalledWith('gemini:circuit_breaker:gemini-3.7-flash', 3600);
+        });
+
+        it('should record model failure and trip circuit on consecutive 503s', async () => {
+            await recordModelFailure('gemini-3.7-flash');
+            expect(await isModelCircuitOpen('gemini-3.7-flash')).toBe(false);
+
+            await recordModelFailure('gemini-3.7-flash'); // Second consecutive failure
+            expect(await isModelCircuitOpen('gemini-3.7-flash')).toBe(true);
+        });
+
+        it('should reset model circuit in Redis', async () => {
+            await tripModelCircuit('gemini-3.7-flash');
+            expect(await isModelCircuitOpen('gemini-3.7-flash')).toBe(true);
+
+            await resetModelCircuit('gemini-3.7-flash');
+            expect(await isModelCircuitOpen('gemini-3.7-flash')).toBe(false);
+        });
+
+        it('should identify 503 and high demand overload errors', () => {
+            expect(is503OrOverloadError(503)).toBe(true);
+            expect(is503OrOverloadError(new Error('503 Service Unavailable'))).toBe(true);
+            expect(is503OrOverloadError(new Error('This model is currently experiencing high demand.'))).toBe(true);
+            expect(is503OrOverloadError(429)).toBe(false);
+            expect(is503OrOverloadError(400)).toBe(false);
         });
     });
 
@@ -279,12 +323,10 @@ describe('Key Rotation System', () => {
 
     describe('Counter never exceeds 20', () => {
         it('should rotate before counter can exceed limit', async () => {
-            // Set counter at exactly the limit
             const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
             mockStore.set(usageKey, 20);
             mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
 
-            // Next request should get a NEW key, not the exhausted one
             const result = await getApiKeyForRequest();
 
             expect(result.index).toBe(1);
@@ -292,18 +334,15 @@ describe('Key Rotation System', () => {
         });
 
         it('should not allow 21st request on same key', async () => {
-            // Simulate 20 requests on key 0
             mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
 
             for (let i = 0; i < 20; i++) {
                 const keyInfo = await getApiKeyForRequest();
-                // Only confirm if still on key 0
                 if (keyInfo.index === 0) {
                     await confirmApiKeyUsage(keyInfo.index);
                 }
             }
 
-            // 21st request should be on key 1
             const result = await getApiKeyForRequest();
             expect(result.index).toBe(1);
         });

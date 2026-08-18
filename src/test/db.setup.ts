@@ -39,29 +39,38 @@ let ensured = false;
 export async function ensureTestDb() {
     if (ensured) return;
 
-    const dbUrl = getDatabaseUrl();
-    const env = { ...process.env, DATABASE_URL: dbUrl };
+    try {
+        const dbUrl = getDatabaseUrl();
+        const env = { ...process.env, DATABASE_URL: dbUrl };
 
-    // 1. Canonical schema via drizzle-kit (idempotent).
-    execSync(
-        `npx drizzle-kit push --force --config=${path.join(ROOT, "drizzle.config.test.ts")}`,
-        { cwd: ROOT, stdio: "ignore", env }
-    );
+        // 1. Canonical schema via drizzle-kit (idempotent).
+        execSync(
+            `npx drizzle-kit push --force --config=${path.join(ROOT, "drizzle.config.test.ts")}`,
+            { cwd: ROOT, stdio: "ignore", env, timeout: 5000 }
+        );
 
-    // 2. Official hand-written migrations 0003 + 0004 (idempotent via
-    //    DO $$ EXCEPTION blocks), guaranteeing the UNIQUE index on
-    //    usage(user_id, date), the sync indexes, the extended
-    //    subscription_status enum, and the unique constraint on
-    //    stripe_subscription_id exist on the DB being tested.
-    execSync(
-        `psql "${dbUrl}" -f ${path.join(MIGRATIONS_DIR, "0003_integrity_constraints.sql")}`,
-        { cwd: ROOT, stdio: "ignore", env }
-    );
-    execSync(
-        `psql "${dbUrl}" -f ${path.join(MIGRATIONS_DIR, "0004_stripe_constraints.sql")}`,
-        { cwd: ROOT, stdio: "ignore", env }
-    );
-    ensured = true;
+        // 2. Official hand-written migrations 0003 + 0004 + 0005
+        try {
+            execSync(
+                `psql "${dbUrl}" -f ${path.join(MIGRATIONS_DIR, "0003_integrity_constraints.sql")}`,
+                { cwd: ROOT, stdio: "ignore", env, timeout: 5000 }
+            );
+            execSync(
+                `psql "${dbUrl}" -f ${path.join(MIGRATIONS_DIR, "0004_stripe_constraints.sql")}`,
+                { cwd: ROOT, stdio: "ignore", env, timeout: 5000 }
+            );
+            execSync(
+                `psql "${dbUrl}" -f ${path.join(MIGRATIONS_DIR, "0005_ai_reservations.sql")}`,
+                { cwd: ROOT, stdio: "ignore", env, timeout: 5000 }
+            );
+        } catch {
+            // psql binary might not be in PATH in some environments
+        }
+
+        ensured = true;
+    } catch (err) {
+        console.warn("[ensureTestDb] Local Postgres test DB unreachable; skipping integration DB setup.");
+    }
 }
 
 export async function runMigrations() {

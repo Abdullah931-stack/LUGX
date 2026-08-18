@@ -95,6 +95,33 @@ export const usage = pgTable("usage", {
     index("idx_usage_user_date").on(table.userId, table.date),
 ]);
 
+// AI Reservation status enum for idempotent quota & streaming lifecycle
+export const aiReservationStatusEnum = pgEnum("ai_reservation_status", [
+    "reserved",
+    "committed",
+    "refunded",
+    "expired",
+]);
+
+// AI Reservations table - tracks idempotent quota reservation lifecycle
+export const aiReservations = pgTable("ai_reservations", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    operationId: varchar("operation_id", { length: 255 }).notNull().unique(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    fileId: uuid("file_id").references(() => files.id, { onDelete: "set null" }),
+    operation: varchar("operation", { length: 64 }).notNull(),
+    reservedAmount: integer("reserved_amount").notNull().default(0),
+    periodKey: varchar("period_key", { length: 32 }).notNull(),
+    status: aiReservationStatusEnum("status").notNull().default("reserved"),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+    uniqueIndex("idx_ai_reservations_operation_id").on(table.operationId),
+    index("idx_ai_reservations_user_status").on(table.userId, table.status),
+    index("idx_ai_reservations_status_expires").on(table.status, table.expiresAt),
+]);
+
 // Types for TypeScript
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -102,3 +129,5 @@ export type File = typeof files.$inferSelect;
 export type NewFile = typeof files.$inferInsert;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type Usage = typeof usage.$inferSelect;
+export type AIReservation = typeof aiReservations.$inferSelect;
+export type NewAIReservation = typeof aiReservations.$inferInsert;
