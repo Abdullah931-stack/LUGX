@@ -195,12 +195,15 @@ export default function EditorPage() {
                 editorGenerationRef.current += 1;
             }
 
-            // Also save locally for offline/sync
+            // Also save locally for offline/sync with latest server version & etag
             if (syncHook.isInitialized) {
                 await syncHook.saveLocal({
                     id: fileId,
                     content,
                     title,
+                    version: saveRes.version || fileVersionRef.current,
+                    etag: saveRes.etag || fileEtagRef.current || '',
+                    isDirty: !saveRes.success,
                 });
             }
 

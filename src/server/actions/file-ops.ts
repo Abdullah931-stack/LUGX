@@ -3,128 +3,249 @@
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/lib/db";
 import { getUser } from "@/lib/supabase/server";
-import { eq, and, isNull, isNotNull, gte } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, inArray } from "drizzle-orm";
 import { generateETagSync } from "@/lib/sync/etag-generator";
+import { randomUUID } from "crypto";
+
+export interface UpdateFileOptions {
+    expectedVersion?: number;
+    expectedETag?: string;
+    operationId?: string;
+}
+
+export interface FileOpResult<T = typeof schema.files.$inferSelect> {
+    success: boolean;
+    data?: T;
+    error?: string;
+    status?: "conflict" | "unauthorized" | "not_found" | "forbidden" | "error";
+    etag?: string;
+    version?: number;
+    serverVersion?: {
+        version?: number | null;
+        etag?: string | null;
+        updatedAt?: string;
+        content?: string | null;
+    };
+}
+
+import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-naming";
 
 /**
- * Create a new file or folder
+ * Fetch all descendant IDs (children, grandchildren, etc.) of a folder
+ */
+async function getDescendantIds(folderId: string, userId: string): Promise<string[]> {
+    const descendantIds: string[] = [];
+    const queue: string[] = [folderId];
+
+    while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        const children = await db.query.files.findMany({
+            where: and(
+                eq(schema.files.parentFolderId, currentId),
+                eq(schema.files.userId, userId),
+                isNull(schema.files.deletedAt)
+            ),
+            columns: { id: true, isFolder: true },
+        });
+
+        for (const child of children) {
+            descendantIds.push(child.id);
+            if (child.isFolder) {
+                queue.push(child.id);
+            }
+        }
+    }
+
+    return descendantIds;
+}
+
+/**
+ * Create a new file or folder with strict server-side ownership and single-step atomic ETag generation
  */
 export async function createFile(
     title: string,
     parentFolderId?: string | null,
     isFolder = false
-): Promise<{ success: boolean; data?: typeof schema.files.$inferSelect; error?: string }> {
+): Promise<FileOpResult> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
+        const sanitizedTitle = (title || "Untitled Document").trim().slice(0, 500);
+
+        // Validate parent folder ownership and validity if specified
+        if (parentFolderId) {
+            const parent = await db.query.files.findFirst({
+                where: and(
+                    eq(schema.files.id, parentFolderId),
+                    eq(schema.files.userId, user.id)
+                ),
+            });
+
+            if (!parent) {
+                return { success: false, status: "forbidden", error: "Parent folder not found or forbidden" };
+            }
+
+            if (parent.deletedAt) {
+                return { success: false, status: "conflict", error: "Cannot create item in a deleted folder" };
+            }
+
+            if (!parent.isFolder) {
+                return { success: false, status: "error", error: "Parent destination must be a folder" };
+            }
+        }
+
+        const newFileId = randomUUID();
         const now = new Date();
         const initialContent = isFolder ? null : "";
+
+        // Single-step atomic ETag generation: eliminates the race window where ETag was briefly null
+        const etag = isFolder
+            ? null
+            : generateETagSync({
+                id: newFileId,
+                content: initialContent || "",
+                updatedAt: now,
+            });
 
         const [file] = await db
             .insert(schema.files)
             .values({
+                id: newFileId,
                 userId: user.id,
-                title,
+                title: sanitizedTitle,
                 parentFolderId: parentFolderId || null,
                 isFolder,
                 content: initialContent,
+                etag,
                 version: 1,
+                createdAt: now,
+                updatedAt: now,
             })
             .returning();
 
-        // Generate ETag with actual file ID
-        if (!isFolder && file) {
-            const etag = generateETagSync({
-                id: file.id,
-                content: file.content || "",
-                updatedAt: file.updatedAt,
-            });
-            await db.update(schema.files)
-                .set({ etag })
-                .where(eq(schema.files.id, file.id));
-            file.etag = etag;
+        try {
+            revalidatePath("/workspace");
+        } catch {
+            // Ignore during standalone testing
         }
 
-        revalidatePath("/workspace");
         return { success: true, data: file };
 
     } catch (error) {
         console.error("Create file error:", error);
-        return { success: false, error: "Failed to create file" };
+        return { success: false, status: "error", error: "Failed to create file" };
     }
 }
 
 /**
- * Update file content
+ * Update file content with optimistic concurrency control (If-Match / expectedVersion)
  */
 export async function updateFileContent(
     fileId: string,
-    content: string
-): Promise<{ success: boolean; error?: string; etag?: string; version?: number }> {
+    content: string,
+    options?: UpdateFileOptions
+): Promise<FileOpResult> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
-        const now = new Date();
-        const newEtag = generateETagSync({ id: fileId, content, updatedAt: now });
-
-        // ENGINEERING UPGRADE (W5): Lost-update guard. The old read-then-write
-        // flow had a race window: two concurrent saves could both read the
-        // same version, both compute version+1, and the second write would
-        // silently overwrite the first writer's content. Now the read and the
-        // write are fused into a single atomic step: the UPDATE itself only
-        // succeeds when the row still carries the version we just read. If
-        // another writer moved the version first, zero rows are affected and
-        // the caller is told to re-read (fail-safe — never silent loss).
         const currentFile = await db.query.files.findFirst({
             where: and(
                 eq(schema.files.id, fileId),
                 eq(schema.files.userId, user.id),
-                // Tombstoned rows can't be updated — writing to a deleted
-                // file is a logic error (e.g. stale sync replay)
                 isNull(schema.files.deletedAt)
             ),
-            columns: { version: true },
         });
 
         if (!currentFile) {
-            return { success: false, error: "File not found or deleted" };
+            return { success: false, status: "not_found", error: "File not found or deleted" };
+        }
+
+        if (currentFile.isFolder) {
+            return { success: false, status: "error", error: "Cannot update content of a folder" };
         }
 
         const currentVersion = currentFile.version ?? 0;
-        const newVersion = currentVersion + 1;
 
+        // Verify optimistic lock precondition if supplied
+        if (options?.expectedVersion !== undefined && options.expectedVersion !== currentVersion) {
+            return {
+                success: false,
+                status: "conflict",
+                error: "Conflict: this file was modified by another session. Please reload and try again.",
+                serverVersion: {
+                    version: currentFile.version,
+                    etag: currentFile.etag,
+                    updatedAt: currentFile.updatedAt.toISOString(),
+                    content: currentFile.content,
+                },
+            };
+        }
+
+        if (options?.expectedETag && currentFile.etag && options.expectedETag !== currentFile.etag) {
+            return {
+                success: false,
+                status: "conflict",
+                error: "Conflict: ETag mismatch detected.",
+                serverVersion: {
+                    version: currentFile.version,
+                    etag: currentFile.etag,
+                    updatedAt: currentFile.updatedAt.toISOString(),
+                    content: currentFile.content,
+                },
+            };
+        }
+
+        const baseVersion = options?.expectedVersion ?? currentVersion;
+        const newVersion = baseVersion + 1;
+        const now = new Date();
+        const newEtag = generateETagSync({ id: fileId, content, updatedAt: now });
+
+        // Atomic update conditioned on holding the base version and row not deleted
         const [updated] = await db
             .update(schema.files)
             .set({ content, etag: newEtag, version: newVersion, updatedAt: now })
             .where(and(
                 eq(schema.files.id, fileId),
                 eq(schema.files.userId, user.id),
-                eq(schema.files.version, currentVersion),
+                eq(schema.files.version, baseVersion),
                 isNull(schema.files.deletedAt)
             ))
             .returning();
 
         if (!updated) {
-            // Zero affected rows: someone else saved a newer version in the
-            // window between our read and our write. Returning `conflict: true`
-            // lets the client refetch and merge instead of losing data.
-            return {
-                success: false,
-                error: "Conflict: this file was modified by another session. Please reload and try again.",
-            };
+            // Concurrent writer raced ahead in the read-write window
+            const refreshed = await db.query.files.findFirst({
+                where: and(eq(schema.files.id, fileId), eq(schema.files.userId, user.id)),
+            });
+
+            if (refreshed && !refreshed.deletedAt) {
+                return {
+                    success: false,
+                    status: "conflict",
+                    error: "Conflict: this file was modified by another session. Please reload and try again.",
+                    serverVersion: {
+                        version: refreshed.version,
+                        etag: refreshed.etag,
+                        updatedAt: refreshed.updatedAt.toISOString(),
+                        content: refreshed.content,
+                    },
+                };
+            }
+
+            return { success: false, status: "not_found", error: "File not found or deleted" };
         }
 
-        return { success: true, etag: newEtag, version: newVersion };
+        return { success: true, etag: newEtag, version: newVersion, data: updated };
 
     } catch (error) {
         console.error("Update file error:", error);
-        return { success: false, error: "Failed to update file" };
+        return { success: false, status: "error", error: "Failed to update file" };
     }
 }
 
@@ -134,76 +255,78 @@ export async function updateFileContent(
 export async function renameFile(
     fileId: string,
     newTitle: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<FileOpResult<null>> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
+
+        const sanitizedTitle = newTitle.trim().slice(0, 500);
 
         const updated = await db
             .update(schema.files)
             .set({
-                title: newTitle,
+                title: sanitizedTitle,
                 updatedAt: new Date(),
             })
             .where(
                 and(
                     eq(schema.files.id, fileId),
                     eq(schema.files.userId, user.id),
-                    // Renaming a tombstoned row is forbidden
                     isNull(schema.files.deletedAt)
                 )
             );
 
         if ((updated.rowCount ?? 0) === 0) {
-            return { success: false, error: "File not found or deleted" };
+            return { success: false, status: "not_found", error: "File not found or deleted" };
         }
 
-        revalidatePath("/workspace");
+        try {
+            revalidatePath("/workspace");
+        } catch {
+            // Ignore during standalone testing
+        }
+
         return { success: true };
 
     } catch (error) {
         console.error("Rename file error:", error);
-        return { success: false, error: "Failed to rename file" };
+        return { success: false, status: "error", error: "Failed to rename file" };
     }
 }
 
 /**
- * Delete file or folder (SOFT DELETE — production lifecycle v2).
- *
- * Files are never physically removed on user action: deleted_at is set,
- * the row stays in the database for 30 days so that:
- *   - Sync clients can reconcile the deletion against their local copies
- *     (a hard delete would orphan stale IndexedDB rows and re-create
- *     deleted files on the next sync).
- *   - Users can restore accidentally deleted files (restoreFile).
- *
- * A recurring purge job (/api/cron/purge-deleted) permanently removes
- * rows whose deleted_at is older than 30 days.
- *
- * NOTE: children of a deleted folder are tombstoned by the same call on
- * the client side (the folder-picker / tree UI re-renders); this action
- * only tombstones the targeted row. Children become unreachable because
- * read queries filter out tombstones.
+ * Delete file or folder with cascading tombstone propagation for all descendants.
  */
 export async function deleteFile(
     fileId: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<FileOpResult<null>> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
-        // Soft delete: mark the row with a timestamp instead of removing it.
-        // Idempotent — re-deleting an already-deleted row just refreshes the
-        // timestamp (extends the restoration window), never throws.
+        const target = await db.query.files.findFirst({
+            where: and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id)
+            ),
+        });
+
+        if (!target) {
+            return { success: false, status: "not_found", error: "File not found" };
+        }
+
+        const now = new Date();
+
+        // 1. Tombstone target
         await db
             .update(schema.files)
             .set({
-                deletedAt: new Date(),
-                updatedAt: new Date(),
+                deletedAt: now,
+                updatedAt: now,
             })
             .where(
                 and(
@@ -212,30 +335,50 @@ export async function deleteFile(
                 )
             );
 
-        revalidatePath("/workspace");
+        // 2. If target is a folder, cascade soft-delete to all descendants
+        if (target.isFolder) {
+            const descendantIds = await getDescendantIds(fileId, user.id);
+            if (descendantIds.length > 0) {
+                await db
+                    .update(schema.files)
+                    .set({
+                        deletedAt: now,
+                        updatedAt: now,
+                    })
+                    .where(
+                        and(
+                            eq(schema.files.userId, user.id),
+                            inArray(schema.files.id, descendantIds)
+                        )
+                    );
+            }
+        }
+
+        try {
+            revalidatePath("/workspace");
+        } catch {
+            // Ignore during standalone testing
+        }
+
         return { success: true };
 
     } catch (error) {
         console.error("Delete file error:", error);
-        return { success: false, error: "Failed to delete file" };
+        return { success: false, status: "error", error: "Failed to delete file" };
     }
 }
 
 /**
  * Restore a soft-deleted file or folder within the retention window.
- *
- * Idempotent: restoring an already-live row is a no-op (update touches
- * zero rows for live rows where deletedAt IS NULL). The restore also
- * clears the tombstone on children if the restored row is a folder,
- * so a restored folder returns with its contents visible.
+ * Automatically resolves title collisions by appending `(Restored)` if a live duplicate exists.
  */
 export async function restoreFile(
     fileId: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<FileOpResult<null>> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
         // Verify ownership + that the row still exists (not yet purged)
@@ -247,13 +390,59 @@ export async function restoreFile(
         });
 
         if (!target) {
-            return { success: false, error: "File not found or permanently deleted" };
+            return { success: false, status: "not_found", error: "File not found or permanently deleted" };
         }
 
-        // Restore the target row (no-op if already live)
+        let targetParentId = target.parentFolderId;
+
+        // If target has a deleted or non-existent parent folder, reconnect restored file to root
+        if (targetParentId) {
+            const parent = await db.query.files.findFirst({
+                where: and(
+                    eq(schema.files.id, targetParentId),
+                    eq(schema.files.userId, user.id)
+                ),
+            });
+
+            if (!parent || parent.deletedAt) {
+                targetParentId = null;
+            }
+        }
+
+        // ADV-01 FIX: Check for live name collisions in the destination folder
+        let finalTitle = target.title;
+        let collisionCounter = 1;
+
+        while (true) {
+            const existingLive = await db.query.files.findFirst({
+                where: and(
+                    eq(schema.files.userId, user.id),
+                    targetParentId
+                        ? eq(schema.files.parentFolderId, targetParentId)
+                        : isNull(schema.files.parentFolderId),
+                    eq(schema.files.title, finalTitle),
+                    isNull(schema.files.deletedAt)
+                ),
+            });
+
+            if (!existingLive || existingLive.id === fileId) {
+                break;
+            }
+
+            finalTitle = generateRestoredTitle(target.title, collisionCounter);
+            collisionCounter++;
+        }
+
+        // Restore the target row with collision-free title and resolved parent
+        const now = new Date();
         await db
             .update(schema.files)
-            .set({ deletedAt: null, updatedAt: new Date() })
+            .set({
+                title: finalTitle,
+                parentFolderId: targetParentId,
+                deletedAt: null,
+                updatedAt: now,
+            })
             .where(
                 and(
                     eq(schema.files.id, fileId),
@@ -261,89 +450,235 @@ export async function restoreFile(
                 )
             );
 
-        revalidatePath("/workspace");
+        // If restoring a folder, restore its immediate children as well
+        if (target.isFolder) {
+            await db
+                .update(schema.files)
+                .set({ deletedAt: null, updatedAt: now })
+                .where(
+                    and(
+                        eq(schema.files.parentFolderId, fileId),
+                        eq(schema.files.userId, user.id)
+                    )
+                );
+        }
+
+        try {
+            revalidatePath("/workspace");
+        } catch {
+            // Ignore during standalone testing
+        }
+
         return { success: true };
 
     } catch (error) {
         console.error("Restore file error:", error);
-        return { success: false, error: "Failed to restore file" };
+        return { success: false, status: "error", error: "Failed to restore file" };
     }
 }
 
 /**
  * Copy a file or folder with all its content (Deep Copy for folders)
+ * Automatically resolves name collisions with `(Copy)` and enforces max recursion depth.
  */
 export async function copyFile(
     fileId: string,
-    newParentFolderId?: string | null
-): Promise<{ success: boolean; data?: typeof schema.files.$inferSelect; error?: string }> {
+    newParentFolderId?: string | null,
+    depth = 0
+): Promise<FileOpResult> {
     try {
+        const MAX_DEPTH = 20;
+        if (depth > MAX_DEPTH) {
+            return { success: false, status: "error", error: "Maximum folder nesting depth exceeded during copy" };
+        }
+
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
         // Get original file/folder
         const originalResult = await getFile(fileId);
         if (!originalResult.success || !originalResult.data) {
-            return { success: false, error: "Original file not found" };
+            return { success: false, status: "not_found", error: "Original file not found" };
         }
 
         const original = originalResult.data;
 
-        // Validate ownership
-        if (original.userId !== user.id) {
-            return { success: false, error: "Unauthorized" };
-        }
-
-        // Create copy with new title
-        const copyTitle = `Copy of ${original.title}`;
+        // Validate destination parent folder if specified
         const targetParentId = newParentFolderId !== undefined
             ? newParentFolderId
             : original.parentFolderId;
 
+        if (targetParentId) {
+            const destParent = await db.query.files.findFirst({
+                where: and(
+                    eq(schema.files.id, targetParentId),
+                    eq(schema.files.userId, user.id),
+                    isNull(schema.files.deletedAt)
+                ),
+            });
+
+            if (!destParent) {
+                return { success: false, status: "forbidden", error: "Destination folder not found or forbidden" };
+            }
+
+            if (!destParent.isFolder) {
+                return { success: false, status: "error", error: "Destination must be a folder" };
+            }
+        }
+
+        // CRIT-02: Find first non-colliding copy title
+        let copyTitle = generateCopyTitle(original.title, 1);
+        let copyCounter = 1;
+
+        while (true) {
+            const existingLive = await db.query.files.findFirst({
+                where: and(
+                    eq(schema.files.userId, user.id),
+                    targetParentId
+                        ? eq(schema.files.parentFolderId, targetParentId)
+                        : isNull(schema.files.parentFolderId),
+                    eq(schema.files.title, copyTitle),
+                    isNull(schema.files.deletedAt)
+                ),
+            });
+
+            if (!existingLive) break;
+            copyCounter++;
+            copyTitle = generateCopyTitle(original.title, copyCounter);
+        }
+
+        const newFileId = randomUUID();
+        const now = new Date();
+
+        // Single-step atomic ETag generation
+        const etag = original.isFolder
+            ? null
+            : generateETagSync({
+                id: newFileId,
+                content: original.content || "",
+                updatedAt: now,
+            });
+
         const [copiedFile] = await db
             .insert(schema.files)
             .values({
+                id: newFileId,
                 userId: user.id,
                 title: copyTitle,
                 parentFolderId: targetParentId,
                 isFolder: original.isFolder,
                 content: original.isFolder ? null : original.content,
+                etag,
+                version: 1,
+                createdAt: now,
+                updatedAt: now,
             })
             .returning();
 
-        // If it's a folder, recursively copy all children
-        if (original.isFolder) {
+        // If it's a folder, recursively copy all children with depth guard
+        if (original.isFolder && copiedFile) {
             const childrenResult = await getFolderChildren(fileId);
             if (childrenResult.success && childrenResult.data) {
                 for (const child of childrenResult.data) {
-                    // Recursive call to copy each child into the new folder
-                    await copyFile(child.id, copiedFile.id);
+                    await copyFile(child.id, copiedFile.id, depth + 1);
                 }
             }
         }
 
-        revalidatePath("/workspace");
+        try {
+            revalidatePath("/workspace");
+        } catch {
+            // Ignore during standalone testing
+        }
+
         return { success: true, data: copiedFile };
 
     } catch (error) {
         console.error("Copy file error:", error);
-        return { success: false, error: "Failed to copy file" };
+        return { success: false, status: "error", error: "Failed to copy file" };
     }
 }
 
 /**
- * Move file to different folder
+ * Move file or folder to a different folder with cycle and descendant protection
  */
 export async function moveFile(
     fileId: string,
     newParentFolderId: string | null
-): Promise<{ success: boolean; error?: string }> {
+): Promise<FileOpResult<null>> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
+        }
+
+        // Cannot move a folder into itself
+        if (fileId === newParentFolderId) {
+            return { success: false, status: "conflict", error: "Cannot move a folder into itself" };
+        }
+
+        const target = await db.query.files.findFirst({
+            where: and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id),
+                isNull(schema.files.deletedAt)
+            ),
+        });
+
+        if (!target) {
+            return { success: false, status: "not_found", error: "File not found or deleted" };
+        }
+
+        // Validate target parent folder if moving into a folder
+        if (newParentFolderId !== null) {
+            const parent = await db.query.files.findFirst({
+                where: and(
+                    eq(schema.files.id, newParentFolderId),
+                    eq(schema.files.userId, user.id),
+                    isNull(schema.files.deletedAt)
+                ),
+            });
+
+            if (!parent) {
+                return { success: false, status: "forbidden", error: "Target parent folder not found or forbidden" };
+            }
+
+            if (!parent.isFolder) {
+                return { success: false, status: "error", error: "Target destination is not a folder" };
+            }
+
+            // Descendant / cycle check: If target is a folder, verify parent is not inside target
+            if (target.isFolder) {
+                let currentAncestorId: string | null = parent.parentFolderId;
+                const visited = new Set<string>([newParentFolderId]);
+                let hops = 0;
+                const MAX_HOPS = 50;
+
+                while (currentAncestorId && hops < MAX_HOPS) {
+                    hops++;
+                    if (currentAncestorId === fileId) {
+                        return {
+                            success: false,
+                            status: "conflict",
+                            error: "Cannot move a folder into one of its descendants",
+                        };
+                    }
+                    if (visited.has(currentAncestorId)) break;
+                    visited.add(currentAncestorId);
+
+                    const ancestor = await db.query.files.findFirst({
+                        where: and(
+                            eq(schema.files.id, currentAncestorId),
+                            eq(schema.files.userId, user.id),
+                            isNull(schema.files.deletedAt)
+                        ),
+                        columns: { parentFolderId: true },
+                    });
+                    currentAncestorId = ancestor?.parentFolderId ?? null;
+                }
+            }
         }
 
         const updated = await db
@@ -356,79 +691,70 @@ export async function moveFile(
                 and(
                     eq(schema.files.id, fileId),
                     eq(schema.files.userId, user.id),
-                    // Tombstoned rows can't be moved — also guards against
-                    // dropping a deleted item INTO a folder to hide it
                     isNull(schema.files.deletedAt)
                 )
             );
 
         if ((updated.rowCount ?? 0) === 0) {
-            return { success: false, error: "File not found or deleted" };
+            return { success: false, status: "not_found", error: "File not found or deleted" };
         }
 
-        revalidatePath("/workspace");
+        try {
+            revalidatePath("/workspace");
+        } catch {
+            // Ignore during standalone testing
+        }
+
         return { success: true };
 
     } catch (error) {
         console.error("Move file error:", error);
-        return { success: false, error: "Failed to move file" };
+        return { success: false, status: "error", error: "Failed to move file" };
     }
 }
-
 
 /**
  * Get single file by ID
  */
 export async function getFile(
     fileId: string
-): Promise<{
-    success: boolean;
-    data?: typeof schema.files.$inferSelect;
-    error?: string;
-}> {
+): Promise<FileOpResult> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
         const file = await db.query.files.findFirst({
             where: and(
                 eq(schema.files.id, fileId),
                 eq(schema.files.userId, user.id),
-                // Live rows only — tombstones are invisible to readers
                 isNull(schema.files.deletedAt)
             ),
         });
 
         if (!file) {
-            return { success: false, error: "File not found" };
+            return { success: false, status: "not_found", error: "File not found" };
         }
 
         return { success: true, data: file };
 
     } catch (error) {
         console.error("Get file error:", error);
-        return { success: false, error: "Failed to get file" };
+        return { success: false, status: "error", error: "Failed to get file" };
     }
 }
 
 /**
  * Get all user files (for building tree structure on client)
  */
-export async function getUserFiles(): Promise<{
-    success: boolean;
-    data?: typeof schema.files.$inferSelect[];
-    error?: string;
-}> {
+export async function getUserFiles(): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
-        // Get ALL LIVE files (not just root) - client will build tree structure.
-        // Tombstoned rows are filtered out so deleted items never render.
         const files = await db.query.files.findMany({
             where: and(
                 eq(schema.files.userId, user.id),
@@ -441,29 +767,24 @@ export async function getUserFiles(): Promise<{
 
     } catch (error) {
         console.error("Get user files error:", error);
-        return { success: false, error: "Failed to get files" };
+        return { success: false, status: "error", error: "Failed to get files" };
     }
 }
 
 /**
  * Get root level files (no parent folder)
  */
-export async function getRootFiles(): Promise<{
-    success: boolean;
-    data?: typeof schema.files.$inferSelect[];
-    error?: string;
-}> {
+export async function getRootFiles(): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
         const files = await db.query.files.findMany({
             where: and(
                 eq(schema.files.userId, user.id),
                 isNull(schema.files.parentFolderId),
-                // Live rows only
                 isNull(schema.files.deletedAt)
             ),
             orderBy: (files, { desc, asc }) => [desc(files.isFolder), asc(files.title)],
@@ -473,7 +794,7 @@ export async function getRootFiles(): Promise<{
 
     } catch (error) {
         console.error("Get root files error:", error);
-        return { success: false, error: "Failed to get files" };
+        return { success: false, status: "error", error: "Failed to get files" };
     }
 }
 
@@ -482,23 +803,17 @@ export async function getRootFiles(): Promise<{
  */
 export async function getFolderChildren(
     folderId: string
-): Promise<{
-    success: boolean;
-    data?: typeof schema.files.$inferSelect[];
-    error?: string;
-}> {
+): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
         const files = await db.query.files.findMany({
             where: and(
                 eq(schema.files.userId, user.id),
                 eq(schema.files.parentFolderId, folderId),
-                // Live rows only — children of a tombstoned folder are
-                // invisible until the folder (and they) are restored
                 isNull(schema.files.deletedAt)
             ),
             orderBy: (files, { desc, asc }) => [desc(files.isFolder), asc(files.title)],
@@ -508,26 +823,20 @@ export async function getFolderChildren(
 
     } catch (error) {
         console.error("Get folder children error:", error);
-        return { success: false, error: "Failed to get folder contents" };
+        return { success: false, status: "error", error: "Failed to get folder contents" };
     }
 }
 
 /**
  * List soft-deleted (tombstoned) files and folders owned by the user.
- * Ordered newest-deleted first so the Trash view shows recent removals
- * at the top. Children of a deleted folder are listed individually
- * (each tombstoned on its own) so nested items can be restored alone.
  */
-export async function getDeletedFiles(): Promise<{
-    success: boolean;
-    data?: typeof schema.files.$inferSelect[];
-    error?: string;
-}> {
+export async function getDeletedFiles(): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
     try {
         const user = await getUser();
         if (!user) {
-            return { success: false, error: "Authentication required" };
+            return { success: false, status: "unauthorized", error: "Authentication required" };
         }
+
         const files = await db.query.files.findMany({
             where: and(
                 eq(schema.files.userId, user.id),
@@ -535,9 +844,11 @@ export async function getDeletedFiles(): Promise<{
             ),
             orderBy: (files, { desc, asc }) => [desc(files.deletedAt), asc(files.title)],
         });
+
         return { success: true, data: files };
+
     } catch (error) {
         console.error("Get deleted files error:", error);
-        return { success: false, error: "Failed to get deleted files" };
+        return { success: false, status: "error", error: "Failed to get deleted files" };
     }
 }

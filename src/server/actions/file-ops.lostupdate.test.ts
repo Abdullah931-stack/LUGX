@@ -19,16 +19,19 @@
  * exercised against the real schema with SQL statements identical in
  * shape to those in updateFileContent.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, and, isNull } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
-import { ensureTestDb, runMigrations } from "@/test/db.setup";
+import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb } from "@/test/test-db";
 import { randomUUID } from "crypto";
 
 const TEST_USER_ID = "55555555-5555-5555-5555-555555555555";
+let dbAvailable = false;
 
 beforeAll(async () => {
+    dbAvailable = await isTestDbAvailable();
+    if (!dbAvailable) return;
     await ensureTestDb();
     await runMigrations();
     await testDb
@@ -40,7 +43,14 @@ beforeAll(async () => {
     try { await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID)); } catch { /* ignore */ }
 });
 
+beforeEach((ctx) => {
+    if (!dbAvailable) {
+        ctx.skip();
+    }
+});
+
 afterAll(async () => {
+    if (!dbAvailable) return;
     try { await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID)); } catch { /* ignore */ }
 });
 
@@ -69,7 +79,7 @@ async function optimisticUpdate(
     const newVersion = baseVersion + 1;
     const now = new Date();
 
-    const result = await testDb
+    const [updated] = await testDb
         .update(schema.files)
         .set({ content: newContent, version: newVersion, updatedAt: now })
         .where(and(
@@ -77,12 +87,13 @@ async function optimisticUpdate(
             eq(schema.files.userId, TEST_USER_ID),
             eq(schema.files.version, baseVersion),
             isNull(schema.files.deletedAt)
-        ));
-    const affected = result.rowCount ?? 0;
-    if (affected === 0) {
-        return { success: false, error: "conflict" as const, affected };
+        ))
+        .returning();
+
+    if (!updated) {
+        return { success: false, error: "conflict" as const, affected: 0 };
     }
-    return { success: true, version: newVersion, affected };
+    return { success: true, version: newVersion, affected: 1 };
 }
 
 describe("lost-update guard (W5)", () => {

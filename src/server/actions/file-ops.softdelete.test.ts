@@ -23,14 +23,15 @@
  * algorithm is exercised directly against the real schema via the
  * pg-backed test client. The SQL shapes are identical to production.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, and, isNull, isNotNull, lte, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
-import { ensureTestDb, runMigrations } from "@/test/db.setup";
+import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb } from "@/test/test-db";
 import { randomUUID } from "crypto";
 
 const TEST_USER_ID = "22222222-2222-2222-2222-222222222222";
+let dbAvailable = false;
 
 const fileOf = (title: string, parent: string | null = null) => ({
     id: randomUUID(),
@@ -48,6 +49,8 @@ const fileOf = (title: string, parent: string | null = null) => ({
 });
 
 beforeAll(async () => {
+    dbAvailable = await isTestDbAvailable();
+    if (!dbAvailable) return;
     await ensureTestDb();
     await runMigrations();
     await testDb
@@ -56,7 +59,14 @@ beforeAll(async () => {
         .onConflictDoNothing();
 });
 
+beforeEach((ctx) => {
+    if (!dbAvailable) {
+        ctx.skip();
+    }
+});
+
 afterAll(async () => {
+    if (!dbAvailable) return;
     try { await testDb.delete(schema.files); } catch { /* ignore */ }
 });
 

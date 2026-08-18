@@ -106,7 +106,8 @@ If-Match: "current-etag"
 
 {
   "content": "updated content...",
-  "title": "Updated Title"
+  "title": "Updated Title",
+  "expectedVersion": 5
 }
 ```
 
@@ -151,7 +152,8 @@ Content-Type: application/json
 | 403 | `FORBIDDEN` | Not authorized |
 | 404 | `NOT_FOUND` | File not found |
 | 409 | `CONFLICT` | Data conflict |
-| 412 | `PRECONDITION_FAILED` | ETag mismatch |
+| 412 | `PRECONDITION_FAILED` | ETag or version mismatch |
+| 428 | `PRECONDITION_REQUIRED` | Missing If-Match header or expectedVersion |
 | 429 | `RATE_LIMITED` | Rate limit exceeded |
 | 500 | `SERVER_ERROR` | Server error |
 

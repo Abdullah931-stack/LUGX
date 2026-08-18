@@ -240,13 +240,13 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             id: file.id,
             content: file.content,
             title: file.title || existingFile?.title || 'Untitled',
-            etag: existingFile?.etag || '',
-            version: existingFile?.version || 0,
+            etag: file.etag !== undefined ? file.etag : (existingFile?.etag || ''),
+            version: file.version !== undefined ? file.version : (existingFile?.version || 0),
             parentFolderId: file.parentFolderId || existingFile?.parentFolderId || null,
             isFolder: file.isFolder ?? existingFile?.isFolder ?? false,
             lastModified: Date.now(),
             lastSyncedAt: existingFile?.lastSyncedAt || 0,
-            isDirty: true,
+            isDirty: file.isDirty !== undefined ? file.isDirty : true,
         };
         await activeIdb.saveFile(idbFile);
         const dirtyFiles = await activeIdb.getDirtyFiles();

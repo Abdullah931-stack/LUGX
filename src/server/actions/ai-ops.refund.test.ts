@@ -15,18 +15,21 @@
  * Supabase auth + a remote Neon endpoint. The production code runs the
  * identical SQL.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
-import { ensureTestDb, runMigrations } from "@/test/db.setup";
+import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb } from "@/test/test-db";
 import { AIOperation } from "@/lib/ai/prompts";
 import { TIER_LIMITS } from "@/config/tiers.config";
 
 const TEST_USER_ID = "22222222-2222-2222-2222-222222222222";
 const TIER = "pro";
+let dbAvailable = false;
 
 beforeAll(async () => {
+    dbAvailable = await isTestDbAvailable();
+    if (!dbAvailable) return;
     await ensureTestDb();
     await runMigrations();
     await testDb
@@ -35,7 +38,14 @@ beforeAll(async () => {
         .onConflictDoNothing();
 });
 
+beforeEach((ctx) => {
+    if (!dbAvailable) {
+        ctx.skip();
+    }
+});
+
 afterAll(async () => {
+    if (!dbAvailable) return;
     try {
         await testDb.delete(schema.usage).where(eq(schema.usage.userId, TEST_USER_ID));
     } catch {

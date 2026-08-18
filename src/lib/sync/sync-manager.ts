@@ -561,19 +561,24 @@ class SyncManager {
             const maxAllowedRetries = this.config?.maxRetries || this.maxRetries;
 
             try {
+                const reqHeaders: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                    'X-Operation-ID': op.operationId || op.id,
+                };
+                if (file.etag) {
+                    reqHeaders['If-Match'] = `"${file.etag}"`;
+                }
+
                 const response = await withBackoff(async () => {
                     return fetch(`/api/files/${op.fileId}`, {
                         method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'If-Match': `"${file.etag}"`,
-                            'X-Operation-ID': op.operationId || op.id,
-                        },
+                        headers: reqHeaders,
                         body: JSON.stringify({
                             content: file.content,
                             title: file.title,
                             operationId: op.operationId || op.id,
-                            baseVersion: op.baseVersion,
+                            baseVersion: op.baseVersion ?? file.version,
+                            expectedVersion: op.baseVersion ?? file.version,
                         }),
                         signal,
                     });
@@ -725,29 +730,48 @@ class SyncManager {
             const checkpointId = await this.rollback.createCheckpoint(file.id, 'pre_sync');
 
             try {
+                const reqHeaders: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                };
+                if (file.etag) {
+                    reqHeaders['If-Match'] = `"${file.etag}"`;
+                }
+
                 const response = await withBackoff(async () => {
                     return fetch(`/api/files/${file.id}`, {
                         method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'If-Match': `"${file.etag}"`,
-                        },
+                        headers: reqHeaders,
                         body: JSON.stringify({
                             content: file.content,
                             title: file.title,
+                            expectedVersion: file.version ?? 1,
                         }),
                         signal,
                     });
                 }, 3, undefined, signal);
 
                 if (response.status === 412 || response.status === 409) {
-                    const serverData = await response.json();
-                    await this.handleConflict(file, serverData.serverVersion);
+                    const serverData = await response.json().catch(() => ({}));
+                    if (serverData.serverVersion) {
+                        await this.handleConflict(file, serverData.serverVersion);
+                    }
 
                     return {
                         fileId: file.id,
                         success: false,
                         action: 'conflict' as const,
+                    };
+                }
+
+                if (response.status === 404) {
+                    // File deleted or non-existent on server -> mark clean locally so queue ceases retrying
+                    await this.idb.markFileClean(file.id, file.etag || '');
+                    this.rollback.removeCheckpoint(checkpointId);
+                    return {
+                        fileId: file.id,
+                        success: false,
+                        action: 'skipped' as const,
+                        error: 'File not found on server',
                     };
                 }
 

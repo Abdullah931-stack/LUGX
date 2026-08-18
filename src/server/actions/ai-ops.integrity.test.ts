@@ -16,15 +16,18 @@
  * production code path at runtime uses the identical SQL shape
  * (INSERT ... ON CONFLICT DO NOTHING on (user_id, date)).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
-import { ensureTestDb, runMigrations } from "@/test/db.setup";
+import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb } from "@/test/test-db";
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
+let dbAvailable = false;
 
 beforeAll(async () => {
+    dbAvailable = await isTestDbAvailable();
+    if (!dbAvailable) return;
     await ensureTestDb();
     // Apply the official migration 0003 so the unique index on
     // (user_id, date) and the sync indexes are present. Idempotent.
@@ -36,7 +39,14 @@ beforeAll(async () => {
         .onConflictDoNothing();
 });
 
+beforeEach((ctx) => {
+    if (!dbAvailable) {
+        ctx.skip();
+    }
+});
+
 afterAll(async () => {
+    if (!dbAvailable) return;
     try {
         await testDb.delete(schema.usage);
     } catch {
