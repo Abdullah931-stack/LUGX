@@ -1,6 +1,50 @@
 # Changelog - LUGX Project
 
-All notable changes to the LUGX project payment system will be documented in this file.
+All notable changes to the LUGX project will be documented in this file.
+
+## [1.2.0] - 2026-08-21 (Phase 7: NDJSON Streaming & Session State Machine)
+
+### Added - AI NDJSON Streaming & Finite State Machine
+
+#### Core Streaming Architecture
+- **Resilient NDJSON Stream Parser** (`src/lib/ai/stream-handler.ts`)
+  - Canonical event framing: `start`, `chunk`, `metadata`, `done`, `error`, `cancelled`.
+  - Multi-byte UTF-8 boundary preservation via `TextDecoder({ stream: true })`.
+  - Incomplete EOF stream detection as `failed_incomplete_stream`.
+  - Duplicate `done` protection and unknown frame resilience.
+  - `MAX_LINE_BUFFER_CHARS` (256KB) line buffer flooding ceiling (ADV-01).
+  - Single terminal callback emission guarantee (ADV-05).
+
+- **Deterministic Session State Machine** (`src/lib/ai/stream-session.ts`)
+  - Canonical state flow: `idle -> reserving -> streaming -> preview_ready -> committing -> committed`.
+  - Terminal failure & cancellation states: `aborted`, `failed`, `conflict`, `rolled_back`.
+  - Editor generation and version mismatch integrity guards (`assertSessionIntegrity`).
+  - Double-decision prevention on late cancellations.
+
+- **Route Handler Hardening & Quota Protection** (`src/app/api/ai/stream/route.ts`)
+  - Emits structured NDJSON event frames with zero prompt/sensitive text leakage in headers.
+  - Automatic quota reservation before stream dispatch and idempotent refund on client abort or mid-stream exceptions.
+  - Strict payload validation and `MAX_INPUT_CHARS = 100,000` ceiling (ADV2-01).
+
+- **Ephemeral Preview & Atomic Commit Hook** (`src/hooks/use-ai-stream.ts`)
+  - Zero TipTap document mutation during streaming (appends strictly to `EphemeralPreviewBuffer` and ghost decoration layer).
+  - Dynamic ProseMirror mapped selection coordinate resolution (`streamingGhostPluginKey`) preventing selection drift (ADV-04).
+  - Non-abortable committing state guard preventing client/server version desynchronization (ADV2-02).
+
+- **DOM XSS Sanitization in TipTap Ghost Widget** (`src/lib/extensions/streaming-ghost-extension.ts`)
+  - DOM node construction via `document.createElement` and `textContent` (ADV-06).
+
+- **AI Stream Status Indicator** (`src/components/editor/ai-stream-status.tsx`)
+  - Accurate cancellation UI state reflecting non-abortable server transactions (ADV2-03).
+
+- **Technical Documentation** (`docs/architecture/ai-streaming-protocol.md`)
+  - Comprehensive specification of NDJSON framing, state transitions, adversarial edge cases, and quota lifecycle.
+
+#### Automated Test Suite
+- `src/test/ai-stream-parser.test.ts` (11 unit tests passed)
+- `src/test/ai-stream-session.test.ts` (12 unit tests passed)
+
+---
 
 ## [1.0.0] - 2026-01-27
 

@@ -185,10 +185,15 @@ export const StreamingGhostExtension = Extension.create({
                                 const header = document.createElement('span');
                                 header.className =
                                     'flex items-center gap-1.5 text-[11px] font-mono font-medium tracking-wide uppercase text-emerald-400 mb-1 select-none';
-                                header.innerHTML = `
-                                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block"></span>
-                                    <span>AI Streaming (${pluginState.operation || 'Processing'})...</span>
-                                `;
+
+                                const pingDot = document.createElement('span');
+                                pingDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block';
+                                header.appendChild(pingDot);
+
+                                const headerText = document.createElement('span');
+                                headerText.textContent = `AI Streaming (${pluginState.operation || 'Processing'})...`;
+                                header.appendChild(headerText);
+
                                 container.appendChild(header);
 
                                 // Content container

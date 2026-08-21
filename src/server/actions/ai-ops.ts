@@ -94,7 +94,9 @@ async function getTodayUsage(userId: string) {
 // Test-only export: lets integration tests exercise the real
 // getTodayUsage implementation (with the atomic upsert) against a live DB.
 // Kept out of the production API surface intentionally.
-export const getTodayUsageTestOnly = getTodayUsage;
+export async function getTodayUsageTestOnly(userId: string) {
+    return getTodayUsage(userId);
+}
 
 /**
  * Get weekly word usage for free tier

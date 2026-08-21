@@ -2,14 +2,17 @@ import { AIOperation } from "./prompts";
 
 export type AIStreamStatus =
     | "idle"
+    | "reserving"
     | "reserved"
     | "streaming"
+    | "preview_ready"
     | "completed"
     | "committing"
     | "committed"
     | "aborting"
     | "aborted"
     | "failed"
+    | "conflict"
     | "rolled_back";
 
 export interface SelectionAnchor {
@@ -38,17 +41,20 @@ export interface AIStreamSession {
     failureReason?: string;
 }
 
-// Map of allowed finite state machine transitions
+// Map of allowed finite state machine transitions according to Phase 7 specification
 const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
-    idle: ["reserved", "failed", "aborted"],
-    reserved: ["streaming", "aborting", "failed", "rolled_back"],
-    streaming: ["completed", "aborting", "failed", "rolled_back"],
-    completed: ["committing", "aborting", "failed", "rolled_back"],
-    committing: ["committed", "failed", "rolled_back"],
+    idle: ["reserving", "reserved", "failed", "aborted"],
+    reserving: ["streaming", "aborting", "aborted", "failed", "conflict", "rolled_back"],
+    reserved: ["streaming", "aborting", "aborted", "failed", "conflict", "rolled_back"],
+    streaming: ["preview_ready", "completed", "aborting", "aborted", "failed", "conflict", "rolled_back"],
+    preview_ready: ["committing", "aborting", "aborted", "failed", "conflict", "rolled_back"],
+    completed: ["committing", "aborting", "aborted", "failed", "conflict", "rolled_back"],
+    committing: ["committed", "failed", "conflict", "rolled_back"],
     committed: ["idle"],
-    aborting: ["aborted", "rolled_back", "failed"],
+    aborting: ["aborted", "conflict", "rolled_back", "failed"],
     aborted: ["idle"],
     failed: ["idle"],
+    conflict: ["idle"],
     rolled_back: ["idle"],
 };
 
@@ -64,7 +70,7 @@ export function isValidTransition(from: AIStreamStatus, to: AIStreamStatus): boo
  * Checks whether a session status is in a terminal final state
  */
 export function isTerminalStatus(status: AIStreamStatus): boolean {
-    return ["committed", "aborted", "failed", "rolled_back"].includes(status);
+    return ["committed", "aborted", "failed", "conflict", "rolled_back"].includes(status);
 }
 
 /**
@@ -122,7 +128,7 @@ export function transitionSession(
     if (nextStatus === "streaming" && !session.firstChunkAt) {
         session.firstChunkAt = Date.now();
     }
-    if (nextStatus === "completed" || nextStatus === "committed") {
+    if (nextStatus === "completed" || nextStatus === "preview_ready" || nextStatus === "committed") {
         session.completedAt = Date.now();
     }
 
@@ -153,3 +159,4 @@ export function assertSessionIntegrity(
 
     return { valid: true };
 }
+

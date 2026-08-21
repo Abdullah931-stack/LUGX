@@ -16,12 +16,12 @@ export const maxDuration = 60;
 /**
  * Route Handler: Stream AI text with NDJSON framing, quota reservation, and resilient error recovery.
  *
- * ARCHITECTURAL SPECIFICATION COMPLIANCE:
- * 1. Tracks deterministic operationId & sessionId.
- * 2. Emits structured NDJSON events: meta, delta, done, error.
- * 3. Gracefully encapsulates mid-stream errors into NDJSON error frames rather than abrupt TCP resets.
- * 4. Automatic quota refund on failures or user abort.
- * 5. Zero sensitive text leakage in server logs.
+ * PHASE 7 SPECIFICATION COMPLIANCE:
+ * 1. Emits canonical NDJSON frames: start (with non-sensitive identifiers), chunk, done, error, cancelled.
+ * 2. Strict isolation: zero sensitive user prompt leakage in stream headers or framing metadata.
+ * 3. Gracefully encapsulates mid-stream errors into NDJSON error frames without abrupt TCP resets.
+ * 4. Automatic idempotent quota refund on startup errors, mid-stream failures, or client disconnects.
+ * 5. Supports buffered fallback header for clients requesting non-streaming responses.
  */
 export async function POST(req: NextRequest) {
     let operationId: string | null = null;
@@ -42,8 +42,14 @@ export async function POST(req: NextRequest) {
         operationId = body.operationId || `op_${crypto.randomUUID()}`;
         const sessionId = `session_${crypto.randomUUID()}`;
 
-        if (!text || !operation) {
-            return new NextResponse("Missing required fields", { status: 400 });
+        // ADV2-01 Payload Type & Size Validation Guard
+        if (typeof text !== "string" || typeof operation !== "string" || !text.trim() || !operation.trim()) {
+            return new NextResponse("Invalid request: text and operation must be non-empty strings", { status: 400 });
+        }
+
+        const MAX_INPUT_CHARS = 100_000;
+        if (text.length > MAX_INPUT_CHARS) {
+            return new NextResponse(`Payload too large: text exceeds ${MAX_INPUT_CHARS} characters limit`, { status: 400 });
         }
 
         // 1. Get User Tier
@@ -87,14 +93,14 @@ export async function POST(req: NextRequest) {
 
         const wrappedStream = new ReadableStream<Uint8Array>({
             async start(controller) {
-                // Emit initial meta frame
-                const metaFrame = JSON.stringify({
-                    type: "meta",
+                // Emit initial canonical start frame with non-sensitive identifiers
+                const startFrame = JSON.stringify({
+                    type: "start",
                     sessionId,
                     reservationId: reservation.reservationId || operationId,
                     operationId,
                 }) + "\n";
-                controller.enqueue(encoder.encode(metaFrame));
+                controller.enqueue(encoder.encode(startFrame));
 
                 const reader = aiStream.getReader();
 
@@ -105,6 +111,15 @@ export async function POST(req: NextRequest) {
                             if (operationId) {
                                 refundAIReservation(operationId, "client_aborted").catch(() => {});
                             }
+                            try {
+                                const cancelFrame = JSON.stringify({
+                                    type: "cancelled",
+                                    reason: "Client aborted connection",
+                                }) + "\n";
+                                controller.enqueue(encoder.encode(cancelFrame));
+                            } catch {
+                                // Ignore controller enqueue error if stream already closed
+                            }
                             controller.close();
                             return;
                         }
@@ -114,12 +129,22 @@ export async function POST(req: NextRequest) {
 
                         const chunkText = decoder.decode(value, { stream: true });
                         if (chunkText) {
-                            const deltaFrame = JSON.stringify({
-                                type: "delta",
+                            const chunkFrame = JSON.stringify({
+                                type: "chunk",
                                 text: chunkText,
                             }) + "\n";
-                            controller.enqueue(encoder.encode(deltaFrame));
+                            controller.enqueue(encoder.encode(chunkFrame));
                         }
+                    }
+
+                    // Flush any remaining decoder bytes
+                    const flushed = decoder.decode();
+                    if (flushed) {
+                        const finalChunkFrame = JSON.stringify({
+                            type: "chunk",
+                            text: flushed,
+                        }) + "\n";
+                        controller.enqueue(encoder.encode(finalChunkFrame));
                     }
 
                     // Emit clean done frame
@@ -147,7 +172,11 @@ export async function POST(req: NextRequest) {
                         retryable: true,
                     }) + "\n";
 
-                    controller.enqueue(encoder.encode(errorFrame));
+                    try {
+                        controller.enqueue(encoder.encode(errorFrame));
+                    } catch {
+                        // Ignore enqueue error if controller is already closing
+                    }
                     controller.close();
 
                 } finally {
@@ -195,3 +224,4 @@ export async function POST(req: NextRequest) {
         return new NextResponse(error?.message || "Internal Server Error", { status: 500 });
     }
 }
+

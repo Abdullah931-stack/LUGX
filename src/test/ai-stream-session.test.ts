@@ -9,29 +9,39 @@ import {
 } from '@/lib/ai/stream-session';
 import { EphemeralPreviewBuffer } from '@/lib/ai/preview-buffer';
 
-describe('AIStreamSession State Machine & Integrity Guards (Gate G6 & G8)', () => {
+describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & G8)', () => {
     describe('FSM Transitions & Terminal States', () => {
         it('should correctly identify terminal session states', () => {
             expect(isTerminalStatus('committed')).toBe(true);
             expect(isTerminalStatus('aborted')).toBe(true);
             expect(isTerminalStatus('failed')).toBe(true);
+            expect(isTerminalStatus('conflict')).toBe(true);
             expect(isTerminalStatus('rolled_back')).toBe(true);
 
             expect(isTerminalStatus('idle')).toBe(false);
+            expect(isTerminalStatus('reserving')).toBe(false);
             expect(isTerminalStatus('reserved')).toBe(false);
             expect(isTerminalStatus('streaming')).toBe(false);
+            expect(isTerminalStatus('preview_ready')).toBe(false);
             expect(isTerminalStatus('completed')).toBe(false);
             expect(isTerminalStatus('committing')).toBe(false);
             expect(isTerminalStatus('aborting')).toBe(false);
         });
 
-        it('should correctly allow legal state transitions', () => {
+        it('should correctly allow canonical legal state transitions', () => {
+            // Canonical path: idle -> reserving -> streaming -> preview_ready -> committing -> committed -> idle
+            expect(isValidTransition('idle', 'reserving')).toBe(true);
+            expect(isValidTransition('reserving', 'streaming')).toBe(true);
+            expect(isValidTransition('streaming', 'preview_ready')).toBe(true);
+            expect(isValidTransition('preview_ready', 'committing')).toBe(true);
+            expect(isValidTransition('committing', 'committed')).toBe(true);
+            expect(isValidTransition('committed', 'idle')).toBe(true);
+
+            // Backward-compatible path: idle -> reserved -> streaming -> completed -> committing -> committed
             expect(isValidTransition('idle', 'reserved')).toBe(true);
             expect(isValidTransition('reserved', 'streaming')).toBe(true);
             expect(isValidTransition('streaming', 'completed')).toBe(true);
             expect(isValidTransition('completed', 'committing')).toBe(true);
-            expect(isValidTransition('committing', 'committed')).toBe(true);
-            expect(isValidTransition('committed', 'idle')).toBe(true);
         });
 
         it('should strictly reject illegal transitions', () => {
@@ -39,9 +49,10 @@ describe('AIStreamSession State Machine & Integrity Guards (Gate G6 & G8)', () =
             expect(isValidTransition('idle', 'streaming')).toBe(false);
             expect(isValidTransition('streaming', 'committed')).toBe(false);
             expect(isValidTransition('committed', 'streaming')).toBe(false);
+            expect(isValidTransition('preview_ready', 'streaming')).toBe(false);
         });
 
-        it('should throw an error when attempting an invalid transition on a session', () => {
+        it('should execute full lifecycle on a session object with timestamps and validation', () => {
             const session = createStreamSession({
                 sessionId: 's-1',
                 operationId: 'op-1',
@@ -57,17 +68,56 @@ describe('AIStreamSession State Machine & Integrity Guards (Gate G6 & G8)', () =
 
             expect(session.status).toBe('idle');
 
-            // Legal: idle -> reserved
-            transitionSession(session, 'reserved');
-            expect(session.status).toBe('reserved');
+            // idle -> reserving
+            transitionSession(session, 'reserving');
+            expect(session.status).toBe('reserving');
 
-            // Illegal: reserved -> committed (must go through streaming -> completed -> committing)
+            // reserving -> streaming
+            transitionSession(session, 'streaming');
+            expect(session.status).toBe('streaming');
+            expect(session.firstChunkAt).toBeDefined();
+
+            // streaming -> preview_ready
+            transitionSession(session, 'preview_ready');
+            expect(session.status).toBe('preview_ready');
+            expect(session.completedAt).toBeDefined();
+
+            // preview_ready -> committing
+            transitionSession(session, 'committing');
+            expect(session.status).toBe('committing');
+
+            // committing -> committed
+            transitionSession(session, 'committed');
+            expect(session.status).toBe('committed');
+
+            // committed -> idle
+            transitionSession(session, 'idle');
+            expect(session.status).toBe('idle');
+        });
+
+        it('should throw an error when attempting an invalid transition on a session', () => {
+            const session = createStreamSession({
+                sessionId: 's-err',
+                operationId: 'op-err',
+                fileId: 'file-err',
+                operation: 'improve',
+                originalHtml: '<p>test</p>',
+                originalText: 'test',
+                selection: { from: 0, to: 4 },
+                expectedVersion: 1,
+                originalEtag: 'etag-1',
+                editorGeneration: 1,
+            });
+
+            transitionSession(session, 'reserving');
+
+            // Illegal: reserving -> committed (must go through streaming -> preview_ready -> committing)
             expect(() => transitionSession(session, 'committed')).toThrowError(
                 /Invalid transition/
             );
         });
 
-        it('should allow cancellation transitions to aborting/aborted/rolled_back', () => {
+        it('should allow cancellation transitions to aborting/aborted/conflict/rolled_back', () => {
             const session = createStreamSession({
                 sessionId: 's-2',
                 operationId: 'op-2',
@@ -81,11 +131,40 @@ describe('AIStreamSession State Machine & Integrity Guards (Gate G6 & G8)', () =
                 editorGeneration: 1,
             });
 
-            transitionSession(session, 'reserved');
+            transitionSession(session, 'reserving');
             transitionSession(session, 'streaming');
             transitionSession(session, 'aborting');
             transitionSession(session, 'aborted');
             expect(session.status).toBe('aborted');
+
+            // Can reset back to idle
+            transitionSession(session, 'idle');
+            expect(session.status).toBe('idle');
+        });
+
+        it('should handle conflict state during commit', () => {
+            const session = createStreamSession({
+                sessionId: 's-conflict',
+                operationId: 'op-conflict',
+                fileId: 'file-c',
+                operation: 'improve',
+                originalHtml: '<p>conflict</p>',
+                originalText: 'conflict',
+                selection: { from: 0, to: 8 },
+                expectedVersion: 1,
+                originalEtag: 'etag-c',
+                editorGeneration: 1,
+            });
+
+            transitionSession(session, 'reserving');
+            transitionSession(session, 'streaming');
+            transitionSession(session, 'preview_ready');
+            transitionSession(session, 'committing');
+            transitionSession(session, 'conflict', 'Version mismatch (412)');
+
+            expect(session.status).toBe('conflict');
+            expect(session.failureReason).toBe('Version mismatch (412)');
+            expect(isTerminalStatus(session.status)).toBe(true);
         });
     });
 
@@ -180,3 +259,4 @@ describe('AIStreamSession State Machine & Integrity Guards (Gate G6 & G8)', () =
         });
     });
 });
+

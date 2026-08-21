@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { consumeAIStream } from '@/lib/ai/stream-handler';
 import { formatStreamOutputToHTML, sanitizePreviewChunk } from '@/lib/parsers/stream-markdown';
 
-describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
+describe('AI Stream Parser & Sanitizer (Phase 7 / Gate G8)', () => {
     describe('Stream Markdown Sanitizer', () => {
         it('should safely escape raw preview text', () => {
             const raw = '<script>alert("xss")</script> & <b>bold</b>';
@@ -31,11 +31,11 @@ describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
     });
 
     describe('NDJSON Chunk & Line Framing Transport', () => {
-        it('should correctly parse NDJSON events split across arbitrary chunk boundaries', async () => {
+        it('should correctly parse canonical NDJSON events (start, chunk, done) across chunk boundaries', async () => {
             const chunks = [
-                '{"type":"meta","sessionI',
-                'd":"s1","operationId":"op1"}\n{"type":"delta","text":"Hel',
-                'lo, "}\n{"type":"delta","text":"world!"}\n{"type":"done"}\n',
+                '{"type":"start","sessionI',
+                'd":"s1","operationId":"op1"}\n{"type":"chunk","text":"Hel',
+                'lo, "}\n{"type":"chunk","text":"world!"}\n{"type":"done"}\n',
             ];
 
             const encoder = new TextEncoder();
@@ -48,7 +48,6 @@ describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
                 },
             });
 
-            // Mock global fetch returning our stream
             const fetchMock = vi.fn().mockResolvedValue(new Response(stream, {
                 status: 200,
                 headers: { 'Content-Type': 'application/x-ndjson' },
@@ -77,7 +76,7 @@ describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
             });
 
             expect(metaEvent).toEqual({
-                type: 'meta',
+                type: 'start',
                 sessionId: 's1',
                 operationId: 'op1',
             });
@@ -88,13 +87,14 @@ describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
         });
 
         it('should handle multi-byte UTF-8 characters split across chunk boundaries without corruption', async () => {
-            // Arabic text: "مرحبا بالعالم" (multi-byte UTF-8 characters)
-            const fullText = 'مرحبا بالعالم';
-            const encoded = new TextEncoder().encode(fullText);
+            const fullText = 'مرحبا بالعالم والذكاء الاصطناعي';
+            const encoded = new TextEncoder().encode(
+                `{"type":"start","sessionId":"s1","operationId":"op1"}\n{"type":"chunk","text":"${fullText}"}\n{"type":"done"}\n`
+            );
 
-            // Intentionally slice the byte array mid-character
-            const slice1 = encoded.slice(0, 5); // Splits a multi-byte Arabic character
-            const slice2 = encoded.slice(5);
+            // Intentionally slice byte array across multi-byte character boundary
+            const slice1 = encoded.slice(0, 47);
+            const slice2 = encoded.slice(47);
 
             const stream = new ReadableStream<Uint8Array>({
                 start(controller) {
@@ -119,7 +119,111 @@ describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
                 },
             });
 
-            expect(output).toBe('مرحبا بالعالم');
+            expect(output).toBe('مرحبا بالعالم والذكاء الاصطناعي');
+            vi.unstubAllGlobals();
+        });
+
+        it('should detect incomplete EOF stream without done as failed_incomplete_stream', async () => {
+            // Stream closes before emitting {"type":"done"}
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode('{"type":"start","sessionId":"s1","operationId":"op1"}\n{"type":"chunk","text":"Partial content..."}\n'));
+                    controller.close(); // Abrupt EOF without done frame
+                },
+            });
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+
+            let errorEmitted: any = null;
+            await consumeAIStream({
+                operation: 'summarize',
+                text: 'input',
+                onChunk: () => {},
+                onComplete: () => {},
+                onError: (err) => {
+                    errorEmitted = err;
+                },
+            });
+
+            expect(errorEmitted).not.toBeNull();
+            expect(errorEmitted.message).toContain('failed_incomplete_stream');
+
+            vi.unstubAllGlobals();
+        });
+
+        it('should accept first done and ignore duplicate done events', async () => {
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(
+                        '{"type":"start","sessionId":"s1","operationId":"op1"}\n' +
+                        '{"type":"chunk","text":"Unique output"}\n' +
+                        '{"type":"done"}\n' +
+                        '{"type":"done"}\n'
+                    ));
+                    controller.close();
+                },
+            });
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+
+            let completedCalls = 0;
+            let finalOutput = '';
+
+            await consumeAIStream({
+                operation: 'improve',
+                text: 'input',
+                onChunk: () => {},
+                onComplete: (text) => {
+                    completedCalls++;
+                    finalOutput = text;
+                },
+                onError: (err) => {
+                    throw err;
+                },
+            });
+
+            expect(completedCalls).toBe(1);
+            expect(finalOutput).toBe('Unique output');
+
+            vi.unstubAllGlobals();
+        });
+
+        it('should safely ignore unknown message types and empty chunks without mutating state', async () => {
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(
+                        '{"type":"unknown_telemetry_event","timestamp":123456}\n' +
+                        '{"type":"chunk","text":""}\n' +
+                        '{"type":"chunk","text":"Valid content"}\n' +
+                        '{"type":"custom_future_type","foo":"bar"}\n' +
+                        '{"type":"done"}\n'
+                    ));
+                    controller.close();
+                },
+            });
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+
+            const chunks: string[] = [];
+            let completed = '';
+
+            await consumeAIStream({
+                operation: 'correct',
+                text: 'input',
+                onChunk: (acc, latest) => {
+                    chunks.push(latest);
+                },
+                onComplete: (text) => {
+                    completed = text;
+                },
+                onError: (err) => {
+                    throw err;
+                },
+            });
+
+            expect(chunks).toEqual(['Valid content']);
+            expect(completed).toBe('Valid content');
+
             vi.unstubAllGlobals();
         });
 
@@ -127,7 +231,7 @@ describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
             const abortController = new AbortController();
             const stream = new ReadableStream<Uint8Array>({
                 start(controller) {
-                    controller.enqueue(new TextEncoder().encode('{"type":"delta","text":"Start..."}\n'));
+                    controller.enqueue(new TextEncoder().encode('{"type":"chunk","text":"Start..."}\n'));
                 },
             });
 
@@ -139,7 +243,6 @@ describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
                 text: 'input',
                 signal: abortController.signal,
                 onChunk: () => {
-                    // Abort on first chunk
                     abortController.abort();
                 },
                 onComplete: () => {},
@@ -154,5 +257,66 @@ describe('AI Stream Parser & Sanitizer (Gate G8)', () => {
 
             vi.unstubAllGlobals();
         });
+
+        it('should cleanly handle corrupted JSON chunk and emit error without commit', async () => {
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode('{"type":"chunk", corrupted json\n'));
+                    controller.close();
+                },
+            });
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+
+            let errorEmitted: any = null;
+            let completeCalled = false;
+
+            await consumeAIStream({
+                operation: 'summarize',
+                text: 'input',
+                onChunk: () => {},
+                onComplete: () => {
+                    completeCalled = true;
+                },
+                onError: (err) => {
+                    errorEmitted = err;
+                },
+            });
+
+            expect(errorEmitted).not.toBeNull();
+            expect(completeCalled).toBe(false);
+
+            vi.unstubAllGlobals();
+        });
+
+        it('should enforce MAX_LINE_BUFFER_CHARS and reject buffer flooding with stream_buffer_overflow', async () => {
+            // Send chunk exceeding 256KB without newline
+            const hugeChunk = 'a'.repeat(300 * 1024);
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(hugeChunk));
+                },
+            });
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+
+            let errorEmitted: any = null;
+            await consumeAIStream({
+                operation: 'summarize',
+                text: 'input',
+                onChunk: () => {},
+                onComplete: () => {},
+                onError: (err) => {
+                    errorEmitted = err;
+                },
+            });
+
+            expect(errorEmitted).not.toBeNull();
+            expect(errorEmitted.message).toContain('stream_buffer_overflow');
+
+            vi.unstubAllGlobals();
+        });
     });
 });
+
+

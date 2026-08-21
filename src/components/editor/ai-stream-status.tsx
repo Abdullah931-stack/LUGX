@@ -79,7 +79,7 @@ export const AIStreamStatus: React.FC<AIStreamStatusProps> = ({
                         {status === 'committing' && 'جاري الالتزام وتأكيد التغيير...'}
                     </span>
                 </div>
-                {onCancel && (
+                {onCancel && status !== 'committing' && (
                     <button
                         onClick={onCancel}
                         className="px-2.5 py-0.5 rounded text-[11px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"

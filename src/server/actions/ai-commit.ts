@@ -5,6 +5,7 @@ import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateETagSync } from "@/lib/sync/etag-generator";
 import { revalidatePath } from "next/cache";
+import { refundAIReservation as refundAIReservationOp } from "@/server/actions/ai-ops";
 
 export interface CommitAIFileOperationParams {
     operationId: string;
@@ -186,5 +187,10 @@ export async function commitAIFileOperation(
 /**
  * Server Action: Refund an AI Reservation idempotently (delegating to unified ai-ops handler).
  */
-export { refundAIReservation } from "@/server/actions/ai-ops";
+export async function refundAIReservation(
+    operationId: string,
+    reason: string = "stream_failed"
+): Promise<{ refunded: boolean; reason?: string }> {
+    return refundAIReservationOp(operationId, reason);
+}
 

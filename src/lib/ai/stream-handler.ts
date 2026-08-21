@@ -2,17 +2,21 @@
 
 export type AIOperationType = 'correct' | 'improve' | 'summarize' | 'translate' | 'toPrompt';
 
-export interface StreamMetaEvent {
-    type: 'meta';
+export interface StreamStartEvent {
+    type: 'start' | 'meta' | 'metadata';
     sessionId: string;
     reservationId?: string;
     operationId: string;
 }
 
-export interface StreamDeltaEvent {
-    type: 'delta';
+export type StreamMetaEvent = StreamStartEvent;
+
+export interface StreamChunkEvent {
+    type: 'chunk' | 'delta';
     text: string;
 }
+
+export type StreamDeltaEvent = StreamChunkEvent;
 
 export interface StreamDoneEvent {
     type: 'done';
@@ -26,11 +30,18 @@ export interface StreamErrorEvent {
     retryable?: boolean;
 }
 
+export interface StreamCancelledEvent {
+    type: 'cancelled';
+    reason?: string;
+}
+
 export type StreamEvent =
-    | StreamMetaEvent
-    | StreamDeltaEvent
+    | StreamStartEvent
+    | StreamChunkEvent
     | StreamDoneEvent
-    | StreamErrorEvent;
+    | StreamErrorEvent
+    | StreamCancelledEvent
+    | { type: string; [key: string]: any };
 
 export interface StreamHandlerOptions {
     operation: AIOperationType;
@@ -45,14 +56,24 @@ export interface StreamHandlerOptions {
     signal?: AbortSignal;
 }
 
+export const MAX_LINE_BUFFER_CHARS = 256 * 1024; // 256KB Line buffer safety ceiling
+
 /**
- * Consumes the /api/ai/stream response stream with NDJSON protocol support.
+ * Consumes the /api/ai/stream response stream with resilient NDJSON protocol support.
  *
- * G3 & G8 COMPLIANCE:
- * 1. Line-buffered decoder for NDJSON frames preventing chunk split corruption.
- * 2. UTF-8 multi-byte chunk boundary preservation with TextDecoder({ stream: true }).
- * 3. Immediate reader.cancel() on user cancellation or signal abort.
- * 4. Backward compatibility with raw text streams.
+ * PHASE 7 HARDENED SPECIFICATION COMPLIANCE:
+ * 1. Line-buffered decoder for NDJSON frames preventing chunk/newline split corruption.
+ * 2. Unbounded line buffer guard (ADV-01) preventing Client Heap Out-Of-Memory attacks.
+ * 3. Single-terminal-callback guarantee (ADV-05) preventing duplicate onError/onComplete emissions.
+ * 4. UTF-8 multi-byte chunk boundary preservation with TextDecoder({ stream: true }).
+ * 5. Canonical NDJSON schema support: start/meta/metadata, chunk/delta, done, error, cancelled.
+ * 6. Resilient edge-case handling:
+ *    - Incomplete stream termination detected as 'failed_incomplete_stream'.
+ *    - Duplicate 'done' events accepted once and subsequent duplicates ignored.
+ *    - Unknown message types ignored safely without crash.
+ *    - Empty chunks ignored without mutating state.
+ *    - Corrupted JSON chunks trigger clean error teardown without commit.
+ * 7. Immediate reader.cancel() on user cancellation or signal abort.
  */
 export async function consumeAIStream({
     operation,
@@ -67,6 +88,19 @@ export async function consumeAIStream({
     signal,
 }: StreamHandlerOptions): Promise<void> {
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    let isTerminalCallbackEmitted = false;
+
+    const emitComplete = (finalText: string) => {
+        if (isTerminalCallbackEmitted) return;
+        isTerminalCallbackEmitted = true;
+        onComplete(finalText);
+    };
+
+    const emitError = (err: Error) => {
+        if (isTerminalCallbackEmitted) return;
+        isTerminalCallbackEmitted = true;
+        onError(err);
+    };
 
     try {
         const response = await fetch('/api/ai/stream', {
@@ -95,14 +129,79 @@ export async function consumeAIStream({
         const decoder = new TextDecoder('utf-8');
         let accumulatedText = '';
         let lineBuffer = '';
+        let isDoneReceived = false;
+        let isCancelledReceived = false;
+
+        const processLine = (line: string) => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
+
+            // Detect NDJSON structured frame
+            if (trimmed.startsWith('{')) {
+                let event: StreamEvent;
+                try {
+                    event = JSON.parse(trimmed);
+                } catch {
+                    throw new Error('Invalid JSON stream chunk received');
+                }
+
+                if (event.type === 'meta' || event.type === 'start' || event.type === 'metadata') {
+                    onMeta?.(event as StreamMetaEvent);
+                } else if (event.type === 'delta' || event.type === 'chunk') {
+                    const chunkText = (event as StreamChunkEvent).text;
+                    if (chunkText && chunkText.length > 0) {
+                        accumulatedText += chunkText;
+                        onChunk(accumulatedText, chunkText);
+                    }
+                } else if (event.type === 'error') {
+                    const errEvt = event as StreamErrorEvent;
+                    throw new Error(errEvt.message || errEvt.code || 'Stream error occurred');
+                } else if (event.type === 'cancelled') {
+                    isCancelledReceived = true;
+                    const cancelErr = new Error((event as StreamCancelledEvent).reason || 'Stream cancelled');
+                    cancelErr.name = 'AbortError';
+                    throw cancelErr;
+                } else if (event.type === 'done') {
+                    if (!isDoneReceived) {
+                        isDoneReceived = true;
+                    }
+                } else {
+                    // Unknown message type: safely ignore
+                }
+                return;
+            }
+
+            // Fallback for SSE / Raw text lines
+            if (trimmed.startsWith('data:')) {
+                const payload = trimmed.slice(5).trim();
+                if (payload === '[DONE]') {
+                    isDoneReceived = true;
+                    return;
+                }
+                if (payload.length > 0) {
+                    accumulatedText += payload;
+                    onChunk(accumulatedText, payload);
+                }
+            } else {
+                // Raw text line fallback
+                accumulatedText += trimmed;
+                onChunk(accumulatedText, trimmed);
+                // In raw mode, receipt of line constitutes completion on stream end
+                isDoneReceived = true;
+            }
+        };
 
         try {
             while (true) {
                 if (signal?.aborted) {
-                    await reader.cancel('Aborted by client');
+                    try {
+                        await reader.cancel('Aborted by client');
+                    } catch {
+                        // Suppress lock error on cancel
+                    }
                     const abortErr = new Error('Operation cancelled by user');
                     abortErr.name = 'AbortError';
-                    onError(abortErr);
+                    emitError(abortErr);
                     return;
                 }
 
@@ -114,72 +213,31 @@ export async function consumeAIStream({
 
                 // Process NDJSON line buffering
                 lineBuffer += decoded;
+
+                // ADV-01 Guard: Prevent unbounded line buffer growth if stream lacks newlines
+                if (lineBuffer.length > MAX_LINE_BUFFER_CHARS) {
+                    throw new Error('stream_buffer_overflow');
+                }
+
                 const lines = lineBuffer.split('\n');
 
                 // Keep the trailing uncompleted line fragment in lineBuffer
                 lineBuffer = lines.pop() ?? '';
 
                 for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed) continue;
-
-                    // Detect NDJSON structured frame
-                    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                        try {
-                            const event: StreamEvent = JSON.parse(trimmed);
-
-                            if (event.type === 'meta') {
-                                onMeta?.(event);
-                            } else if (event.type === 'delta') {
-                                accumulatedText += event.text;
-                                onChunk(accumulatedText, event.text);
-                            } else if (event.type === 'error') {
-                                throw new Error(event.message || event.code || 'Stream error occurred');
-                            } else if (event.type === 'done') {
-                                // Clean EOF marker
-                            }
-                            continue;
-                        } catch (parseErr) {
-                            if (parseErr instanceof Error && parseErr.message !== 'Unexpected end of JSON input') {
-                                throw parseErr;
-                            }
-                        }
-                    }
-
-                    // Fallback for SSE / Raw text lines
-                    if (trimmed.startsWith('data:')) {
-                        const payload = trimmed.slice(5).trim();
-                        if (payload === '[DONE]') continue;
-                        accumulatedText += payload;
-                        onChunk(accumulatedText, payload);
-                    } else {
-                        // Raw text line fallback
-                        accumulatedText += trimmed;
-                        onChunk(accumulatedText, trimmed);
-                    }
+                    processLine(line);
                 }
+            }
+
+            // Flush decoder for any residual multi-byte characters
+            const flushed = decoder.decode();
+            if (flushed) {
+                lineBuffer += flushed;
             }
 
             // Flush any remaining text in lineBuffer
             if (lineBuffer.trim()) {
-                const trimmed = lineBuffer.trim();
-                if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                    try {
-                        const event: StreamEvent = JSON.parse(trimmed);
-                        if (event.type === 'delta') {
-                            accumulatedText += event.text;
-                            onChunk(accumulatedText, event.text);
-                        } else if (event.type === 'error') {
-                            throw new Error(event.message || event.code || 'Stream error');
-                        }
-                    } catch {
-                        accumulatedText += trimmed;
-                        onChunk(accumulatedText, trimmed);
-                    }
-                } else {
-                    accumulatedText += trimmed;
-                    onChunk(accumulatedText, trimmed);
-                }
+                processLine(lineBuffer);
             }
 
         } finally {
@@ -190,17 +248,29 @@ export async function consumeAIStream({
             }
         }
 
+        if (signal?.aborted || isCancelledReceived) {
+            const abortErr = new Error('Operation cancelled by user');
+            abortErr.name = 'AbortError';
+            emitError(abortErr);
+            return;
+        }
+
+        // Verify stream completeness: response ended without a terminal 'done'
+        if (!isDoneReceived) {
+            throw new Error('failed_incomplete_stream');
+        }
+
         if (!accumulatedText.trim()) {
             throw new Error('AI returned an empty response');
         }
 
-        onComplete(accumulatedText);
+        emitComplete(accumulatedText);
 
     } catch (err: any) {
         if (signal?.aborted || err?.name === 'AbortError') {
             const abortErr = new Error('Operation cancelled by user');
             abortErr.name = 'AbortError';
-            onError(abortErr);
+            emitError(abortErr);
             return;
         }
 
@@ -214,6 +284,8 @@ export async function consumeAIStream({
             ? new Error('Connection interrupted. Original content preserved.')
             : (err instanceof Error ? err : new Error(String(err) || 'Unexpected streaming error'));
 
-        onError(errorToEmit);
+        emitError(errorToEmit);
     }
 }
+
+

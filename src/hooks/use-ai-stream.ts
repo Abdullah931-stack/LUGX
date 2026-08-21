@@ -14,6 +14,7 @@ import { previewBuffer } from '@/lib/ai/preview-buffer';
 import { consumeAIStream, AIOperationType } from '@/lib/ai/stream-handler';
 import { formatStreamOutputToHTML } from '@/lib/parsers/stream-markdown';
 import { commitAIFileOperation, refundAIReservation } from '@/server/actions/ai-commit';
+import { streamingGhostPluginKey } from '@/lib/extensions/streaming-ghost-extension';
 
 export interface UseAIStreamOptions {
     onStreamStart?: () => void;
@@ -64,6 +65,12 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         // If the session has already transitioned to a terminal status, release ref and skip aborting
         if (isTerminalStatus(session.status)) {
             activeSessionRef.current = null;
+            return;
+        }
+
+        // ADV2-02 Inconsistency Guard: Committing state is atomic & in-flight on server, cannot be aborted
+        if (session.status === 'committing') {
+            console.warn('[useAIStream] Session is actively committing changes to database. Abort is suppressed.');
             return;
         }
 
@@ -186,10 +193,17 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     }
                 },
                 onComplete: async (finalRawText) => {
-                    if (activeSessionRef.current?.sessionId !== sessionId) return;
+                    // Double Decision & Session Integrity Guard
+                    if (
+                        activeSessionRef.current?.sessionId !== sessionId ||
+                        session.abortController.signal.aborted ||
+                        isTerminalStatus(session.status)
+                    ) {
+                        return;
+                    }
 
-                    transitionSession(session, 'completed');
-                    setStatus('completed');
+                    transitionSession(session, 'preview_ready');
+                    setStatus('preview_ready');
 
                     // Format and sanitize final AI output
                     const { html: safeHtml, isEmpty } = formatStreamOutputToHTML(finalRawText);
@@ -201,6 +215,11 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     const integrity = assertSessionIntegrity(session, editorGeneration, expectedVersion);
                     if (!integrity.valid) {
                         throw new Error(`Integrity error: ${integrity.reason}`);
+                    }
+
+                    // Check again before initiating server commit in case of user abort during format
+                    if (session.abortController.signal.aborted || activeSessionRef.current?.sessionId !== sessionId) {
+                        return;
                     }
 
                     // STEP 1: Server Atomic Commit
@@ -215,12 +234,17 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         resultContent: safeHtml,
                     });
 
+                    // Check if session was aborted during network commit
+                    if (session.abortController.signal.aborted || activeSessionRef.current?.sessionId !== sessionId) {
+                        return;
+                    }
+
                     // Handle Version Conflict (412)
                     if (commitResult.status === 'conflict') {
                         setIsConflict(true);
                         setError(commitResult.error);
-                        transitionSession(session, 'rolled_back');
-                        setStatus('rolled_back');
+                        transitionSession(session, 'conflict');
+                        setStatus('conflict');
 
                         if (editor && !editor.isDestroyed) {
                             editor.commands.clearStreamingGhost();
@@ -246,10 +270,20 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
                     // STEP 2: Local Atomic TipTap Commit (1 Transaction in History)
                     if (editor && !editor.isDestroyed) {
+                        // ADV-04 Fix: Retrieve dynamic, mapped selection coordinates from ProseMirror plugin state
+                        const ghostState = streamingGhostPluginKey.getState(editor.state);
+                        const docSize = editor.state.doc.content.size;
+                        const targetFrom = ghostState?.active
+                            ? Math.max(0, Math.min(ghostState.from, docSize))
+                            : Math.max(0, Math.min(selectionStart, docSize));
+                        const targetTo = ghostState?.active
+                            ? Math.max(targetFrom, Math.min(ghostState.to, docSize))
+                            : Math.max(targetFrom, Math.min(selectionEnd, docSize));
+
                         editor.commands.clearStreamingGhost();
 
                         editor.chain()
-                            .setTextSelection({ from: selectionStart, to: selectionEnd })
+                            .setTextSelection({ from: targetFrom, to: targetTo })
                             .deleteSelection()
                             .insertContent(safeHtml)
                             .run();
