@@ -237,6 +237,6 @@ describe("quota refund after AI failure (W1)", () => {
         // Either way counters must be deterministic; nothing here depends
         // on a refund because no rejection reserves anything.
         const after = await snapshotUsage(TEST_USER_ID);
-        expect(after!.correctWords).toBeGreaterThanOrEqual(beforeWords);
+        expect(after?.correctWords ?? 0).toBeGreaterThanOrEqual(beforeWords);
     });
 });

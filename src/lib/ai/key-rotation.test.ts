@@ -25,6 +25,9 @@ const { mockStore, mockExpires, mockRedis, MOCK_REDIS_KEYS, resetMocks } = vi.ho
             mockExpires.set(key, seconds);
             return 1;
         }),
+        ttl: vi.fn(async (key: string) => {
+            return mockExpires.get(key) ?? -1;
+        }),
     };
 
     const MOCK_REDIS_KEYS = {
@@ -66,9 +69,9 @@ import {
 describe('Key Rotation System', () => {
     // Setup environment variables before each test
     beforeEach(() => {
-        vi.stubEnv('GEMINI_KEY_1', 'test-key-1');
-        vi.stubEnv('GEMINI_KEY_2', 'test-key-2');
-        vi.stubEnv('GEMINI_KEY_3', 'test-key-3');
+        for (let i = 1; i <= 20; i++) {
+            vi.stubEnv(`GEMINI_KEY_${i}`, i <= 3 ? `test-key-${i}` : '');
+        }
         vi.stubEnv('GEMINI_REQUESTS_PER_KEY', '20');
         resetMocks();
     });
@@ -103,25 +106,23 @@ describe('Key Rotation System', () => {
             expect(mockStore.get(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX)).toBe(1);
         });
 
-        it('should set TTL on old counter when rotating after reaching limit', async () => {
-            const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
-            mockStore.set(usageKey, 20);
-            mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
-
-            await getApiKeyForRequest();
-
-            expect(mockRedis.expire).toHaveBeenCalledWith(usageKey, 3600);
-        });
-
         it('should wrap around to first key when reaching the end of key list', async () => {
-            const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}2`;
-            mockStore.set(usageKey, 20);
+            const usageKey2 = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}2`;
+            mockStore.set(usageKey2, 20);
             mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 2);
 
             const result = await getApiKeyForRequest();
 
             expect(result.key).toBe('test-key-1');
             expect(result.index).toBe(0);
+        });
+
+        it('should throw AllKeysExhaustedError when all keys in pool are exhausted', async () => {
+            mockStore.set(`${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`, 20);
+            mockStore.set(`${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}1`, 20);
+            mockStore.set(`${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}2`, 20);
+
+            await expect(getApiKeyForRequest()).rejects.toThrow('All configured Gemini API keys have exhausted their daily quota');
         });
 
         it('should throw error when no API keys are configured', async () => {
@@ -134,35 +135,30 @@ describe('Key Rotation System', () => {
     });
 
     describe('confirmApiKeyUsage', () => {
-        it('should increment usage counter for the specified key', async () => {
+        it('should increment usage counter and establish 24h window on first request', async () => {
             await confirmApiKeyUsage(0);
 
             const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
             expect(mockStore.get(usageKey)).toBe(1);
+            expect(mockRedis.expire).toHaveBeenCalledWith(usageKey, 86400);
         });
 
-        it('should set TTL when counter reaches limit (20)', async () => {
+        it('should NOT reset or extend 24h TTL on subsequent requests', async () => {
             const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
-            mockStore.set(usageKey, 19);
+            mockStore.set(usageKey, 5);
+            // mock Redis TTL call returning 60000s remaining
+            mockRedis.ttl = vi.fn(async () => 60000);
 
             await confirmApiKeyUsage(0);
 
-            expect(mockStore.get(usageKey)).toBe(20);
-            expect(mockRedis.expire).toHaveBeenCalledWith(usageKey, 3600);
-        });
-
-        it('should NOT set TTL when counter is below limit', async () => {
-            const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
-            mockStore.set(usageKey, 10);
-
-            await confirmApiKeyUsage(0);
-
+            expect(mockStore.get(usageKey)).toBe(6);
+            // Expire should NOT be re-called when TTL is active (>0)
             expect(mockRedis.expire).not.toHaveBeenCalled();
         });
     });
 
     describe('forceKeyRotationAndGetKey', () => {
-        it('should rotate to next key immediately', async () => {
+        it('should rotate to next healthy key immediately', async () => {
             mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
 
             const result = await forceKeyRotationAndGetKey();
@@ -171,32 +167,26 @@ describe('Key Rotation System', () => {
             expect(result.index).toBe(1);
         });
 
-        it('should NOT set TTL on counter when force rotating (TTL only when reaching 20)', async () => {
-            const usageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}0`;
-            mockStore.set(usageKey, 5);
+        it('should NOT wipe new key counter to 0 (preserves existing usage history)', async () => {
             mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
-
-            await forceKeyRotationAndGetKey();
-
-            expect(mockRedis.expire).not.toHaveBeenCalled();
-        });
-
-        it('should reset new key counter to 0', async () => {
-            mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
-
-            await forceKeyRotationAndGetKey();
-
-            const newUsageKey = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}1`;
-            expect(mockStore.get(newUsageKey)).toBe(0);
-        });
-
-        it('should wrap around when at last key', async () => {
-            mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 2);
+            const key1Usage = `${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}1`;
+            mockStore.set(key1Usage, 12); // Key 1 already had 12 requests
 
             const result = await forceKeyRotationAndGetKey();
 
-            expect(result.key).toBe('test-key-1');
-            expect(result.index).toBe(0);
+            expect(result.index).toBe(1);
+            expect(mockStore.get(key1Usage)).toBe(12); // Count preserved!
+        });
+
+        it('should skip exhausted keys and find the first available healthy key', async () => {
+            mockStore.set(MOCK_REDIS_KEYS.CURRENT_KEY_INDEX, 0);
+            mockStore.set(`${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}1`, 20); // Key 1 is exhausted
+            mockStore.set(`${MOCK_REDIS_KEYS.USAGE_COUNT_PREFIX}2`, 5);  // Key 2 is healthy
+
+            const result = await forceKeyRotationAndGetKey();
+
+            expect(result.key).toBe('test-key-3');
+            expect(result.index).toBe(2);
         });
     });
 
@@ -252,8 +242,8 @@ describe('Key Rotation System', () => {
             expect(shouldRotateOnError(500)).toBe(true);
         });
 
-        it('should return true for 400 (bad request)', () => {
-            expect(shouldRotateOnError(400)).toBe(true);
+        it('should return false for 400 (bad request / fail fast)', () => {
+            expect(shouldRotateOnError(400)).toBe(false);
         });
 
         it('should return true for 401 (unauthorized)', () => {
@@ -349,8 +339,8 @@ describe('Key Rotation System', () => {
     });
 
     describe('ROTATION_ERROR_CODES constant', () => {
-        it('should include all expected error codes', () => {
-            expect(ROTATION_ERROR_CODES).toContain(400);
+        it('should include all expected rotatable error codes and exclude 400', () => {
+            expect(ROTATION_ERROR_CODES).not.toContain(400);
             expect(ROTATION_ERROR_CODES).toContain(401);
             expect(ROTATION_ERROR_CODES).toContain(403);
             expect(ROTATION_ERROR_CODES).toContain(429);

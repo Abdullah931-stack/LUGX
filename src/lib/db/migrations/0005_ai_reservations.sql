@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS ai_reservations (
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     file_id uuid REFERENCES files(id) ON DELETE SET NULL,
     operation varchar(64) NOT NULL,
-    reserved_amount integer NOT NULL DEFAULT 0,
+    reserved_units integer NOT NULL DEFAULT 0,
+    committed_units integer NOT NULL DEFAULT 0,
+    refunded_units integer NOT NULL DEFAULT 0,
     period_key varchar(32) NOT NULL,
     status ai_reservation_status NOT NULL DEFAULT 'reserved',
     expires_at timestamp NOT NULL,
@@ -29,9 +31,30 @@ CREATE TABLE IF NOT EXISTS ai_reservations (
     updated_at timestamp NOT NULL DEFAULT now()
 );
 
+-- Idempotent column upgrades if table was created in an earlier migration step
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ai_reservations' AND column_name = 'reserved_units') THEN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ai_reservations' AND column_name = 'reserved_amount') THEN
+            ALTER TABLE ai_reservations RENAME COLUMN reserved_amount TO reserved_units;
+        ELSE
+            ALTER TABLE ai_reservations ADD COLUMN reserved_units integer NOT NULL DEFAULT 0;
+        END IF;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ai_reservations' AND column_name = 'committed_units') THEN
+        ALTER TABLE ai_reservations ADD COLUMN committed_units integer NOT NULL DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ai_reservations' AND column_name = 'refunded_units') THEN
+        ALTER TABLE ai_reservations ADD COLUMN refunded_units integer NOT NULL DEFAULT 0;
+    END IF;
+END $$;
+
 -- ---------------------------------------------------------------------------
--- 3. Create unique index on operation_id and lookup/sweep indexes
+-- 3. Create unique index on (user_id, operation_id, period_key) and lookup/sweep indexes
 -- ---------------------------------------------------------------------------
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_reservations_user_op_period
+    ON ai_reservations USING btree (user_id, operation_id, period_key);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_reservations_operation_id
     ON ai_reservations USING btree (operation_id);
 
@@ -40,3 +63,4 @@ CREATE INDEX IF NOT EXISTS idx_ai_reservations_user_status
 
 CREATE INDEX IF NOT EXISTS idx_ai_reservations_status_expires
     ON ai_reservations USING btree (status, expires_at);
+

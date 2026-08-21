@@ -106,17 +106,20 @@ export const aiReservationStatusEnum = pgEnum("ai_reservation_status", [
 // AI Reservations table - tracks idempotent quota reservation lifecycle
 export const aiReservations = pgTable("ai_reservations", {
     id: uuid("id").primaryKey().defaultRandom(),
-    operationId: varchar("operation_id", { length: 255 }).notNull().unique(),
+    operationId: varchar("operation_id", { length: 255 }).notNull(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     fileId: uuid("file_id").references(() => files.id, { onDelete: "set null" }),
     operation: varchar("operation", { length: 64 }).notNull(),
-    reservedAmount: integer("reserved_amount").notNull().default(0),
+    reservedUnits: integer("reserved_units").notNull().default(0),
+    committedUnits: integer("committed_units").notNull().default(0),
+    refundedUnits: integer("refunded_units").notNull().default(0),
     periodKey: varchar("period_key", { length: 32 }).notNull(),
     status: aiReservationStatusEnum("status").notNull().default("reserved"),
     expiresAt: timestamp("expires_at").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
+    uniqueIndex("idx_ai_reservations_user_op_period").on(table.userId, table.operationId, table.periodKey),
     uniqueIndex("idx_ai_reservations_operation_id").on(table.operationId),
     index("idx_ai_reservations_user_status").on(table.userId, table.status),
     index("idx_ai_reservations_status_expires").on(table.status, table.expiresAt),

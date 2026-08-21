@@ -144,11 +144,12 @@ export async function commitAIFileOperation(
             };
         }
 
-        // 4. Mark reservation as committed
+        // 4. Mark reservation as committed with reservedUnits tracked into committedUnits
         await db
             .update(schema.aiReservations)
             .set({
                 status: "committed",
+                committedUnits: reservation.reservedUnits,
                 updatedAt: now,
             })
             .where(
@@ -183,55 +184,7 @@ export async function commitAIFileOperation(
 }
 
 /**
- * Server Action: Refund an AI Reservation idempotently
+ * Server Action: Refund an AI Reservation idempotently (delegating to unified ai-ops handler).
  */
-export async function refundAIReservation(
-    operationId: string,
-    reason: string = "stream_failed"
-): Promise<{ refunded: boolean; reason?: string }> {
-    try {
-        const reservation = await db.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
-        });
+export { refundAIReservation } from "@/server/actions/ai-ops";
 
-        if (!reservation) {
-            return { refunded: false, reason: "reservation_not_found" };
-        }
-
-        if (reservation.status === "committed") {
-            return { refunded: false, reason: "already_committed" };
-        }
-
-        if (reservation.status === "refunded") {
-            return { refunded: false, reason: "already_refunded" };
-        }
-
-        if (reservation.status === "expired") {
-            return { refunded: false, reason: "already_expired" };
-        }
-
-        // Atomic conditional transition: reserved -> refunded
-        const [updatedReservation] = await db
-            .update(schema.aiReservations)
-            .set({
-                status: "refunded",
-                updatedAt: new Date(),
-            })
-            .where(
-                and(
-                    eq(schema.aiReservations.id, reservation.id),
-                    eq(schema.aiReservations.status, "reserved")
-                )
-            )
-            .returning();
-
-        if (!updatedReservation) {
-            return { refunded: false, reason: "state_conflict" };
-        }
-
-        return { refunded: true };
-    } catch (err) {
-        console.error("[refundAIReservation] Error:", err);
-        return { refunded: false, reason: "error" };
-    }
-}

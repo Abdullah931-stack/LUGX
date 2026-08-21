@@ -102,6 +102,9 @@ export async function POST(req: NextRequest) {
                     while (true) {
                         if (req.signal.aborted) {
                             await reader.cancel("Client aborted");
+                            if (operationId) {
+                                refundAIReservation(operationId, "client_aborted").catch(() => {});
+                            }
                             controller.close();
                             return;
                         }
@@ -155,8 +158,11 @@ export async function POST(req: NextRequest) {
                     }
                 }
             },
-            cancel() {
-                // Downstream cancel handler
+            cancel(reason) {
+                // Downstream cancel handler - ensure quota is refunded if client disconnects abruptly
+                if (operationId) {
+                    refundAIReservation(operationId, "stream_cancelled_by_client").catch(() => {});
+                }
             }
         });
 

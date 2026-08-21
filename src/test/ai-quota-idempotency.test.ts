@@ -67,11 +67,21 @@ vi.mock('@/lib/db', () => ({
     schema: {
         users: { id: 'id', tier: 'tier' },
         usage: { id: 'id', userId: 'user_id', date: 'date' },
-        aiReservations: { id: 'id', operationId: 'operation_id', userId: 'user_id', status: 'status' },
+        aiReservations: {
+            id: 'id',
+            operationId: 'operation_id',
+            userId: 'user_id',
+            status: 'status',
+            reservedUnits: 'reserved_units',
+            committedUnits: 'committed_units',
+            refundedUnits: 'refunded_units',
+            periodKey: 'period_key',
+            expiresAt: 'expires_at',
+        },
     },
 }));
 
-describe('AI Quota Reservation & Idempotency Invariants (Gate G1 & G4)', () => {
+describe('AI Quota Reservation & Idempotency Invariants (Phase 5 - Gates G1 & G4)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         inMemoryReservations.clear();
@@ -114,6 +124,7 @@ describe('AI Quota Reservation & Idempotency Invariants (Gate G1 & G4)', () => {
                 userId: '00000000-0000-0000-0000-000000000001',
                 status: 'reserved',
                 periodKey: first.periodKey,
+                reservedUnits: 50,
             } as any);
 
             const replay = await aiOps.reserveAndUpdateUsage(
@@ -140,7 +151,7 @@ describe('AI Quota Reservation & Idempotency Invariants (Gate G1 & G4)', () => {
                 userId: '00000000-0000-0000-0000-000000000001',
                 status: 'reserved',
                 operation: 'translate',
-                reservedAmount: 200,
+                reservedUnits: 200,
                 periodKey: '2026-08-17',
             } as any);
 
@@ -157,7 +168,7 @@ describe('AI Quota Reservation & Idempotency Invariants (Gate G1 & G4)', () => {
                 userId: '00000000-0000-0000-0000-000000000001',
                 status: 'refunded',
                 operation: 'summarize',
-                reservedAmount: 100,
+                reservedUnits: 100,
                 periodKey: '2026-08-17',
             } as any);
 
@@ -175,7 +186,7 @@ describe('AI Quota Reservation & Idempotency Invariants (Gate G1 & G4)', () => {
                 userId: '00000000-0000-0000-0000-000000000001',
                 status: 'committed',
                 operation: 'improve',
-                reservedAmount: 80,
+                reservedUnits: 80,
                 periodKey: '2026-08-17',
             } as any);
 
@@ -184,4 +195,56 @@ describe('AI Quota Reservation & Idempotency Invariants (Gate G1 & G4)', () => {
             expect(refundAttempt.reason).toBe('already_committed');
         });
     });
+
+    describe('State Transition Guarding: commit and expiration', () => {
+        it('should transition reserved -> committed idempotently', async () => {
+            const operationId = 'test-op-commit-301';
+
+            vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+                id: 'res-commit-301',
+                operationId,
+                userId: '00000000-0000-0000-0000-000000000001',
+                status: 'reserved',
+                reservedUnits: 120,
+            } as any);
+
+            const result = await aiOps.commitAIReservation(operationId);
+            expect(result.committed).toBe(true);
+        });
+
+        it('should recognize already_committed when commit is called repeatedly', async () => {
+            const operationId = 'test-op-commit-302';
+
+            vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+                id: 'res-commit-302',
+                operationId,
+                userId: '00000000-0000-0000-0000-000000000001',
+                status: 'committed',
+                reservedUnits: 120,
+            } as any);
+
+            const result = await aiOps.commitAIReservation(operationId);
+            expect(result.committed).toBe(true);
+            expect(result.reason).toBe('already_committed');
+        });
+
+        it('should sweep and expire stale reservations restoring usage counters', async () => {
+            vi.mocked(db.query.aiReservations.findMany).mockResolvedValueOnce([
+                {
+                    id: 'res-stale-1',
+                    operationId: 'op-stale-1',
+                    userId: '00000000-0000-0000-0000-000000000001',
+                    status: 'reserved',
+                    operation: 'correct',
+                    reservedUnits: 75,
+                    periodKey: '2026-08-20',
+                    expiresAt: new Date(Date.now() - 60000),
+                },
+            ] as any);
+
+            const expiredCount = await aiOps.expireStaleReservations();
+            expect(expiredCount).toBe(1);
+        });
+    });
 });
+

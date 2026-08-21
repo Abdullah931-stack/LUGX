@@ -1,7 +1,7 @@
 import { redis, REDIS_KEYS } from "../redis";
 
 // Constants
-const ONE_HOUR_IN_SECONDS = 3600;
+export const TWENTY_FOUR_HOURS_IN_SECONDS = 86400; // 24 hours per key lifecycle
 const DEFAULT_MAX_REQUESTS_PER_KEY = 20;
 const CIRCUIT_BREAKER_PREFIX = "gemini:circuit_breaker:";
 const MODEL_FAILURES_PREFIX = "gemini:model_failures:";
@@ -12,8 +12,7 @@ const DEFAULT_CIRCUIT_TTL_SECONDS = 3600; // 1 hour cooldown when model is overl
  * These include rate limits, server errors, quota issues, and authentication faults.
  */
 export const ROTATION_ERROR_CODES = [
-    400, // Bad Request / Invalid API key
-    401, // Unauthorized
+    401, // Unauthorized / Invalid API Key
     403, // Forbidden / Quota exceeded
     429, // Too Many Requests / Rate limit reached
     500, // Internal Server Error
@@ -21,6 +20,22 @@ export const ROTATION_ERROR_CODES = [
     503, // Service Unavailable / High demand
     504, // Gateway Timeout
 ];
+
+/**
+ * Custom Error thrown when all API keys in the rotation pool have reached their 24h limit.
+ */
+export class AllKeysExhaustedError extends Error {
+    public readonly minRemainingTtlSeconds: number;
+    constructor(minRemainingTtlSeconds: number) {
+        const remainingMinutes = Math.ceil(minRemainingTtlSeconds / 60);
+        const remainingHours = (minRemainingTtlSeconds / 3600).toFixed(1);
+        super(
+            `All configured Gemini API keys have exhausted their daily quota. Cooldown active. Next key unlocks in ~${remainingHours}h (${remainingMinutes}m).`
+        );
+        this.name = "AllKeysExhaustedError";
+        this.minRemainingTtlSeconds = minRemainingTtlSeconds;
+    }
+}
 
 /**
  * Retrieve all valid API keys configured in the environment.
@@ -66,12 +81,13 @@ export interface KeyInfo {
  * Get an API key for making a request WITHOUT incrementing the counter.
  * The counter is only incremented after a confirmed successful request via confirmApiKeyUsage().
  * 
- * Algorithm:
+ * 24-HOUR FIXED TTL ALGORITHM:
  * 1. Fetch configured keys list.
- * 2. Retrieve current key index from Redis (defaulting to 0).
- * 3. Inspect usage count for the current key.
- * 4. If current key usage >= limit (e.g. 20), rotate to next available key in Redis and set TTL.
- * 5. Return active key and index.
+ * 2. Retrieve current key index from Redis.
+ * 3. Inspect usage count for the key.
+ * 4. If current key usage < limit (20), return it.
+ * 5. If current key usage >= limit, rotate to the next key without resetting any counter.
+ * 6. If all keys are exhausted, calculate the minimum remaining TTL across the pool and throw AllKeysExhaustedError.
  */
 export async function getApiKeyForRequest(): Promise<KeyInfo> {
     const keys = getApiKeys();
@@ -103,8 +119,11 @@ export async function getApiKeyForRequest(): Promise<KeyInfo> {
 
     // Look for a key index that has not exhausted its quota
     let inspectedCount = 0;
+    let minRemainingTtl = TWENTY_FOUR_HOURS_IN_SECONDS;
+
     while (inspectedCount < keys.length) {
-        const usageKey = `${REDIS_KEYS.USAGE_COUNT_PREFIX}${currentIndex}`;
+        const checkIndex = (currentIndex + inspectedCount) % keys.length;
+        const usageKey = `${REDIS_KEYS.USAGE_COUNT_PREFIX}${checkIndex}`;
         let usageCount = 0;
 
         try {
@@ -113,48 +132,47 @@ export async function getApiKeyForRequest(): Promise<KeyInfo> {
                 usageCount = count;
             }
         } catch (redisErr) {
-            console.warn(`[Key Rotation] Redis read error for usage_count ${currentIndex}:`, redisErr);
+            console.warn(`[Key Rotation] Redis read error for usage_count ${checkIndex}:`, redisErr);
         }
 
         if (usageCount < requestsPerKey) {
+            if (checkIndex !== currentIndex) {
+                try {
+                    await redis.set(REDIS_KEYS.CURRENT_KEY_INDEX, checkIndex);
+                } catch {
+                    // Ignore write error
+                }
+            }
             return {
-                key: keys[currentIndex],
-                index: currentIndex,
+                key: keys[checkIndex],
+                index: checkIndex,
             };
         }
 
-        // Key reached limit - set TTL on old counter and rotate to next
+        // Key reached limit - inspect remaining TTL
         try {
-            await redis.expire(usageKey, ONE_HOUR_IN_SECONDS);
+            const ttl = await redis.ttl(usageKey);
+            if (ttl > 0 && ttl < minRemainingTtl) {
+                minRemainingTtl = ttl;
+            }
         } catch {
-            // Ignore TTL failure
+            // Ignore TTL read error
         }
 
-        const oldIndex = currentIndex;
-        currentIndex = (currentIndex + 1) % keys.length;
-
-        try {
-            await redis.set(REDIS_KEYS.CURRENT_KEY_INDEX, currentIndex);
-            const newUsageKey = `${REDIS_KEYS.USAGE_COUNT_PREFIX}${currentIndex}`;
-            await redis.set(newUsageKey, 0);
-        } catch {
-            // Ignore Redis write error
-        }
-
-        console.log(`[Key Rotation] Key ${oldIndex} reached quota limit (${usageCount}/${requestsPerKey}). Rotated index to ${currentIndex}`);
         inspectedCount++;
     }
 
-    // If all keys reached usage limit, return current index
-    return {
-        key: keys[currentIndex],
-        index: currentIndex,
-    };
+    // All keys have reached their limit in the active 24h window
+    throw new AllKeysExhaustedError(minRemainingTtl);
 }
 
 /**
  * Confirm API key usage after a SUCCESSFUL response chunk or completion.
- * Increments the Redis usage counter only for confirmed successful work.
+ * Increments the Redis usage counter and starts the fixed 24h TTL clock on the FIRST request.
+ * 
+ * 24-Hour Rule:
+ * - On the first request for this key (count === 1 or TTL unset), sets TTL to exactly 86400 seconds (24h).
+ * - On subsequent requests (count > 1), TTL is NEVER refreshed or extended, preserving the original 24h countdown.
  * 
  * @param keyIndex - The index of the key that was successfully used
  */
@@ -167,23 +185,36 @@ export async function confirmApiKeyUsage(keyIndex: number): Promise<void> {
 
     try {
         const newCount = await redis.incr(usageKey);
-        console.log(`[Key Rotation] Key ${keyIndex} (${keyIndex + 1}/${keys.length}) usage: ${newCount}/${requestsPerKey}`);
+        console.log(`[Key Rotation] Key #${keyIndex + 1}/${keys.length} usage: ${newCount}/${requestsPerKey}`);
+
+        // If this is the FIRST request in the 24-hour cycle (newCount === 1), establish the 24h window
+        if (newCount === 1) {
+            await redis.expire(usageKey, TWENTY_FOUR_HOURS_IN_SECONDS);
+            console.log(`[Key Rotation] Key #${keyIndex + 1} initialized 24-hour quota window (${TWENTY_FOUR_HOURS_IN_SECONDS}s).`);
+        } else {
+            // Defensive check: ensure TTL exists if key was somehow created without one
+            const currentTtl = await redis.ttl(usageKey);
+            if (currentTtl < 0) {
+                await redis.expire(usageKey, TWENTY_FOUR_HOURS_IN_SECONDS);
+            }
+        }
 
         if (newCount >= requestsPerKey) {
-            await redis.expire(usageKey, ONE_HOUR_IN_SECONDS);
-            console.log(`[Key Rotation] Key ${keyIndex} reached limit. TTL set for ${ONE_HOUR_IN_SECONDS}s. Next request will use a new key.`);
+            const ttl = await redis.ttl(usageKey);
+            const remainingHours = ttl > 0 ? (ttl / 3600).toFixed(1) : "24";
+            console.log(`[Key Rotation] Key #${keyIndex + 1} reached limit (${newCount}/${requestsPerKey}). Cooldown active for remaining ${remainingHours}h.`);
         }
     } catch (redisErr) {
-        console.warn(`[Key Rotation] Failed to increment usage counter for key ${keyIndex}:`, redisErr);
+        console.warn(`[Key Rotation] Failed to increment usage counter for key #${keyIndex + 1}:`, redisErr);
     }
 }
 
 /**
- * Force immediate rotation to the next key in the pool and update Redis.
+ * Force immediate rotation to the next healthy key in the pool and update Redis.
  * Called when an API key fails with rate limits (429), quota exhaustion, or authentication issues.
  * 
- * NOTE: TTL is NOT set here - TTL is only set when counter reaches the limit (20).
- * Force rotation moves to the next key and resets its counter for a fresh start.
+ * NOTE: Does NOT reset counters (`redis.set(newUsageKey, 0)` is strictly forbidden).
+ * It safely discovers the next non-exhausted key or throws AllKeysExhaustedError.
  * 
  * @returns The new key information for immediate failover retry
  */
@@ -203,22 +234,50 @@ export async function forceKeyRotationAndGetKey(): Promise<KeyInfo> {
         // Fallback to 0
     }
 
-    const nextIndex = (currentIndex + 1) % keys.length;
+    const requestsPerKey = getRequestsPerKey();
+    let nextIndex = (currentIndex + 1) % keys.length;
+    let inspected = 0;
+    let minRemainingTtl = TWENTY_FOUR_HOURS_IN_SECONDS;
 
-    try {
-        await redis.set(REDIS_KEYS.CURRENT_KEY_INDEX, nextIndex);
-        const newUsageKey = `${REDIS_KEYS.USAGE_COUNT_PREFIX}${nextIndex}`;
-        await redis.set(newUsageKey, 0);
-    } catch (redisErr) {
-        console.warn("[Key Rotation] Redis write error during forced rotation:", redisErr);
+    while (inspected < keys.length) {
+        const candidateKey = `${REDIS_KEYS.USAGE_COUNT_PREFIX}${nextIndex}`;
+        let usage = 0;
+        try {
+            const count = await redis.get<number>(candidateKey);
+            if (typeof count === "number" && !isNaN(count)) {
+                usage = count;
+            }
+        } catch {
+            // Ignore Redis read error
+        }
+
+        if (usage < requestsPerKey) {
+            try {
+                await redis.set(REDIS_KEYS.CURRENT_KEY_INDEX, nextIndex);
+            } catch (redisErr) {
+                console.warn("[Key Rotation] Redis write error during forced rotation:", redisErr);
+            }
+            console.log(`[Key Rotation] FORCED rotation from key #${currentIndex + 1} to healthy key #${nextIndex + 1}`);
+            return {
+                key: keys[nextIndex],
+                index: nextIndex,
+            };
+        }
+
+        try {
+            const ttl = await redis.ttl(candidateKey);
+            if (ttl > 0 && ttl < minRemainingTtl) {
+                minRemainingTtl = ttl;
+            }
+        } catch {
+            // Ignore TTL read error
+        }
+
+        nextIndex = (nextIndex + 1) % keys.length;
+        inspected++;
     }
 
-    console.log(`[Key Rotation] FORCED rotation from key ${currentIndex} to key ${nextIndex}`);
-
-    return {
-        key: keys[nextIndex],
-        index: nextIndex,
-    };
+    throw new AllKeysExhaustedError(minRemainingTtl);
 }
 
 /**

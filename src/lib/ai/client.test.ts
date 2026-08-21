@@ -65,7 +65,7 @@ vi.mock('./key-rotation', () => ({
     recordModelFailure: mocks.recordModelFailure,
     tripModelCircuit: mocks.tripModelCircuit,
     resetModelCircuit: mocks.resetModelCircuit,
-    ROTATION_ERROR_CODES: [400, 401, 403, 429, 500, 502, 503, 504],
+    ROTATION_ERROR_CODES: [401, 403, 429, 500, 502, 503, 504],
 }));
 
 // Import after mocks are set up

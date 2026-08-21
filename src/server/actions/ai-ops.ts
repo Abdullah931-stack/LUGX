@@ -364,7 +364,9 @@ export async function reserveAndUpdateUsage(
                     userId,
                     fileId: options.fileId || null,
                     operation,
-                    reservedAmount: wordCount,
+                    reservedUnits: wordCount,
+                    committedUnits: 0,
+                    refundedUnits: 0,
                     periodKey: today,
                     status: "reserved",
                     expiresAt,
@@ -378,16 +380,58 @@ export async function reserveAndUpdateUsage(
                 periodKey: today,
             };
         } catch (insertError) {
-            // Check if concurrent insert happened
+            // Check if concurrent insert happened (Double-click or parallel race on same operationId)
             const existing = await db.query.aiReservations.findFirst({
-                where: eq(schema.aiReservations.operationId, options.operationId),
+                where: and(
+                    eq(schema.aiReservations.userId, userId),
+                    eq(schema.aiReservations.operationId, options.operationId)
+                ),
             });
             if (existing) {
+                // REDUNDANT SPECULATIVE USAGE REVERSAL:
+                // This duplicate request already updated usage counters before failing the unique constraint.
+                // Revert this duplicate request's speculative increment so the user is never double-deducted!
+                const undoFields: Record<string, unknown> = {};
+                switch (operation) {
+                    case "correct":
+                        undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
+                        break;
+                    case "improve":
+                        undoFields.improveWords = sql`GREATEST(improve_words - ${wordCount}, 0)`;
+                        break;
+                    case "translate":
+                        undoFields.translateWords = sql`GREATEST(translate_words - ${wordCount}, 0)`;
+                        break;
+                    case "summarize":
+                        undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
+                        undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
+                        break;
+                    case "toPrompt":
+                        undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
+                        break;
+                }
+
+                await db
+                    .update(schema.usage)
+                    .set(undoFields)
+                    .where(
+                        and(
+                            eq(schema.usage.userId, userId),
+                            eq(schema.usage.date, today)
+                        )
+                    );
+
+                if (existing.status === "reserved") {
+                    return {
+                        reserved: true,
+                        reservationId: existing.id,
+                        operationId: existing.operationId,
+                        periodKey: existing.periodKey,
+                    };
+                }
                 return {
-                    reserved: true,
-                    reservationId: existing.id,
-                    operationId: existing.operationId,
-                    periodKey: existing.periodKey,
+                    reserved: false,
+                    reason: `Operation already ${existing.status}`,
                 };
             }
             throw insertError;
@@ -402,9 +446,12 @@ export async function reserveAndUpdateUsage(
  *
  * G1 & G4 COMPLIANCE:
  * 1. Checks if reservation is currently in `reserved` status.
- * 2. Transition to `refunded` is conditional and atomic.
- * 3. Uses the EXACT `periodKey` captured at reservation time (cross-midnight safety).
- * 4. Second call with same operationId returns `{ refunded: false, reason: "already_refunded" }`.
+ * 2. Transition to `refunded` is conditional and atomic (reserved -> refunded).
+ * 3. Sets refundedUnits = reservedUnits atomically.
+ * 4. Uses the EXACT `periodKey` captured at reservation time (cross-midnight safety).
+ * 5. Reverts `usage` counters using bounded subtraction GREATEST(col - units, 0).
+ * 6. Repeated call with same operationId returns `{ refunded: false, reason: "already_refunded" }`.
+ * 7. Call on committed reservation returns `{ refunded: false, reason: "already_committed" }`.
  */
 export async function refundAIReservation(
     operationId: string,
@@ -430,11 +477,14 @@ export async function refundAIReservation(
         return { refunded: false, reason: "already_expired" };
     }
 
+    const unitsToRefund = reservation.reservedUnits;
+
     // Atomic conditional transition: reserved -> refunded
     const [updatedReservation] = await db
         .update(schema.aiReservations)
         .set({
             status: "refunded",
+            refundedUnits: unitsToRefund,
             updatedAt: new Date(),
         })
         .where(
@@ -447,26 +497,28 @@ export async function refundAIReservation(
 
     if (!updatedReservation) {
         // Raced with another refund or commit call
-        return { refunded: false, reason: "state_conflict" };
+        const refreshed = await db.query.aiReservations.findFirst({
+            where: eq(schema.aiReservations.id, reservation.id),
+        });
+        return { refunded: false, reason: refreshed?.status ? `already_${refreshed.status}` : "state_conflict" };
     }
 
     // Revert usage counters using the recorded `periodKey` (UTC date at reservation time)
     const undoFields: Record<string, unknown> = {};
-    const wordCount = reservation.reservedAmount;
 
     switch (reservation.operation as AIOperation) {
         case "correct":
-            undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
+            undoFields.correctWords = sql`GREATEST(correct_words - ${unitsToRefund}, 0)`;
             break;
         case "improve":
-            undoFields.improveWords = sql`GREATEST(improve_words - ${wordCount}, 0)`;
+            undoFields.improveWords = sql`GREATEST(improve_words - ${unitsToRefund}, 0)`;
             break;
         case "translate":
-            undoFields.translateWords = sql`GREATEST(translate_words - ${wordCount}, 0)`;
+            undoFields.translateWords = sql`GREATEST(translate_words - ${unitsToRefund}, 0)`;
             break;
         case "summarize":
             undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-            undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
+            undoFields.summarizeWords = sql`GREATEST(summarize_words - ${unitsToRefund}, 0)`;
             break;
         case "toPrompt":
             undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
@@ -492,15 +544,32 @@ export async function refundAIReservation(
 export async function commitAIReservation(
     operationId: string
 ): Promise<{ committed: boolean; reason?: string }> {
+    const reservation = await db.query.aiReservations.findFirst({
+        where: eq(schema.aiReservations.operationId, operationId),
+    });
+
+    if (!reservation) {
+        return { committed: false, reason: "not_found" };
+    }
+
+    if (reservation.status === "committed") {
+        return { committed: true, reason: "already_committed" };
+    }
+
+    if (reservation.status !== "reserved") {
+        return { committed: false, reason: reservation.status };
+    }
+
     const [updated] = await db
         .update(schema.aiReservations)
         .set({
             status: "committed",
+            committedUnits: reservation.reservedUnits,
             updatedAt: new Date(),
         })
         .where(
             and(
-                eq(schema.aiReservations.operationId, operationId),
+                eq(schema.aiReservations.id, reservation.id),
                 eq(schema.aiReservations.status, "reserved")
             )
         )
@@ -508,12 +577,12 @@ export async function commitAIReservation(
 
     if (!updated) {
         const current = await db.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
+            where: eq(schema.aiReservations.id, reservation.id),
         });
         if (current?.status === "committed") {
             return { committed: true, reason: "already_committed" };
         }
-        return { committed: false, reason: current?.status || "not_found" };
+        return { committed: false, reason: current?.status || "state_conflict" };
     }
 
     return { committed: true };
@@ -533,9 +602,14 @@ export async function expireStaleReservations(): Promise<number> {
 
     let expiredCount = 0;
     for (const res of staleReservations) {
+        const unitsToRefund = res.reservedUnits;
         const [updated] = await db
             .update(schema.aiReservations)
-            .set({ status: "expired", updatedAt: now })
+            .set({
+                status: "expired",
+                refundedUnits: unitsToRefund,
+                updatedAt: now,
+            })
             .where(
                 and(
                     eq(schema.aiReservations.id, res.id),
@@ -547,21 +621,20 @@ export async function expireStaleReservations(): Promise<number> {
         if (updated) {
             // Refund the quota on the original periodKey
             const undoFields: Record<string, unknown> = {};
-            const wordCount = res.reservedAmount;
 
             switch (res.operation as AIOperation) {
                 case "correct":
-                    undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
+                    undoFields.correctWords = sql`GREATEST(correct_words - ${unitsToRefund}, 0)`;
                     break;
                 case "improve":
-                    undoFields.improveWords = sql`GREATEST(improve_words - ${wordCount}, 0)`;
+                    undoFields.improveWords = sql`GREATEST(improve_words - ${unitsToRefund}, 0)`;
                     break;
                 case "translate":
-                    undoFields.translateWords = sql`GREATEST(translate_words - ${wordCount}, 0)`;
+                    undoFields.translateWords = sql`GREATEST(translate_words - ${unitsToRefund}, 0)`;
                     break;
                 case "summarize":
                     undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-                    undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
+                    undoFields.summarizeWords = sql`GREATEST(summarize_words - ${unitsToRefund}, 0)`;
                     break;
                 case "toPrompt":
                     undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
@@ -672,16 +745,14 @@ export async function updateUsage(
  */
 export async function processText(
     operation: AIOperation,
-    text: string
+    text: string,
+    options?: { operationId?: string }
 ): Promise<{ success: boolean; data?: string; error?: string }> {
-    // ENGINEERING UPGRADE (W1): reservation state must survive a thrown
-    // error to decide whether a refund is owed. Declared before `try` so the
-    // catch block can inspect them (they remain `undefined` if the failure
-    // happened before reservation — nothing to refund in that case).
     let user: SupabaseUser | null = null;
     let wordCount = 0;
     let tier: TierName | null = null;
-    let reservation: { reserved: boolean; reason?: string } | undefined;
+    let reservation: ReservationResult | undefined;
+    const operationId = options?.operationId || `op_${crypto.randomUUID()}`;
 
     try {
         // Get authenticated user
@@ -695,28 +766,27 @@ export async function processText(
         // Get user tier once (needed for the atomic quota reservation)
         tier = await getUserTier(user.id);
 
-        // Atomic quota reservation + counter update (replaces the old
-        // checkQuota() -> processWithAI() -> updateUsage() flow which was
-        // vulnerable to a TOCTOU race between check and update).
-        reservation = await reserveAndUpdateUsage(user.id, operation, wordCount, tier);
+        // Atomic quota reservation + counter update
+        reservation = await reserveAndUpdateUsage(user.id, operation, wordCount, tier, {
+            operationId,
+        });
+
         if (!reservation.reserved) {
             return { success: false, error: reservation.reason };
         }
 
-        // Process with AI (quota already reserved; counter will not be
-        // incremented twice — the reservation did it conditionally).
+        // Process with AI (quota already reserved atomically)
         const result = await processWithAI(operation, text, tier as Tier);
+
+        // Commit reservation upon confirmed successful response
+        await commitAIReservation(operationId);
 
         return { success: true, data: result };
 
     } catch (error) {
-        // ENGINEERING UPGRADE (W1): compensate the reservation. The quota was
-        // reserved atomically BEFORE the AI call; if the AI provider call
-        // fails (after reservation), the user must get their quota back.
-        // Errors thrown BEFORE reservation (auth, tier lookup) leave nothing
-        // to refund, so `reservation?.reserved` is the gate.
-        if (reservation && reservation.reserved && tier) {
-            await refundUsage(user!.id, operation, wordCount, tier);
+        // Auto-refund reservation on AI failure
+        if (reservation && reservation.reserved) {
+            await refundAIReservation(operationId, "process_text_failure");
         }
         console.error(`AI operation ${operation} failed (quota refunded):`, error);
         return {

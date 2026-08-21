@@ -103,9 +103,10 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     }: StartStreamParams): Promise<void> => {
         if (!editor || editor.isDestroyed) return;
 
-        // Abort any existing in-flight session first
-        if (activeSessionRef.current) {
-            stopStream();
+        // IN-FLIGHT MUTEX: Prevent duplicate / double-click triggering while a stream is actively running
+        if (activeSessionRef.current && !isTerminalStatus(activeSessionRef.current.status)) {
+            console.warn('[useAIStream] An active AI streaming session is already in progress. Ignoring duplicate trigger.');
+            return;
         }
 
         editorRef.current = editor;
@@ -223,8 +224,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
                         if (editor && !editor.isDestroyed) {
                             editor.commands.clearStreamingGhost();
-                            // Rollback to original snapshot
-                            if (session.originalHtml && editor.getHTML() !== session.originalHtml) {
+                            // USER DATA PROTECTION (AUD-02): Only rollback if editor generation hasn't changed
+                            if (editorGeneration === session.editorGeneration && session.originalHtml && editor.getHTML() !== session.originalHtml) {
                                 editor.chain().setContent(session.originalHtml).run();
                             }
                         }
@@ -291,7 +292,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             if (activeSessionRef.current?.sessionId === sessionId) {
                 if (editor && !editor.isDestroyed) {
                     editor.commands.clearStreamingGhost();
-                    if (session.originalHtml && editor.getHTML() !== session.originalHtml) {
+                    // USER DATA PROTECTION (AUD-02): Never overwrite user's manual edits
+                    if (editorGeneration === session.editorGeneration && session.originalHtml && editor.getHTML() !== session.originalHtml) {
                         editor.chain().setContent(session.originalHtml).run();
                     }
                 }
@@ -307,7 +309,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 previewBuffer.close(sessionId);
             }
         }
-    }, [options, stopStream]);
+    }, [options]);
 
     const reset = useCallback(() => {
         stopStream();

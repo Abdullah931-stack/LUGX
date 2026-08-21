@@ -25,6 +25,9 @@ vi.mock('@/lib/db', () => ({
             operationId: 'operation_id',
             userId: 'user_id',
             status: 'status',
+            reservedUnits: 'reserved_units',
+            committedUnits: 'committed_units',
+            refundedUnits: 'refunded_units',
         },
         files: {
             id: 'id',
