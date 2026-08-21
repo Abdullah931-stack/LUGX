@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
         getFile: vi.fn().mockResolvedValue(undefined),
         saveFile: vi.fn().mockResolvedValue(undefined),
         markFileDirty: vi.fn().mockResolvedValue(undefined),
+        coalesceOperation: vi.fn().mockResolvedValue(undefined),
         getDirtyFiles: vi.fn().mockResolvedValue([]),
         close: vi.fn(),
     },

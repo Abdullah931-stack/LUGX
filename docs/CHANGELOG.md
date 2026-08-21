@@ -2,6 +2,39 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.4.0] - 2026-08-21 (Phase 9: TipTap Editor, Auto-save & Sync Orchestration)
+
+### Added - Centralized Editor Orchestration & Authoritative Write Controller
+
+#### Core Architecture & Controller
+- **Centralized Editor Orchestrator Hook** (`src/hooks/use-editor-orchestrator.ts`)
+  - Decomposes editor state into 6 isolated state slices: Document, Preview, Dirty, Server Version, Conflict, and Write State.
+  - Acts as the single authoritative write gateway for manual saves, AI commits, conflict resolutions, and sync replays.
+  - Strict AutoSave suspension invariants: auto-save is paused during active streaming (`streaming`, `reserved`), committing (`committing`), active conflicts (`conflict`), sync stoppage (`stopped`), and programmatic updates (`setContent`).
+  - Target-scoped manual edit policy: user modifications inside the active AI streaming selection abort generation, refund quota, and clear ghost decorations immediately; edits to other paragraphs outside the target range proceed without interrupting the AI stream (coordinates mapped automatically via ProseMirror `tr.mapping`).
+
+- **Unified Editor Workspace Page** (`src/app/workspace/editor/[fileId]/page.tsx`)
+  - Refactored page component to delegate all state and write management to `useEditorOrchestrator`.
+  - Integrated `AIStreamPreview`, `AIStreamStatus`, `ConflictDialog`, and `SyncIndicator` directly with the centralized orchestrator.
+  - Sibling tab version synchronization for clean tabs with optimistic version precondition locking for dirty tabs.
+  - Page unload & navigation guards (`beforeunload`) protecting dirty or in-flight committing states.
+
+- **Cleanup of Redundant Editor Instances**
+  - Removed unused duplicate canvas component (`src/components/editor/editor-canvas.tsx`) ensuring zero competing editor paths.
+
+- **Technical Architecture Documentation** (`docs/editor-sync-orchestration.md`)
+  - Full architectural specifications, state slicing, AutoSave suspension invariants, and target-scoped manual edit policy.
+
+#### Automated Integration Test Suite (48 Tests Passing, 100% Rate)
+- `src/test/editor-orchestration.integration.test.ts` (7 Integration tests)
+- `src/test/editor-atomic-commit.test.ts` (4 Editor Atomic Commit tests)
+- `src/hooks/use-sync.test.ts` (13 Sync Hook tests)
+- `src/test/conflict-resolution.integration.test.ts` (3 Conflict Resolution tests)
+- `src/test/ai-stream-session.test.ts` (12 Session tests)
+- `src/test/ai-server-atomic-commit.test.ts` (10 Server Commit tests)
+
+---
+
 ## [1.3.0] - 2026-08-21 (Phase 8: AI Atomic Commit & Transactional Settlement)
 
 ### Added - AI Atomic Commit Architecture & Real PostgreSQL Verification

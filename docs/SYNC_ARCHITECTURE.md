@@ -46,14 +46,15 @@
 
 ## Layers & Components
 
-### 1. Presentation Layer
+### 1. Presentation & Orchestration Layer
 
 | Component | Responsibility |
 |-----------|----------------|
-| `Editor Page` | Main user interface |
-| `useSync Hook` | React integration |
-| `ConflictDialog` | Conflict resolution UI |
-| `SyncIndicator` | Visual status indicator |
+| `useEditorOrchestrator` | Centralized state controller & single authoritative write gateway (Phase 9) |
+| `Editor Page` | Main user interface and TipTap editor surface |
+| `useSync Hook` | Scoped React synchronization integration |
+| `ConflictDialog` | Conflict resolution interactive UI |
+| `SyncIndicator` | Visual synchronization status indicator |
 
 ### 2. Business Layer
 

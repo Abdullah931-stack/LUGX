@@ -18,11 +18,11 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | **G2** | Server atomic commit endpoint/action combining file update and reservation settlement with version lock. | `src/server/actions/ai-commit.ts` | **Implemented** |
 | **G3** | Full `AbortController` lifecycle, `reader.cancel()` cleanup, and server-side disconnect refund. | `src/hooks/use-ai-stream.ts`<br>`src/lib/ai/stream-handler.ts`<br>`src/app/api/ai/stream/route.ts` | **Implemented** |
 | **G4** | Deterministic UTC-based `periodKey` (`UTC_YYYY-MM-DD`) assigned at reservation time and preserved across transitions. | `src/server/actions/ai-ops.ts` | **Implemented** |
-| **G5** | Auto-save and sync pause during active streaming/committing states. | `src/app/workspace/editor/[fileId]/page.tsx` | **Implemented** |
+| **G5** | Auto-save and sync suspension invariants during active streaming, committing, and conflict states. | `src/hooks/use-editor-orchestrator.ts`<br>`src/app/workspace/editor/[fileId]/page.tsx` | **Implemented** |
 | **G6** | Stale session and generation guard (`editorGeneration`) preventing old callbacks from applying to new state. | `src/lib/ai/stream-session.ts`<br>`src/hooks/use-ai-stream.ts` | **Implemented** |
 | **G7** | Production path integration tests calling real server actions and schema entities. | `src/test/ai-quota-idempotency.test.ts`<br>`src/test/ai-server-atomic-commit.test.ts` | **Implemented** |
 | **G8** | Multi-byte UTF-8 split boundary tests, NDJSON line framing tests, and 412 conflict tests. | `src/test/ai-stream-parser.test.ts`<br>`src/test/ai-stream-session.test.ts`<br>`src/test/editor-atomic-commit.test.ts` | **Implemented** |
-| **G9** | Clean build and test execution in test suite (`npx vitest run`, `npm run lint`). | CI / Test Suite | **Validated** |
+| **G9** | Editor orchestration and authoritative write integration tests with zero regression. | `src/test/editor-orchestration.integration.test.ts`<br>`docs/editor-sync-orchestration.md` | **Validated** |
 | **G10** | Feature Flag gating (`AI_STREAMING_ENABLED = false` by default) with zero sensitive prompt leakage in server logs. | `src/config/features.config.ts`<br>`src/app/api/ai/stream/route.ts` | **Implemented** |
 
 ---
