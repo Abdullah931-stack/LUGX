@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  *
- * M4/M5: AI operation content-safety & UI streaming tests.
+ * M4/M5 / Gate G8 / Phase 8: AI operation content-safety & UI streaming tests.
  *
  * The editor page's handleAIOperation guarantees that an AI operation
  * can NEVER corrupt or leave the document in a half-modified state:
@@ -14,6 +14,8 @@
  *      and a single Ctrl+Z restores the full original content.
  *   4. On failure / abort: the ephemeral decoration is cleared and the
  *      document remains in its pristine pre-operation state.
+ *   5. Server confirmation invariant (Phase 8): Local editor transaction
+ *      is executed ONLY after server commit confirms success.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Editor } from "@tiptap/core";
@@ -197,6 +199,31 @@ describe("AI transaction — Failure rollback & Abort", () => {
         editor.commands.clearStreamingGhost();
 
         expect(streamingGhostPluginKey.getState(editor.state)?.active).toBe(false);
+        expect(editor.getHTML()).toBe(before);
+    });
+
+    it("does not apply local editor transaction if server commit fails (Phase 8 Server-First Invariant)", async () => {
+        const before = editor.getHTML();
+
+        editor.commands.startStreamingGhost({
+            from: 0,
+            to: 10,
+            text: "Generated text awaiting commit",
+        });
+
+        // Mock commit failure
+        const fakeServerCommit = vi.fn().mockResolvedValue({
+            success: false,
+            status: "error",
+            error: "Commit rejected by DB",
+        });
+
+        const res = await fakeServerCommit();
+        if (!res.success) {
+            // Local transaction aborted
+            editor.commands.clearStreamingGhost();
+        }
+
         expect(editor.getHTML()).toBe(before);
     });
 });

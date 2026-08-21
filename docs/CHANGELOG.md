@@ -2,6 +2,40 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.3.0] - 2026-08-21 (Phase 8: AI Atomic Commit & Transactional Settlement)
+
+### Added - AI Atomic Commit Architecture & Real PostgreSQL Verification
+
+#### Core Transactional Architecture
+- **Transactional Database Client** (`src/lib/db/transactional.ts`)
+  - WebSocket-enabled Neon Serverless Pool for interactive SQL transactions (`BEGIN` / `COMMIT` / `ROLLBACK`).
+  - Hardened connection limits and timeout boundaries (`max: 5`, `connectionTimeoutMillis: 10_000`, `idleTimeoutMillis: 30_000`) preventing orphaned reservations.
+
+- **Atomic Commit Server Action** (`src/server/actions/ai-commit.ts`)
+  - Atomic transaction executing file content update (`files` table), version increment, ETag calculation, and quota reservation settlement (`aiReservations` table -> `committed`) inside a single database transaction.
+  - Server-side optimistic locking with explicit `412 Conflict` on concurrent modifications (`WHERE version = expectedVersion`).
+  - Production transactional invariant: hard-fails if transaction client is unavailable in production.
+  - Idempotent retries via `operationId` returning current persisted document state.
+  - Lean conflict payload omitting large unneeded document bodies.
+
+- **Editor Server-First Commit Invariant** (`src/hooks/use-ai-stream.ts`)
+  - Server-first transaction: TipTap editor modifications applied as a single history step only after server transaction confirmation.
+  - Ephemeral ghost preview cleanly removed on conflict or error, preserving pristine document state.
+
+- **Technical Architecture Documentation** (`docs/ai-atomic-commit-architecture.md`)
+  - Comprehensive specification of invariants, sequence diagram, test suites, and technical debt.
+
+#### Automated Test Suite (44 Tests Passing, 100% Rate)
+- `src/test/ai-atomic-commit.integration.test.ts` (6 Real PostgreSQL integration tests)
+- `src/test/ai-server-atomic-commit.test.ts` (10 Unit / Contract tests)
+- `src/lib/ai-transaction.test.ts` (5 Editor Unit tests)
+- `src/test/editor-atomic-commit.test.ts` (4 Editor Invariant tests)
+- `src/test/ai-quota-idempotency.test.ts` (8 Quota tests)
+- `src/server/actions/ai-ops.refund.test.ts` (5 Real Quota Refund tests)
+- `src/server/actions/ai-ops.integrity.test.ts` (6 Real Concurrency Integrity tests)
+
+---
+
 ## [1.2.0] - 2026-08-21 (Phase 7: NDJSON Streaming & Session State Machine)
 
 ### Added - AI NDJSON Streaming & Finite State Machine

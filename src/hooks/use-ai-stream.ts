@@ -261,7 +261,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         return;
                     }
 
-                    if (!commitResult.success || commitResult.status !== 'committed') {
+                    if (!commitResult.success || (commitResult.status !== 'committed' && commitResult.status !== 'already_committed')) {
                         const errMessage = ('error' in commitResult && typeof commitResult.error === 'string')
                             ? commitResult.error
                             : 'Server commit failed';
@@ -293,8 +293,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     setStatus('committed');
                     activeSessionRef.current = null;
                     options.onCommitSuccess?.({
-                        version: commitResult.version,
-                        etag: commitResult.etag,
+                        version: commitResult.version ?? expectedVersion,
+                        etag: commitResult.etag ?? (originalEtag || ''),
                     });
                 },
                 onError: (err) => {

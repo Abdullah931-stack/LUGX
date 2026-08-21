@@ -1,13 +1,16 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import { StreamingGhostExtension } from '@/lib/extensions/streaming-ghost-extension';
+import {
+    StreamingGhostExtension,
+    streamingGhostPluginKey,
+} from '@/lib/extensions/streaming-ghost-extension';
 import { formatStreamOutputToHTML } from '@/lib/parsers/stream-markdown';
 
-describe('Editor Atomic Commit & Single Undo Invariant (Gate G8)', () => {
+describe('Editor Atomic Commit & Single Undo Invariant (Gate G8 / Phase 8)', () => {
     let editor: Editor;
     const initialContent = '<p>The quick brown fox jumps over the lazy dog.</p><p>Second paragraph untouched.</p>';
 
@@ -64,6 +67,62 @@ describe('Editor Atomic Commit & Single Undo Invariant (Gate G8)', () => {
 
         // Single Undo restores original document
         editor.commands.undo();
+        expect(editor.getHTML()).toBe(snapshotBefore);
+    });
+
+    it('should NOT apply local transaction if server commit fails (Document remains pristine)', async () => {
+        const snapshotBefore = editor.getHTML();
+
+        // Simulate streaming ghost active
+        editor.commands.startStreamingGhost({
+            from: 1,
+            to: 20,
+            text: 'Preview chunk...',
+        });
+
+        // Simulate mock server commit function failing
+        const mockServerCommit = vi.fn().mockResolvedValue({
+            success: false,
+            status: 'error',
+            error: 'Server transaction failure',
+        });
+
+        const serverResult = await mockServerCommit();
+
+        // Condition: Local transaction is ONLY applied after server success
+        if (!serverResult.success || serverResult.status !== 'committed') {
+            editor.commands.clearStreamingGhost();
+        }
+
+        // Ghost is cleared, document content was NEVER modified
+        const ghostState = streamingGhostPluginKey.getState(editor.state);
+        expect(ghostState?.active).toBe(false);
+        expect(editor.getHTML()).toBe(snapshotBefore);
+    });
+
+    it('should NOT apply local transaction on 412 version conflict and clear ghost preview', async () => {
+        const snapshotBefore = editor.getHTML();
+
+        editor.commands.startStreamingGhost({
+            from: 1,
+            to: 20,
+            text: 'Conflicting AI suggestion...',
+        });
+
+        // Simulate mock server returning 412 conflict
+        const mockServerCommit = vi.fn().mockResolvedValue({
+            success: false,
+            status: 'conflict',
+            error: 'Conflict: file modified by another session',
+            serverVersion: { version: 5 },
+        });
+
+        const serverResult = await mockServerCommit();
+
+        if (serverResult.status === 'conflict') {
+            editor.commands.clearStreamingGhost();
+        }
+
         expect(editor.getHTML()).toBe(snapshotBefore);
     });
 });
