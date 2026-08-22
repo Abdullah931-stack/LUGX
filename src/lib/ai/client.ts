@@ -6,14 +6,12 @@ import {
     forceKeyRotationAndGetKey,
     shouldRotateOnError,
     is503OrOverloadError,
-    isModelCircuitOpen,
     getModelCircuitState,
     tryAcquireHalfOpenProbe,
     releaseProbeLock,
     recordModelSuccess,
     recordModelFailure,
     classifyGeminiError,
-    extractErrorCode,
     maskApiKey,
     sanitizeErrorMessage,
     ROTATION_ERROR_CODES,
@@ -51,13 +49,20 @@ export function getModelPair(
         return { primary: null, fallback: null };
     }
 
-    const primary = (config as any)[tier] ?? null;
+    // Typed projection of the JSON entry: per-tier model ids plus an optional
+    // fallback that is either a per-tier map or a bare model identifier.
+    type ModelEntry = Partial<Record<Tier, string | null>> & {
+        fallback?: Partial<Record<Tier, string | null>> | string;
+    };
+    const entry = config as unknown as ModelEntry;
+
+    const primary = entry[tier] ?? null;
     let fallback: string | null = null;
 
-    if (config.fallback && typeof config.fallback === "object") {
-        fallback = (config.fallback as any)[tier] ?? null;
-    } else if (typeof (config as any).fallback === "string") {
-        fallback = (config as any).fallback;
+    if (entry.fallback && typeof entry.fallback === "object") {
+        fallback = entry.fallback[tier] ?? null;
+    } else if (typeof entry.fallback === "string") {
+        fallback = entry.fallback;
     }
 
     return { primary, fallback };
@@ -213,11 +218,15 @@ export async function processWithAI(
                 generationConfig,
             });
 
-            // Generate content
-            const result = await model.generateContent([
-                { text: systemPrompt },
-                { text: text },
-            ]);
+            // Generate content — propagate the downstream abort signal to the provider
+            // HTTP request so cancellation terminates the upstream socket immediately.
+            const result = await model.generateContent(
+                [
+                    { text: systemPrompt },
+                    { text: text },
+                ],
+                { signal }
+            );
 
             if (signal?.aborted) {
                 if (isProbe && primary) releaseProbeLock(primary).catch(() => {});
@@ -379,11 +388,17 @@ export async function streamWithAI(
                 generationConfig,
             });
 
-            // Start stream generation
-            const result = await model.generateContentStream([
-                { text: systemPrompt },
-                { text: text },
-            ]);
+            // Start stream generation — propagate the downstream abort signal to the
+            // provider HTTP request. Without this, client disconnects and user aborts
+            // never cancel the upstream Gemini socket and the server stays pinned
+            // (reader.read() blocks) until the model finishes generating on its own.
+            const result = await model.generateContentStream(
+                [
+                    { text: systemPrompt },
+                    { text: text },
+                ],
+                { signal }
+            );
 
             // Prevent unhandled promise rejection on SDK response promise
             if (result && result.response && typeof result.response.catch === "function") {

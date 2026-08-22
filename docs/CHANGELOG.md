@@ -2,6 +2,55 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.5.0] - 2026-08-23 (Runtime Remediation: AI Streaming & Local-First Editor Sync)
+
+### Fixed - AI Streaming Deadlock & Invisible Ghost Preview
+
+Root-cause remediation for four compounding runtime defects; full analysis in
+`docs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md` (§5a) and
+`docs/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md` (§6.3):
+
+- **Detached async completion (`stream-handler.ts`)** — rejections inside the async commit
+  pipeline are now routed into `onError`, guaranteeing exactly one terminal callback per
+  session (previously an unhandled promise rejection stranded the session, leaked the quota
+  reservation, and permanently locked the in-flight trigger mutex).
+- **Provider abort propagation (`client.ts`)** — the downstream `AbortSignal` is forwarded
+  into Gemini SDK request options so user cancellation and client disconnects terminate the
+  upstream socket instead of pinning `reader.read()` until generation finishes server-side.
+- **Runtime watchdogs (`stream-handler.ts`)** — first-chunk (20s) and absolute-duration
+  (120s) ceilings fail closed with structured errors instead of hanging the editor session.
+- **Preview buffer integrity (`use-ai-stream.ts`)** — only the latest delta is appended to
+  the ephemeral buffer (the previous accumulated append grew it quadratically).
+- **Feature-flag enforcement (G10)** — `/api/ai/stream` now branches on
+  `AI_STREAMING_ENABLED` with `processWithAI` as the buffered NDJSON fallback.
+
+### Fixed - UI-Blocking Synchronization (Text Vanishing Mid-Typing)
+
+Full policy specification in `docs/editor-sync-orchestration.md` (§6a):
+
+- **Stable orchestrator lifecycle** — the navigation callback identity no longer re-triggers
+  the initial-load effect on every render; the IDB-paint + background-fetch + reconciliation
+  pipeline runs exactly once per mounted `fileId`.
+- **Deterministic reconciliation policy** (`src/lib/sync/reconciliation.ts`) replacing the
+  blind content overwrite:
+  - `apply` — fast-forward when local is clean and the remote revision is verified-newer
+    (version advanced + ETag changed + corroborating timestamps), i.e. built on our state;
+  - `adopt_metadata` — identical payload adopts authoritative version/ETag silently;
+  - `keep_local` — dirty divergence or non-newer remote retains local truth without
+    advancing anchors, surfacing a genuine `412` through explicit three-way conflict flow.
+- **Programmatic transaction guard wiring** — AI atomic commits and rollbacks are wrapped by
+  `onProgrammaticTransaction` so post-commit autosave races are eliminated.
+
+### Tests
+
+- New: `reconciliation.test.ts` (8 decision-matrix tests),
+  `ai-stream-completion-terminality.test.ts` (3 terminality/watchdog tests),
+  `ai-client-abort-propagation.test.ts` (SDK request-options assertion).
+- Regression verified clean: parser, session FSM, ai-transaction, editor atomic commit,
+  use-sync (45/45); `tsc --noEmit` 0 errors.
+
+---
+
 ## [1.4.0] - 2026-08-21 (Phase 9: TipTap Editor, Auto-save & Sync Orchestration)
 
 ### Added - Centralized Editor Orchestration & Authoritative Write Controller

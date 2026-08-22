@@ -19,7 +19,6 @@ import StarterKit from "@tiptap/starter-kit";
 import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import * as fileOps from "@/server/actions/file-ops";
-import * as aiCommit from "@/server/actions/ai-commit";
 
 // Mock server actions
 vi.mock("@/server/actions/file-ops", () => ({
@@ -35,7 +34,7 @@ vi.mock("@/server/actions/ai-commit", () => ({
 }));
 
 // Mock IndexedDB and SyncManager dependencies
-const mockLocalDb: Record<string, any> = {};
+const mockLocalDb: Record<string, Record<string, unknown>> = {};
 
 vi.mock("@/lib/sync", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/sync")>();
@@ -44,7 +43,7 @@ vi.mock("@/lib/sync", async (importOriginal) => {
         createIndexedDBManager: vi.fn(() => ({
             init: vi.fn().mockResolvedValue({}),
             getFile: vi.fn().mockImplementation(async (id: string) => mockLocalDb[id] || null),
-            saveFile: vi.fn().mockImplementation(async (file: any) => {
+            saveFile: vi.fn().mockImplementation(async (file: { id: string } & Record<string, unknown>) => {
                 mockLocalDb[file.id] = { ...mockLocalDb[file.id], ...file };
             }),
             markFileDirty: vi.fn().mockResolvedValue(undefined),
@@ -105,6 +104,9 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
                 updatedAt: new Date(),
                 userId,
                 parentFolderId: null,
+                isFolder: false,
+                storagePath: null,
+                deletedAt: null,
             },
         });
 

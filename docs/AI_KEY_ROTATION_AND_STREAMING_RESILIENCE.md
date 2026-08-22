@@ -120,7 +120,7 @@ sequenceDiagram
 ### 4.4 AI Client (`src/lib/ai/client.ts`)
 * **Synchronous Generation (`processWithAI`)** and **Stream Generation (`streamWithAI`)**.
 * **Fail-Fast on 400**: Immediately throws on client errors / safety blocks without wasting quota.
-* **Native AbortSignal & Teardown**: Handles client aborts cleanly, stopping generator loops via `ReadableStream.cancel()`.
+* **Native AbortSignal & Teardown**: Handles client aborts cleanly, stopping generator loops via `ReadableStream.cancel()`. As of v1.5.0 the signal is additionally forwarded into the Gemini SDK request options (`generateContent(request, { signal })` / `generateContentStream(request, { signal })`), so cancellation terminates the upstream provider HTTP socket instead of leaving the server pinned in `reader.read()` until generation finishes on its own (see Section 7, DEF-2).
 * **Dynamic Max Retries**: Bounded by key pool size `Math.min(Math.max(6, keys.length), 10)`.
 
 ---
@@ -135,6 +135,63 @@ sequenceDiagram
 | `transient` | HTTP 500, 502, 504, ECONNRESET, Timeout | Yes | No | Retry with next healthy key |
 | `invalid_request` | HTTP 400, Bad Request, Safety Filter | **No** | **No** | **Fail-Fast**: Throw immediately without rotating keys |
 | `cancelled` | AbortSignal triggered, AbortError | **No** | **No** | Clean cancellation, throw `AbortError` |
+
+---
+
+## 5a. Streaming Runtime Remediation (v1.5.0)
+
+Four compounding runtime defects — invisible ghost preview and a perceived infinite
+send/receive deadlock — were root-caused and closed. None were visible to Phase 7 unit
+suites because each sits on an async boundary that mocked tests do not exercise.
+
+### Root Causes
+
+| ID | Defect | Impact |
+|----|--------|--------|
+| **DEF-1** | `consumeAIStream` invoked the async completion callback synchronously. Any rejection inside it (empty response, integrity failure, server-commit failure) became an **unhandled promise rejection**: ghost never dismantled, quota never refunded, session stuck non-terminal → the in-flight mutex silently dropped every subsequent trigger. | Permanent deadlock after first failure |
+| **DEF-2** | The downstream `AbortSignal` was not forwarded into Gemini SDK request options; cancellation killed only the client read loop while the upstream socket kept running. `route.ts`'s `reader.read()` blocked until generation finished server-side; zero chunks reached the browser meanwhile. | Indefinite hang + empty ghost header |
+| **DEF-3** | No bound on time-to-first-token or total stream duration; any provider stall before the first byte left the UI in `streaming` forever. | Unbounded hang (compounded DEF-2) |
+| **DEF-4** | `onChunk` appended the *accumulated* text into `EphemeralPreviewBuffer` on every delta — O(n²) growth and corrupted `getText()`. | Buffer corruption / premature truncation |
+
+### Remediations
+
+| ID | Fix | File |
+|----|-----|------|
+| DEF-1 | `emitComplete` chains `Promise.resolve().then(onComplete).catch(...)`; a completion rejection resets the terminal latch and routes through `emitError`, guaranteeing **exactly one terminal callback** (error teardown: ghost cleared, refund issued, mutex released). | `src/lib/ai/stream-handler.ts` |
+| DEF-2 | Signal forwarded as SDK request options (`@google/generative-ai ^0.24`). Cancellation tears down the upstream socket. | `src/lib/ai/client.ts` |
+| DEF-3 | Watchdogs armed post-reader: first-chunk (`FIRST_CHUNK_TIMEOUT_MS = 20s`) and absolute duration (`MAX_STREAM_DURATION_MS = 120s`); timeout fires `reader.cancel()` plus structured errors (`AI_STREAM_FIRST_CHUNK_TIMEOUT` / `AI_STREAM_DURATION_EXCEEDED`). Both overridable per call for ops/tests. | `src/lib/ai/stream-handler.ts` |
+| DEF-4 | `previewBuffer.append(sessionId, latestChunk)` — only the newest delta is appended; the accumulated view remains available via the callback's first argument. | `src/hooks/use-ai-stream.ts` |
+
+Related hardening in the same release: AI atomic-commit / rollback document mutations are
+routed through `UseAIStreamOptions.onProgrammaticTransaction` so the orchestrator's
+programmatic-update guard suppresses the spurious post-commit autosave race
+(`docs/editor-sync-orchestration.md` §6b), and `/api/ai/stream` now actually enforces
+`FEATURES.AI_STREAMING_ENABLED` with `processWithAI` as a buffered NDJSON fallback.
+
+### Terminality Contract (Post-Fix)
+
+For any session, exactly one of the following terminal outcomes is emitted:
+
+```
+stream end + valid payload   -> onComplete -> [async commit] -> committed | conflict | failed
+provider stall / slow start  -> onError(AI_STREAM_FIRST_CHUNK_TIMEOUT)
+runaway stream               -> onError(AI_STREAM_DURATION_EXCEEDED)
+user abort / disconnect      -> onError(AbortError) + server-side refund
+mid-stream provider error    -> onError(classified error) + server-side refund
+commit pipeline rejection    -> onError(original rejection) + client-side refund
+```
+
+### Verification
+
+| Suite | Coverage |
+|-------|----------|
+| `src/test/ai-stream-completion-terminality.test.ts` (3 tests) | Async commit-pipeline rejection routes into `onError` with a single terminal callback; clean async completion emits no error; stalled provider fails closed via the first-chunk watchdog |
+| `src/test/ai-client-abort-propagation.test.ts` | The AbortSignal reaches `generateContentStream` request options verbatim |
+
+```bash
+npx vitest run src/test/ai-stream-completion-terminality.test.ts src/test/ai-client-abort-propagation.test.ts
+node_modules/.bin/tsc --noEmit
+```
 
 ---
 

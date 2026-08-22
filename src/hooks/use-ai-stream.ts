@@ -21,6 +21,12 @@ export interface UseAIStreamOptions {
     onCommitSuccess?: (result: { version: number; etag: string }) => void;
     onConflict?: (serverVersion?: { version?: number | null; etag?: string | null }) => void;
     onError?: (error: Error) => void;
+    /**
+     * Wraps every programmatic document mutation (atomic AI commit, conflict rollback,
+     * exception rollback) so the orchestrator can raise its `isProgrammaticUpdate`
+     * guard and never misclassify these transactions as manual user edits.
+     */
+    onProgrammaticTransaction?: (fn: () => void) => void;
 }
 
 export interface StartStreamParams {
@@ -154,6 +160,17 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         });
 
         activeSessionRef.current = session;
+
+        // Route every document mutation through the orchestrator's programmatic-update
+        // guard so editor "update" events are never misclassified as manual edits.
+        const runAsProgrammaticTransaction = (fn: () => void): void => {
+            if (options.onProgrammaticTransaction) {
+                options.onProgrammaticTransaction(fn);
+            } else {
+                fn();
+            }
+        };
+
         previewBuffer.open(sessionId);
         transitionSession(session, 'reserved');
         setStatus('reserved');
@@ -182,10 +199,13 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         setStatus('streaming');
                     }
                 },
-                onChunk: (accumulated) => {
+                onChunk: (accumulated, latestChunk) => {
                     if (activeSessionRef.current?.sessionId !== sessionId) return;
 
-                    previewBuffer.append(sessionId, accumulated);
+                    // Append only the latest delta. Appending the accumulated text here
+                    // would duplicate the buffer quadratically (O(n^2)) and corrupt
+                    // previewBuffer.getText().
+                    previewBuffer.append(sessionId, latestChunk);
                     setPreviewText(accumulated);
 
                     if (editor && !editor.isDestroyed) {
@@ -247,11 +267,13 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         setStatus('conflict');
 
                         if (editor && !editor.isDestroyed) {
-                            editor.commands.clearStreamingGhost();
-                            // USER DATA PROTECTION (AUD-02): Only rollback if editor generation hasn't changed
-                            if (editorGeneration === session.editorGeneration && session.originalHtml && editor.getHTML() !== session.originalHtml) {
-                                editor.chain().setContent(session.originalHtml).run();
-                            }
+                            runAsProgrammaticTransaction(() => {
+                                editor.commands.clearStreamingGhost();
+                                // USER DATA PROTECTION (AUD-02): Only rollback if editor generation hasn't changed
+                                if (editorGeneration === session.editorGeneration && session.originalHtml && editor.getHTML() !== session.originalHtml) {
+                                    editor.chain().setContent(session.originalHtml).run();
+                                }
+                            });
                         }
 
                         // Auto-refund reservation on conflict
@@ -280,13 +302,15 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                             ? Math.max(targetFrom, Math.min(ghostState.to, docSize))
                             : Math.max(targetFrom, Math.min(selectionEnd, docSize));
 
-                        editor.commands.clearStreamingGhost();
+                        runAsProgrammaticTransaction(() => {
+                            editor.commands.clearStreamingGhost();
 
-                        editor.chain()
-                            .setTextSelection({ from: targetFrom, to: targetTo })
-                            .deleteSelection()
-                            .insertContent(safeHtml)
-                            .run();
+                            editor.chain()
+                                .setTextSelection({ from: targetFrom, to: targetTo })
+                                .deleteSelection()
+                                .insertContent(safeHtml)
+                                .run();
+                        });
                     }
 
                     transitionSession(session, 'committed');
@@ -321,19 +345,22 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 },
             });
 
-        } catch (err: any) {
+        } catch (err) {
+            const detailMessage = err instanceof Error ? err.message : "An unexpected error occurred";
             console.error('[useAIStream] Exception during execution:', err);
             if (activeSessionRef.current?.sessionId === sessionId) {
                 if (editor && !editor.isDestroyed) {
-                    editor.commands.clearStreamingGhost();
-                    // USER DATA PROTECTION (AUD-02): Never overwrite user's manual edits
-                    if (editorGeneration === session.editorGeneration && session.originalHtml && editor.getHTML() !== session.originalHtml) {
-                        editor.chain().setContent(session.originalHtml).run();
-                    }
+                    runAsProgrammaticTransaction(() => {
+                        editor.commands.clearStreamingGhost();
+                        // USER DATA PROTECTION (AUD-02): Never overwrite user's manual edits
+                        if (editorGeneration === session.editorGeneration && session.originalHtml && editor.getHTML() !== session.originalHtml) {
+                            editor.chain().setContent(session.originalHtml).run();
+                        }
+                    });
                 }
 
-                setError(err?.message || 'An unexpected error occurred');
-                transitionSession(session, 'failed', err?.message);
+                setError(detailMessage || 'An unexpected error occurred');
+                transitionSession(session, 'failed', detailMessage);
                 setStatus('failed');
                 refundAIReservation(operationId, 'exception_caught').catch(() => {});
                 activeSessionRef.current = null;

@@ -102,6 +102,12 @@
    ├─ If conflict → ConflictResolver
    └─ IndexedDB.saveFile()
 4. Update lastSyncedAt
+
+v1.5.0 Amendment (Editor Surface): the initial-load pipeline in
+useEditorOrchestrator classifies every remote update via the deterministic
+classifyRemoteUpdate policy (apply = fast-forward when local is clean and the
+remote is verified-newer; adopt_metadata on identical payloads; keep_local on
+dirty divergence or non-newer remote). See editor-sync-orchestration.md §6a.
 ```
 
 ---

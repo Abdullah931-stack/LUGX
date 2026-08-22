@@ -41,7 +41,7 @@ export type StreamEvent =
     | StreamDoneEvent
     | StreamErrorEvent
     | StreamCancelledEvent
-    | { type: string; [key: string]: any };
+    | { type: string; [key: string]: unknown };
 
 export interface StreamHandlerOptions {
     operation: AIOperationType;
@@ -54,9 +54,24 @@ export interface StreamHandlerOptions {
     onComplete: (finalText: string) => void;
     onError: (error: Error) => void;
     signal?: AbortSignal;
+    /** Ops/test hook: override the first-chunk watchdog threshold (ms). */
+    firstChunkTimeoutMs?: number;
+    /** Ops/test hook: override the absolute stream-duration watchdog threshold (ms). */
+    maxDurationMs?: number;
 }
 
 export const MAX_LINE_BUFFER_CHARS = 256 * 1024; // 256KB Line buffer safety ceiling
+
+/**
+ * Watchdog: maximum wait (ms) for the first streamed byte before failing the session.
+ * A stalled provider connection must fail closed instead of hanging the editor forever.
+ */
+export const FIRST_CHUNK_TIMEOUT_MS = 20_000;
+
+/**
+ * Watchdog: absolute ceiling (ms) for a single streaming session regardless of activity.
+ */
+export const MAX_STREAM_DURATION_MS = 120_000;
 
 /**
  * Consumes the /api/ai/stream response stream with resilient NDJSON protocol support.
@@ -86,20 +101,71 @@ export async function consumeAIStream({
     onComplete,
     onError,
     signal,
+    firstChunkTimeoutMs: firstChunkTimeoutMsOverride,
+    maxDurationMs: maxDurationMsOverride,
 }: StreamHandlerOptions): Promise<void> {
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     let isTerminalCallbackEmitted = false;
 
+    // Runtime watchdog state. Guarantees the session always reaches a terminal
+    // callback even if the provider stalls before the first byte or mid-stream.
+    const firstChunkTimeoutMs = firstChunkTimeoutMsOverride ?? FIRST_CHUNK_TIMEOUT_MS;
+    const maxDurationMs = maxDurationMsOverride ?? MAX_STREAM_DURATION_MS;
+    let receivedFirstChunk = false;
+    let firstChunkTimer: ReturnType<typeof setTimeout> | null = null;
+    let durationTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearWatchdogTimers = (): void => {
+        if (firstChunkTimer) {
+            clearTimeout(firstChunkTimer);
+            firstChunkTimer = null;
+        }
+        if (durationTimer) {
+            clearTimeout(durationTimer);
+            durationTimer = null;
+        }
+    };
+
+    /**
+     * FIX (runtime remediation): the completion callback performs the whole atomic
+     * commit pipeline asynchronously. An exception thrown inside it previously became
+     * an unhandled promise rejection, leaving the session stuck in a non-terminal
+     * state — ghost never cleared, quota never refunded, and the in-flight mutex
+     * permanently locked so every subsequent trigger was silently dropped.
+     * Rejections are now deterministically routed into onError so exactly one
+     * terminal callback is always emitted.
+     */
     const emitComplete = (finalText: string) => {
         if (isTerminalCallbackEmitted) return;
+        clearWatchdogTimers();
         isTerminalCallbackEmitted = true;
-        onComplete(finalText);
+
+        Promise.resolve()
+            .then(() => onComplete(finalText))
+            .catch((completionErr: unknown) => {
+                isTerminalCallbackEmitted = false;
+                emitError(
+                    completionErr instanceof Error
+                        ? completionErr
+                        : new Error(String(completionErr) || 'Stream completion pipeline failed')
+                );
+            });
     };
 
     const emitError = (err: Error) => {
+        clearWatchdogTimers();
         if (isTerminalCallbackEmitted) return;
         isTerminalCallbackEmitted = true;
         onError(err);
+    };
+
+    const fireWatchdogTimeout = (code: string, detail: string): void => {
+        try {
+            reader?.cancel(code);
+        } catch {
+            // Reader already released or locked elsewhere; error path proceeds.
+        }
+        emitError(new Error(`${code}: ${detail}`));
     };
 
     try {
@@ -125,6 +191,22 @@ export async function consumeAIStream({
         if (!reader) {
             throw new Error('No readable stream available in response');
         }
+
+        // Arm runtime watchdogs (see constants above).
+        firstChunkTimer = setTimeout(() => {
+            if (!receivedFirstChunk) {
+                fireWatchdogTimeout(
+                    'AI_STREAM_FIRST_CHUNK_TIMEOUT',
+                    `no data received from AI provider within ${firstChunkTimeoutMs}ms`
+                );
+            }
+        }, firstChunkTimeoutMs);
+        durationTimer = setTimeout(() => {
+            fireWatchdogTimeout(
+                'AI_STREAM_DURATION_EXCEEDED',
+                `stream exceeded maximum allowed duration of ${maxDurationMs}ms`
+            );
+        }, maxDurationMs);
 
         const decoder = new TextDecoder('utf-8');
         let accumulatedText = '';
@@ -211,6 +293,15 @@ export async function consumeAIStream({
                 const decoded = decoder.decode(value, { stream: true });
                 if (!decoded) continue;
 
+                // First-byte latch: disarm the time-to-first-token watchdog.
+                if (!receivedFirstChunk) {
+                    receivedFirstChunk = true;
+                    if (firstChunkTimer) {
+                        clearTimeout(firstChunkTimer);
+                        firstChunkTimer = null;
+                    }
+                }
+
                 // Process NDJSON line buffering
                 lineBuffer += decoded;
 
@@ -266,8 +357,17 @@ export async function consumeAIStream({
 
         emitComplete(accumulatedText);
 
-    } catch (err: any) {
-        if (signal?.aborted || err?.name === 'AbortError') {
+    } catch (err) {
+        clearWatchdogTimers();
+
+        const errName = err instanceof Error ? err.name : "";
+        const errMessage = err instanceof Error
+            ? err.message
+            : typeof err === "string"
+              ? err
+              : "";
+
+        if (signal?.aborted || errName === 'AbortError') {
             const abortErr = new Error('Operation cancelled by user');
             abortErr.name = 'AbortError';
             emitError(abortErr);
@@ -276,13 +376,13 @@ export async function consumeAIStream({
 
         console.error('[AI Stream Handler] Error during streaming:', err);
         const isNetworkError =
-            err?.name === 'TypeError' ||
-            err?.message?.includes('Failed to fetch') ||
-            err?.message?.includes('network error');
+            errName === 'TypeError' ||
+            errMessage.includes('Failed to fetch') ||
+            errMessage.includes('network error');
 
         const errorToEmit = isNetworkError
             ? new Error('Connection interrupted. Original content preserved.')
-            : (err instanceof Error ? err : new Error(String(err) || 'Unexpected streaming error'));
+            : (err instanceof Error ? err : new Error(errMessage || 'Unexpected streaming error'));
 
         emitError(errorToEmit);
     }

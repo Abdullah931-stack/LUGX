@@ -2,13 +2,12 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { AutoDirectionExtension } from "@/lib/extensions/direction-extension";
 import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
-import { AIOperationType } from "@/lib/ai/stream-handler";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
 import { SearchReplace } from "@/components/editor/search-replace";
 import { countWords, detectTextDirection, countCharacters } from "@/lib/utils";
@@ -50,11 +49,15 @@ export default function EditorPage() {
         },
     });
 
+    // Stabilized navigation callback: a fresh arrow per render previously leaked into
+    // the orchestrator's initial-load effect dependencies and re-triggered a full
+    // server fetch + setContent cycle on every render (visible as text vanishing
+    // mid-typing while background sync ran).
+    const handleNavigate = useCallback((path: string) => router.push(path), [router]);
+
     // Centralized Editor Orchestrator (Phase 9 / Gate G9)
     const {
         title,
-        handleTitleChange,
-        handleDeleteFile,
 
         aiStatus,
         previewText,
@@ -67,7 +70,6 @@ export default function EditorPage() {
         stopAIOperation,
         resetAI,
 
-        isDirty,
         isSaving,
         lastSaved,
         error,
@@ -79,20 +81,19 @@ export default function EditorPage() {
         isResolvingConflict,
         handleResolveConflict,
 
-        writeState,
         syncHook,
         handleEditorChange,
     } = useEditorOrchestrator({
         fileId,
         userId,
         editor,
-        onNavigate: (path) => router.push(path),
+        onNavigate: handleNavigate,
     });
 
     // Bind TipTap update stream to Orchestrator with manual edit detection
     useEffect(() => {
         if (editor) {
-            const onUpdate = ({ editor: currentEditor }: { editor: any }) => {
+            const onUpdate = ({ editor: currentEditor }: { editor: Editor }) => {
                 handleEditorChange(currentEditor.getHTML());
             };
             editor.on("update", onUpdate);

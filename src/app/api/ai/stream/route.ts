@@ -6,9 +6,10 @@ import {
     refundAIReservation,
     refundUsage,
 } from "@/server/actions/ai-ops";
-import { streamWithAI, Tier } from "@/lib/ai/client";
+import { streamWithAI, processWithAI, Tier } from "@/lib/ai/client";
 import { countWords } from "@/lib/utils";
 import { AIOperation } from "@/lib/ai/prompts";
+import { FEATURES } from "@/config/features.config";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
     let reservedUserId: string | null = null;
     let reservedOperation: AIOperation | null = null;
     let reservedWordCount = 0;
-    let userTier: any = "free";
+    let userTier: Tier = "free";
 
     try {
         const user = await getUser();
@@ -79,16 +80,35 @@ export async function POST(req: NextRequest) {
 
         reserved = true;
 
-        // 3. Start AI Stream with Multi-Key Failover and Handshake Verification
-        const aiStream = await streamWithAI(
-            operation as AIOperation,
-            text,
-            tier as Tier,
-            req.signal
-        );
+        // 3. Start AI generation — incremental NDJSON streaming path (feature-flag
+        // gated, G10) or the safe buffered accumulator fallback. Both paths honor the
+        // request abort signal and multi-key failover inside the AI client.
+        const encoder = new TextEncoder();
+
+        let aiStream: ReadableStream<Uint8Array>;
+        if (FEATURES.AI_STREAMING_ENABLED) {
+            aiStream = await streamWithAI(
+                operation as AIOperation,
+                text,
+                tier as Tier,
+                req.signal
+            );
+        } else {
+            const bufferedText = await processWithAI(
+                operation as AIOperation,
+                text,
+                tier as Tier,
+                req.signal
+            );
+            aiStream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(encoder.encode(bufferedText));
+                    controller.close();
+                },
+            });
+        }
 
         // 4. Construct resilient NDJSON output stream
-        const encoder = new TextEncoder();
         const decoder = new TextDecoder("utf-8");
 
         const wrappedStream = new ReadableStream<Uint8Array>({
@@ -152,8 +172,11 @@ export async function POST(req: NextRequest) {
                     controller.enqueue(encoder.encode(doneFrame));
                     controller.close();
 
-                } catch (streamError: any) {
-                    console.error(`[AI Stream Route] Mid-stream exception (op: ${operationId}):`, streamError?.message || streamError);
+                } catch (streamError) {
+                    const detail = streamError instanceof Error
+                        ? streamError.message
+                        : String(streamError);
+                    console.error(`[AI Stream Route] Mid-stream exception (op: ${operationId}):`, detail);
 
                     // Trigger automatic quota refund
                     try {
@@ -187,7 +210,7 @@ export async function POST(req: NextRequest) {
                     }
                 }
             },
-            cancel(reason) {
+            cancel() {
                 // Downstream cancel handler - ensure quota is refunded if client disconnects abruptly
                 if (operationId) {
                     refundAIReservation(operationId, "stream_cancelled_by_client").catch(() => {});
@@ -205,8 +228,9 @@ export async function POST(req: NextRequest) {
             },
         });
 
-    } catch (error: any) {
-        console.error(`[AI Stream Route] Startup error (operationId: ${operationId || "none"}):`, error?.message || error);
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`[AI Stream Route] Startup error (operationId: ${operationId || "none"}):`, detail);
 
         // Auto-refund quota if reserved before stream failed or aborted
         if (reserved) {
@@ -221,7 +245,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        return new NextResponse(error?.message || "Internal Server Error", { status: 500 });
+        return new NextResponse(detail || "Internal Server Error", { status: 500 });
     }
 }
 

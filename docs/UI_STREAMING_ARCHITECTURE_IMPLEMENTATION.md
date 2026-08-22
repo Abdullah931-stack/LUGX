@@ -23,7 +23,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | **G7** | Production path integration tests calling real server actions and schema entities. | `src/test/ai-quota-idempotency.test.ts`<br>`src/test/ai-server-atomic-commit.test.ts` | **Implemented** |
 | **G8** | Multi-byte UTF-8 split boundary tests, NDJSON line framing tests, and 412 conflict tests. | `src/test/ai-stream-parser.test.ts`<br>`src/test/ai-stream-session.test.ts`<br>`src/test/editor-atomic-commit.test.ts` | **Implemented** |
 | **G9** | Editor orchestration and authoritative write integration tests with zero regression. | `src/test/editor-orchestration.integration.test.ts`<br>`docs/editor-sync-orchestration.md` | **Validated** |
-| **G10** | Feature Flag gating (`AI_STREAMING_ENABLED = false` by default) with zero sensitive prompt leakage in server logs. | `src/config/features.config.ts`<br>`src/app/api/ai/stream/route.ts` | **Implemented** |
+| **G10** | Feature Flag gating (`AI_STREAMING_ENABLED = false` by default) with zero sensitive prompt leakage in server logs. | `src/config/features.config.ts`<br>`src/app/api/ai/stream/route.ts` | **Implemented & Enforced (v1.5.0)** — the route now branches on the flag with `processWithAI` as a buffered NDJSON fallback |
 
 ---
 
@@ -121,6 +121,28 @@ When a session is cancelled or fails, `refundAIReservation(operationId, reason)`
 ### 6.2 Stale Reservation Sweeper (TTL)
 `expireStaleReservations()` queries all `ai_reservations` where `status = 'reserved'` AND `expires_at <= now()`. It transitions them to `expired` and restores the quota, ensuring abandoned client tabs do not leak quota balances.
 
+### 6.3 Streaming Terminality & Watchdogs (v1.5.0 Amendment)
+
+Runtime remediation closed four compounding defects that produced an invisible ghost
+preview and a perceived infinite send/receive deadlock (full root-cause matrix in
+`AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md` §5a):
+
+- **Single terminal callback, absolutely:** rejections inside the async atomic-commit
+  pipeline are routed back into `onError` instead of becoming unhandled promise
+  rejections — the ghost is always dismantled, the reservation refunded, and the in-flight
+  trigger mutex released.
+- **Provider-side cancellation:** the `AbortSignal` is forwarded into Gemini SDK request
+  options, so aborts and disconnects terminate the upstream socket.
+- **Watchdogs:** first-chunk (`20s`) and absolute-duration (`120s`) ceilings fail closed
+  with structured errors (`AI_STREAM_FIRST_CHUNK_TIMEOUT`, `AI_STREAM_DURATION_EXCEEDED`).
+- **Preview buffer integrity:** only the latest delta is appended to
+  `EphemeralPreviewBuffer` (previously the accumulated text was re-appended per chunk,
+  growing it quadratically).
+
+New verification suites: `src/test/ai-stream-completion-terminality.test.ts` (terminality,
+watchdog fail-closed) and `src/test/ai-client-abort-propagation.test.ts` (signal reaches
+SDK request options).
+
 ---
 
 ## 7. Configuration & Feature Flags
@@ -133,4 +155,8 @@ export const FEATURES = {
     PREVIEW_BUFFER_MAX_CHARS: 500_000,
 };
 ```
-During the pre-implementation foundation phase, `AI_STREAMING_ENABLED` defaults to `false`. All new modules, schema migrations, and contracts are in place, tested, and ready for progressive canary activation.
+`AI_STREAMING_ENABLED` defaults to `false`; as of v1.5.0 the route handler actively
+branches on it — when disabled, generation runs through the `processWithAI` buffered
+accumulator path and is framed to the client as a single NDJSON chunk (identical wire
+protocol, non-incremental delivery). All modules, schema migrations, and contracts remain
+tested and ready for progressive canary activation by setting the flag to `true`.
