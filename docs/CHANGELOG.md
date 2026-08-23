@@ -37,7 +37,7 @@ write, pinned against the TTL sweeper and stray refunds (`already_committed`):
 Key ordering guarantee: `stopStream` awaits the settlement round-trip **before**
 aborting the fetch, so the server-side disconnect refund handler (`cancel()` in
 `/api/ai/stream/route.ts`) deterministically no-ops with `already_committed` instead
-of winning the race. Full matrix: `docs/ai-quota-reservation-lifecycle.md` §4-D.
+of winning the race. Full matrix: `docs/architecture/ai-quota-reservation-lifecycle.md` §4-D.
 Autosave suspension gate (`canAutoSave`) extended to cover `preview_ready`.
 
 ### Fixed - Sync & Restore Data-Safety
@@ -63,7 +63,7 @@ hooks in `ai-ops.integrity.test.ts` and `file-ops.softdelete.test.ts` executed
 `vitest.setup.ts` loads `.env.local`, they ran against the **live Neon database** —
 wiping every user's rows on every full test run. No production code was at fault.
 
-Remediation (`docs/test-database-safety.md`):
+Remediation (`docs/records/test-database-safety.md`):
 
 - Both wipes are now scoped to their `TEST_USER_ID`.
 - New guarded helper `cleanupTestUsers(ids, { emailPattern? })` deletes ONLY
@@ -89,8 +89,8 @@ Remediation (`docs/test-database-safety.md`):
 ### Fixed - AI Streaming Deadlock & Invisible Ghost Preview
 
 Root-cause remediation for four compounding runtime defects; full analysis in
-`docs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md` (§5a) and
-`docs/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md` (§6.3):
+`docs/specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md` (§5a) and
+`docs/reference/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md` (§6.3):
 
 - **Detached async completion (`stream-handler.ts`)** — rejections inside the async commit
   pipeline are now routed into `onError`, guaranteeing exactly one terminal callback per
@@ -108,7 +108,7 @@ Root-cause remediation for four compounding runtime defects; full analysis in
 
 ### Fixed - UI-Blocking Synchronization (Text Vanishing Mid-Typing)
 
-Full policy specification in `docs/editor-sync-orchestration.md` (§6a):
+Full policy specification in `docs/architecture/editor-sync-orchestration.md` (§6a):
 
 - **Stable orchestrator lifecycle** — the navigation callback identity no longer re-triggers
   the initial-load effect on every render; the IDB-paint + background-fetch + reconciliation
@@ -153,7 +153,7 @@ Full policy specification in `docs/editor-sync-orchestration.md` (§6a):
 - **Cleanup of Redundant Editor Instances**
   - Removed unused duplicate canvas component (`src/components/editor/editor-canvas.tsx`) ensuring zero competing editor paths.
 
-- **Technical Architecture Documentation** (`docs/editor-sync-orchestration.md`)
+- **Technical Architecture Documentation** (`docs/architecture/editor-sync-orchestration.md`)
   - Full architectural specifications, state slicing, AutoSave suspension invariants, and target-scoped manual edit policy.
 
 #### Automated Integration Test Suite (48 Tests Passing, 100% Rate)
@@ -186,7 +186,7 @@ Full policy specification in `docs/editor-sync-orchestration.md` (§6a):
   - Server-first transaction: TipTap editor modifications applied as a single history step only after server transaction confirmation.
   - Ephemeral ghost preview cleanly removed on conflict or error, preserving pristine document state.
 
-- **Technical Architecture Documentation** (`docs/ai-atomic-commit-architecture.md`)
+- **Technical Architecture Documentation** (`docs/architecture/ai-atomic-commit-architecture.md`)
   - Comprehensive specification of invariants, sequence diagram, test suites, and technical debt.
 
 #### Automated Test Suite (44 Tests Passing, 100% Rate)

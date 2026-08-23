@@ -78,7 +78,7 @@ When the user types or alters text while an AI stream is actively generating:
    - **Edits Outside Target Range (e.g. Other Paragraphs):** Allowed without interruption. ProseMirror's `tr.mapping` automatically maps and shifts the ghost preview coordinates forward/backward, and the AI streaming continues smoothly.
    - **Edits Inside Target Range:** If the user alters text inside the paragraph/selection being actively generated or modified:
      1. **Instant Abort:** The orchestrator signals the active `AbortController` in `useAIStream`.
-     2. **Quota Settlement (Explicit Settlement Policy):** Overwriting the AI target range is a *user decision*, so the reservation is settled as consumed via `commitAIReservation` (`stopStream` settles before aborting) — it is NOT refunded. See `docs/ai-quota-reservation-lifecycle.md` §4-D.
+     2. **Quota Settlement (Explicit Settlement Policy):** Overwriting the AI target range is a *user decision*, so the reservation is settled as consumed via `commitAIReservation` (`stopStream` settles before aborting) — it is NOT refunded. See [`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D.
      3. **Ghost Dismantled:** TipTap's `StreamingGhostExtension` decoration is immediately removed, leaving the underlying ProseMirror document model pristine.
      4. **Editor Generation Advance:** `editorGenerationRef` increments, preventing any stale in-flight AI chunks or delayed commit responses from applying to the altered document.
      5. **Debounced AutoSave:** The user's manual modification proceeds cleanly without silent corrupt merges.

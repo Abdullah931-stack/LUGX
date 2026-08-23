@@ -266,14 +266,18 @@ User Request ──► [reserveTodayUsage (Atomic SQL UPDATE)]
 
 ## Documentation Index
 
-Comprehensive architectural designs and engineering records are maintained in the [`docs/`](./docs) directory:
+Comprehensive architectural designs, references, guides, and engineering records
+are maintained under [`docs/`](./docs). The full map lives in the
+**[Documentation Master Index](./docs/README.md)**; the layout is organized as:
 
-- [`Production Readiness Roadmap — M0-M5 Execution Record.md`](./docs/Production%20Readiness%20Roadmap%20%E2%80%94%20M0-M5%20Execution%20Record.md) — Production hardening milestone log.
-- [`Technical Fix Documentation — Security & Architecture Hardening.md`](./docs/Technical%20Fix%20Documentation%20%E2%80%94%20Security%20&%20Architecture%20Hardening.md) — Comprehensive technical audit of security fixes W1 through W8.
-- [`W10-Final-Closure-Round.md`](./docs/W10-Final-Closure-Round.md) — Concurrency remediation record and Vitest single-fork configuration.
-- [`Plan for an improved synchronization system.md`](./docs/Plan%20for%20an%20improved%20synchronization%20system.md) — Complete blueprint for offline-first IndexedDB, 3-way merge, and Background Sync.
-- [`STRIPE_INTEGRATION.md`](./docs/STRIPE_INTEGRATION.md) & [`STRIPE_SETUP.md`](./docs/STRIPE_SETUP.md) — Stripe webhook integration and billing setup.
-- [`SYNC_ARCHITECTURE.md`](./docs/SYNC_ARCHITECTURE.md) & [`SYNC_API.md`](./docs/SYNC_API.md) — Synchronization protocols and REST ETag endpoint specifications.
+| Folder | Content |
+|--------|---------|
+| `docs/architecture/` | Subsystem designs: sync lifecycle, queue/GC/rollback, 3-way merge, file ownership, AI quota & atomic commit, streaming protocol, security & rate limiting |
+| `docs/reference/` | API contracts (`SYNC_API`, `SYNC_ARCHITECTURE`) and implementation specs |
+| `docs/specs/` | Design blueprints (offline-first sync plan, AI key rotation, UI streaming requirements) |
+| `docs/guides/` | How-tos (Stripe setup/integration, AI model config, editor features) |
+| `docs/records/` | Dated engineering records (hardening rounds M0–M5/W10, incident reports, test-fix history) |
+| `docs/CHANGELOG.md` · `docs/TECHNICAL_DEBT_REGISTER.md` | Release history and living debt register |
 
 ---
 

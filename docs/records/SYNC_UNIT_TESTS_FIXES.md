@@ -3,6 +3,13 @@
 > **Date:** 2026-02-01  
 > **Test Pass Rate:** 197/197 (100%)
 
+> ⚠️ **Point-in-time record (February 2026).** The per-suite test counts below
+> were accurate at delivery time and **conflict with later counts published in
+> other documents** (e.g., `client.test.ts`: 32 here vs. 20 currently;
+> `key-rotation.test.ts`: 23 here vs. 37 currently) because suites evolved in
+> subsequent phases. Do not cite these numbers as current; verify with
+> `npx vitest run --reporter=verbose`.
+
 ## Summary
 
 A comprehensive review of all 197 unit tests was conducted for the synchronization system. The base code was fixed to match the expected behavior defined in the tests.

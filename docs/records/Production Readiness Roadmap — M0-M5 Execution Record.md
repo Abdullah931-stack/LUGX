@@ -1,9 +1,13 @@
 # Production-Readiness Roadmap — Execution Record (M0–M5)
 
+> **Point-in-time engineering record (branch `production-readiness`, 2026-08-16).**
+> The companion file `EXECUTION_STATE.md` referenced below **no longer exists in
+> the repository**; its deferred-work content has been consolidated into the
+> living [`TECHNICAL_DEBT_REGISTER.md`](../TECHNICAL_DEBT_REGISTER.md).
+
 **Branch:** `production-readiness` (based on `merge` @ `188c443`)
 **Date:** 2026-08-16
 **Verification status:** `tsc --noEmit` clean · 202/202 vitest passing · `next build` succeeds
-**Companion document:** `EXECUTION_STATE.md` (repository root)
 
 This document records the full production-readiness roadmap executed on the LUGX codebase, milestone by milestone. For each milestone it covers what was broken or missing, why it mattered, how it was fixed, the engineering decision behind the solution, and the verification evidence. It is intended as a maintenance reference for future developers, and it complements the earlier fix-documentation record committed on the `merge` branch.
 

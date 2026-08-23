@@ -4,6 +4,13 @@
 > **Last Updated:** 2026-02-01  
 > **Unit Tests:** 197/197 passed (100%)
 
+> ⚠️ **Historical snapshot (February 2026).** This document describes the sync
+> system as originally delivered. Later phases added modules not listed in its
+> structure tree (`parallel.ts`, `reconciliation.ts`, `cross-tab-sync.ts`) and
+> changed test counts. For the current architecture see
+> [`../architecture/sync-lifecycle-architecture.md`](../architecture/sync-lifecycle-architecture.md)
+> and [`SYNC_API.md`](./SYNC_API.md).
+
 ## Overview
 
 An advanced synchronization system providing **Offline-First** experience with full support for:
@@ -118,7 +125,7 @@ formatETagHeader(etag)
 |------|-------------|
 | [SYNC_ARCHITECTURE.md](./SYNC_ARCHITECTURE.md) | Detailed architecture |
 | [SYNC_API.md](./SYNC_API.md) | API documentation |
-| [SYNC_UNIT_TESTS_FIXES.md](./SYNC_UNIT_TESTS_FIXES.md) | Test fixes |
+| [../records/SYNC_UNIT_TESTS_FIXES.md](../records/SYNC_UNIT_TESTS_FIXES.md) | Test fixes (historical) |
 
 ---
 

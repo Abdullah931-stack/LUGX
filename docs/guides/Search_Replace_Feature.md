@@ -132,7 +132,7 @@ useEffect(() => {
 
 ---
 
-## � Status
+## Status
 
 **Version**: 1.2 (Fixed Debounce)  
 **Status**: ✅ Production Ready  

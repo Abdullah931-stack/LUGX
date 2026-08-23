@@ -34,7 +34,7 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
    - Stream completion does NOT commit: the sanitized output is parked in `preview_ready` until an explicit user decision (v1.6.0 Explicit Decision Model).
    - On user **Accept** (`commitPreview`), local TipTap document modifications are applied as a single history step **only after** server commit confirms success.
    - In case of network failure or 412 conflict, the ephemeral preview is dismantled and the document remains in its pristine state.
-   - On user **Reject** or **Retry**, no document mutation occurs at all; the quota reservation is settled as consumed per the Explicit Settlement Policy (`docs/ai-quota-reservation-lifecycle.md` §4-D).
+   - On user **Reject** or **Retry**, no document mutation occurs at all; the quota reservation is settled as consumed per the Explicit Settlement Policy ([`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D).
 
 7. **Autosave & Sync Isolation**:
    - Background autosave and cross-tab sync broadcasts are suppressed while `aiStream.isLoading` / `aiStream.isCommitting` is active **or while the session rests in `preview_ready` awaiting the user's decision**, and resume only after the editor generation and file version are updated with the server's response.

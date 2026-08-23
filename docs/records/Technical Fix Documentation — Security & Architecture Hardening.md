@@ -1,5 +1,9 @@
 # Technical Fix Documentation — Security & Architecture Hardening
 
+> **Point-in-time engineering record (commit `c269996`, branch `merge`, 2026-08-16).**
+> Metrics below (184/184 tests) reflect the suite state at that date; re-run
+> `npx vitest run` for current numbers.
+
 **Branch:** `merge` (based on `main` @ `2c7cdf3`)
 **Commit:** `c269996`
 **Date:** 2026-08-16

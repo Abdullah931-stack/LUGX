@@ -165,7 +165,7 @@ suites because each sits on an async boundary that mocked tests do not exercise.
 Related hardening in the same release: AI atomic-commit / rollback document mutations are
 routed through `UseAIStreamOptions.onProgrammaticTransaction` so the orchestrator's
 programmatic-update guard suppresses the spurious post-commit autosave race
-(`docs/editor-sync-orchestration.md` §6b), and `/api/ai/stream` now actually enforces
+([`docs/architecture/editor-sync-orchestration.md`](../architecture/editor-sync-orchestration.md) §6b), and `/api/ai/stream` now actually enforces
 `FEATURES.AI_STREAMING_ENABLED` with `processWithAI` as a buffered NDJSON fallback.
 
 ### Terminality Contract (Post-Fix)

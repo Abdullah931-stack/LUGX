@@ -1,5 +1,9 @@
 # Final Closure Round — W10 / F1: Theoretical Concurrency Window Remediation & Architectural Consolidation
 
+> **Point-in-time engineering record (2026-08-16).** Verification metrics
+> (225/225 tests) reflect the suite state at that date and have since evolved;
+> re-run `npx vitest run` for current numbers.
+
 **Date:** August 16, 2026  
 **Reference:** Architectural Revalidation Audit — Remote GitHub Snapshot (`Abdullah931-stack/LUGX` @ `merge` branch, commit `d107e3b8c4d1e496c0d9a25ff76bf102b996dc91` at 2026-08-16T18:08:06Z)  
 **Verification Baseline:** 225/225 Vitest integration tests passing · `tsc --noEmit` clean · Production build successful
@@ -73,8 +77,8 @@ When running multiple test files concurrently against a shared PostgreSQL databa
 | Item | Action Taken |
 |---|---|
 | `README.md` | Rewritten into a comprehensive technical specification: system overview, tech stack, quickstart, deep-dives into four core subsystems, security matrix, documentation directory index, and deployment blueprints. |
-| `docs/W10-Final-Closure-Round.md` | Comprehensive engineering record of the final closure round (F1–F3). |
-| `docs/Plan for an improved synchronization system.md` | Comprehensive architectural blueprint for offline-first IndexedDB sync, conflict resolution, and Background Sync API. |
+| `docs/records/W10-Final-Closure-Round.md` | Comprehensive engineering record of the final closure round (F1–F3). |
+| `docs/specs/Plan for an improved synchronization system.md` | Comprehensive architectural blueprint for offline-first IndexedDB sync, conflict resolution, and Background Sync API. |
 | `.env.example` | Fully documented template for `CRON_SECRET`, `DATABASE_URL`, `SUPABASE_*`, `GEMINI_*`, and `STRIPE_*` with generation commands. |
 | `.gitignore` | Strictly configured to exclude local environment secrets while tracking `.env.example` and `.env.test`. |
 | `vitest.config.ts` | Documented rationale for `singleFork` runner configuration. |

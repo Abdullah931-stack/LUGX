@@ -157,40 +157,37 @@ try {
 
 ## React Integration
 
+Actual hook contract from [`src/hooks/use-sync.ts`](../../src/hooks/use-sync.ts):
+
 ```tsx
 import { useSync } from '@/hooks/use-sync';
 
-function EditorPage({ fileId }) {
+function EditorPage({ fileId }: { fileId: string }) {
   const {
-    status,           // 'idle' | 'syncing' | 'error' | 'offline'
-    lastSyncedAt,     // timestamp
-    pendingChanges,   // number
-    sync,             // () => Promise<void>
-    saveLocally,      // (content) => Promise<void>
-    loadFromLocal,    // () => Promise<File>
-    conflict,         // SyncConflict | null
-    resolveConflict,  // (strategy) => Promise<void>
-  } = useSync({ userId, fileId });
-
-  // Auto-sync on changes
-  useEffect(() => {
-    const timer = setInterval(sync, 30000);
-    return () => clearInterval(timer);
-  }, [sync]);
+    status,           // SyncStatus: 'idle' | 'loading' | 'queued' | 'syncing' |
+                      //   'conflict' | 'failed' | 'stopped' | 'offline'
+    connectionState,  // ConnectionState from ConnectionDetector
+    isInitialized,    // boolean
+    lastSyncResult,   // SyncResult | null
+    pendingCount,     // number of dirty files awaiting sync
+    sync,             // () => Promise<SyncResult>
+    syncFile,         // (fileId: string) => Promise<void>
+    saveLocal,        // (file: Partial<IDBFile> & { id, content }) => Promise<void>
+    loadLocal,        // (fileId: string) => Promise<IDBFile | null>
+    markDirty,        // (fileId: string) => Promise<void>
+  } = useSync({
+    userId,
+    autoSyncInterval: 30000,
+    // Conflicts are NOT returned by the hook; they surface either through the
+    // optional `onConflict` callback option or through the editor orchestrator
+    // (see docs/architecture/editor-sync-orchestration.md).
+    onConflict: async (conflict) => 'merge',
+  });
 
   return (
     <>
-      <SyncIndicator status={status} pending={pendingChanges} />
-      {conflict && (
-        <ConflictDialog
-          conflict={conflict}
-          onResolve={resolveConflict}
-        />
-      )}
-      <Editor
-        onSave={saveLocally}
-        initialContent={loadFromLocal}
-      />
+      <SyncIndicator status={status} pending={pendingCount} />
+      <Editor onSave={saveLocal} initialContent={loadLocal} />
     </>
   );
 }
@@ -201,14 +198,14 @@ function EditorPage({ fileId }) {
 ## Performance & Optimization
 
 ### Rate Limiting
-- 100 requests/minute per user
-- Sliding window algorithm
-- Redis-backed
+- **Sync API:** 100 requests per user per 15-minute sliding window
+- **File API:** 200 requests per user per 15-minute sliding window
+- Sliding-window counters backed by Upstash Redis
 
 ### Garbage Collection
-- Merge consecutive operations
-- Delete operations > 7 days old
-- Auto-run every 24 hours
+- Merge consecutive operations (compaction threshold: 1,000 operations per file — `IDB_CONFIG.MAX_OPERATIONS_PER_FILE`)
+- Delete operations older than 7 days (`IDB_CONFIG.MAX_OPERATION_AGE_MS`), never touching `queued`, `syncing`, `conflict`, or `rollback_failed` entries
+- Scheduled via `gc.schedule()` with a default interval of **10 minutes** (minimum spacing between runs: 5 minutes)
 
 ### Performance Monitoring
 ```typescript

@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary & Architectural Scope
 
-This document represents the complete technical specification, architectural blueprint, and execution record for **Phase 2: Complete Operations Queue, State-Safe Garbage Collection (GC), and Failure-Isolated Rollback Subsystem** of the LUGX synchronization engine, as defined in `docs/.Plans/خطة التنفيذ التقنية.md` (lines 36–64).
+This document represents the complete technical specification, architectural blueprint, and execution record for **Phase 2: Complete Operations Queue, State-Safe Garbage Collection (GC), and Failure-Isolated Rollback Subsystem** of the LUGX synchronization engine, as defined in Phase 2 of the original pre-implementation technical roadmap.
 
 The primary objective of Phase 2 is transforming local offline edits and synchronization tasks from unmanaged pending logs into a **deterministic, transactional, crash-resilient, and state-aware operations queue** with bounded exponential retry backoff, multi-store atomic commits, forensic rollback isolation, and immune garbage collection.
 
@@ -245,7 +245,9 @@ Exported helper function evaluating whether an exception or `SyncError` is safe 
 
 ## 11. Verification and Comprehensive Test Matrix
 
-A total of **169 automated unit and integration tests** across 11 test suites verify all Phase 2 guarantees with **100% PASS rate**:
+A total of **169 automated unit and integration tests** across 11 test suites verified all Phase 2 guarantees with a **100% PASS rate** at delivery time
+(the per-suite breakdown below is a point-in-time snapshot — e.g. `sync-manager.test.ts`
+has since grown to 33 tests; re-run the suite for current totals):
 
 ```
 ========================================================================================

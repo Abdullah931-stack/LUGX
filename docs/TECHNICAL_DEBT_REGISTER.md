@@ -15,7 +15,7 @@ Last reviewed: 2026-08-23 (release 1.6.0).
 - **Mitigations in place:** all destructive test statements are scoped to
   placeholder-pattern accounts; guarded `cleanupTestUsers()`; per-suite id
   ownership; probe utility `scripts/db-testusers-probe.mjs`.
-  Full background: `test-database-safety.md`.
+  Full background: [`records/test-database-safety.md`](records/test-database-safety.md).
 
 ## TD-02 — Quota TTL sweeper is not wired to any scheduler
 
@@ -47,4 +47,16 @@ Last reviewed: 2026-08-23 (release 1.6.0).
   (~100–300 ms) before aborting the upstream stream, so the server-side
   disconnect refund deterministically no-ops with `already_committed`.
 - **Status:** accepted trade-off for policy determinism
-  (`ai-quota-reservation-lifecycle.md` §4-D).
+  ([`architecture/ai-quota-reservation-lifecycle.md`](architecture/ai-quota-reservation-lifecycle.md) §4-D).
+
+## TD-06 — Dead `'error'` member in the `SyncStatus` union
+
+- **Debt:** `SyncStatus` (`src/lib/sync/sync-manager.ts`) declares an `| 'error'`
+  state, but no code path ever calls `setStatus('error')`. The manager emits only
+  `idle`, `loading`, `queued`, `syncing`, `conflict`, `failed`, `stopped`, and
+  `offline`. The sync state-machine documentation therefore (correctly) omits it.
+- **Impact:** none at runtime today; the dead union member invites future misuse
+  and confuses consumers switching exhaustively on the status.
+- **Decision:** open — either wire a genuine terminal-error transition or remove
+  the member in a future cleanup pass. Do not document `'error'` as a live state
+  until one of the two happens.

@@ -22,7 +22,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | **G6** | Stale session and generation guard (`editorGeneration`) preventing old callbacks from applying to new state. | `src/lib/ai/stream-session.ts`<br>`src/hooks/use-ai-stream.ts` | **Implemented** |
 | **G7** | Production path integration tests calling real server actions and schema entities. | `src/test/ai-quota-idempotency.test.ts`<br>`src/test/ai-server-atomic-commit.test.ts` | **Implemented** |
 | **G8** | Multi-byte UTF-8 split boundary tests, NDJSON line framing tests, and 412 conflict tests. | `src/test/ai-stream-parser.test.ts`<br>`src/test/ai-stream-session.test.ts`<br>`src/test/editor-atomic-commit.test.ts` | **Implemented** |
-| **G9** | Editor orchestration and authoritative write integration tests with zero regression. | `src/test/editor-orchestration.integration.test.ts`<br>`docs/editor-sync-orchestration.md` | **Validated** |
+| **G9** | Editor orchestration and authoritative write integration tests with zero regression. | `src/test/editor-orchestration.integration.test.ts`<br>[`docs/architecture/editor-sync-orchestration.md`](../architecture/editor-sync-orchestration.md) | **Validated** |
 | **G10** | Feature Flag gating (`AI_STREAMING_ENABLED = false` by default) with zero sensitive prompt leakage in server logs. | `src/config/features.config.ts`<br>`src/app/api/ai/stream/route.ts` | **Implemented & Enforced (v1.5.0)** — the route now branches on the flag with `processWithAI` as a buffered NDJSON fallback |
 
 ---

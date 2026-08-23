@@ -29,30 +29,40 @@ Authorization: Bearer <token>
 | `limit` | number | ✗ | Max items (default: 50, max: 100) |
 
 #### Response (200 OK)
+Response shape from `src/app/api/files/sync/route.ts`:
 ```json
 {
   "files": [
     {
       "id": "file-uuid",
-      "content": "file content...",
       "title": "Document Title",
+      "content": "file content...",
       "etag": "abc123def456",
       "version": 5,
-      "updatedAt": "2026-02-01T12:00:00Z",
       "parentFolderId": "folder-uuid",
-      "isFolder": false
+      "isFolder": false,
+      "deletedAt": null,
+      "updatedAt": "2026-02-01T12:00:00.000Z",
+      "createdAt": "2026-01-15T09:30:00.000Z"
     }
   ],
-  "deletedIds": ["deleted-file-id-1", "deleted-file-id-2"],
-  "cursor": "next-page-cursor",
   "has_more": true,
-  "server_time": 1706832000000
+  "next_cursor": "eyJ1cGRhdGVkQXQiOiIuLi4iLCJpZCI6Ii4uLiJ9",
+  "sync_timestamp": "2026-02-01T12:00:00.000Z"
 }
 ```
 
+Field notes:
+- `next_cursor`: Base64-encoded JSON `{ updatedAt, id }` keyset cursor; pass it
+  back as the `cursor` query parameter. `null` when no more pages.
+- `sync_timestamp`: ISO-8601 string of the server time at query execution.
+- Soft-deleted files are excluded; there is **no** `deletedIds` field — deletions
+  propagate via pull reconciliation against missing/absent files.
+
 #### Rate Limiting
-- **Limit:** 100 requests/minute per user
-- **Header:** `X-RateLimit-Remaining: 95`
+- **Limiter:** `syncApiRateLimiter` — **100 requests per user per 15-minute
+  sliding window** (`RATE_LIMITS.SYNC_API`).
+- **Headers:** `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
 
 ---
 
@@ -129,14 +139,15 @@ ETag: "new-etag-value"
 ```http
 HTTP/1.1 412 Precondition Failed
 Content-Type: application/json
+ETag: "server-etag"
 
 {
-  "error": "CONFLICT_DETECTED",
-  "message": "File was modified on server",
+  "error": "Precondition Failed: version mismatch",
   "serverVersion": {
     "etag": "server-etag",
     "version": 6,
-    "updatedAt": "2026-02-01T12:25:00Z"
+    "content": "<p>current server content</p>",
+    "updatedAt": "2026-02-01T12:25:00.000Z"
   }
 }
 ```
@@ -145,26 +156,22 @@ Content-Type: application/json
 
 ## Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | `INVALID_REQUEST` | Invalid request |
-| 401 | `UNAUTHORIZED` | Not authenticated |
-| 403 | `FORBIDDEN` | Not authorized |
-| 404 | `NOT_FOUND` | File not found |
-| 409 | `CONFLICT` | Data conflict |
-| 412 | `PRECONDITION_FAILED` | ETag or version mismatch |
-| 428 | `PRECONDITION_REQUIRED` | Missing If-Match header or expectedVersion |
-| 429 | `RATE_LIMITED` | Rate limit exceeded |
-| 500 | `SERVER_ERROR` | Server error |
+Error bodies are free-form JSON produced by the handlers; they do **not** use a
+machine-readable `code` envelope. Shapes below are taken directly from the route
+sources (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`,
+`src/lib/rate-limit.ts`):
 
-### Error Response Format
-```json
-{
-  "error": "ERROR_CODE",
-  "message": "Human readable message",
-  "details": { ... }
-}
-```
+| Status | Actual response body | Trigger |
+|--------|----------------------|---------|
+| 400 | `{ "error": "<validation message>" }` | Invalid request parameters |
+| 401 | `{ "error": "Authentication required" }` | Missing/expired server session |
+| 403 | `{ "error": "<forbidden message>" }` | Not authorized |
+| 404 | `{ "error": "File not found" }` | File missing or soft-deleted |
+| 409 | `{ "error": "<conflict message>" }` | Semantic conflict |
+| 412 | `{ "error": "Precondition Failed: version mismatch", "serverVersion": { etag, version, content, updatedAt } }` | Stale ETag/version on PUT |
+| 428 | `{ "error": "Precondition Required: If-Match header or expectedVersion is required for file updates" }` | Missing precondition on PUT |
+| 429 | `{ "error": "Too Many Requests", "message": "Rate limit exceeded. Please try again later.", "retryAfter": <epoch-seconds> }` | Rate limiter exhausted (`rateLimitExceededResponse`) |
+| 500 | `{ "error": "Internal server error" }` | Unhandled server exception |
 
 ---
 
@@ -173,38 +180,46 @@ Content-Type: application/json
 ### Request Headers
 | Header | Description |
 |--------|-------------|
-| `Authorization` | `Bearer <token>` |
+| `Authorization` | Session cookie (Supabase auth); raw bearer tokens are not used by the app client |
 | `Content-Type` | `application/json` |
-| `If-Match` | ETag for update verification |
-| `If-None-Match` | ETag for caching |
+| `If-Match` | ETag for update verification (PUT) |
+| `If-None-Match` | ETag for caching (GET) |
 
 ### Response Headers
+Set by `addRateLimitHeaders()` / route handlers:
 | Header | Description |
 |--------|-------------|
 | `ETag` | Current file ETag |
 | `Cache-Control` | Caching instructions |
-| `X-RateLimit-Remaining` | Remaining requests |
-| `Retry-After` | Wait time (on 429) |
+| `X-RateLimit-Limit` | Configured limit for the endpoint's limiter tier |
+| `X-RateLimit-Remaining` | Remaining requests in the current window |
+| `X-RateLimit-Reset` | Window reset time (epoch seconds) |
+| `Retry-After` | Wait time in seconds (on 429 only) |
 
 ---
 
 ## Rate Limiting
 
-### Configuration
-- **Window:** 1 minute (sliding)
-- **Limit:** 100 requests per user
-- **Backend:** Redis
+Configuration lives in `RATE_LIMITS` (`src/lib/rate-limit.ts`) — a sliding-window
+counter backed by Upstash Redis, keyed per user:
+
+| Limiter | Applied to | Limit | Window |
+|---------|-----------|-------|--------|
+| `syncApiRateLimiter` | `GET /api/files/sync` | **100 requests** | **15 minutes** |
+| `fileApiRateLimiter` | `GET` / `PUT /api/files/:id` | **200 requests** | **15 minutes** |
 
 ### Response (429 Too Many Requests)
 ```http
 HTTP/1.1 429 Too Many Requests
-Retry-After: 30
+Retry-After: <seconds>
+X-RateLimit-Limit: 200
 X-RateLimit-Remaining: 0
+X-RateLimit-Reset: <epoch-seconds>
 
 {
-  "error": "RATE_LIMITED",
-  "message": "Too many requests",
-  "retryAfter": 30
+  "error": "Too Many Requests",
+  "message": "Rate limit exceeded. Please try again later.",
+  "retryAfter": <epoch-seconds>
 }
 ```
 
@@ -215,12 +230,16 @@ X-RateLimit-Remaining: 0
 ### Fetch updates since last sync
 ```typescript
 const response = await fetch('/api/files/sync?since=' + lastSyncedAt, {
-  headers: {
-    'Authorization': `Bearer ${token}`,
-  },
+  credentials: 'include', // Supabase session cookie
 });
 
-const { files, deletedIds, cursor, has_more } = await response.json();
+const { files, has_more, next_cursor, sync_timestamp } = await response.json();
+if (has_more && next_cursor) {
+  // Fetch the next page
+  const next = await fetch(`/api/files/sync?since=${lastSyncedAt}&cursor=${encodeURIComponent(next_cursor)}`, {
+    credentials: 'include',
+  });
+}
 ```
 
 ### Update with conflict detection
@@ -228,10 +247,10 @@ const { files, deletedIds, cursor, has_more } = await response.json();
 const response = await fetch(`/api/files/${fileId}`, {
   method: 'PUT',
   headers: {
-    'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json',
     'If-Match': currentEtag,
   },
+  credentials: 'include',
   body: JSON.stringify({ content, title, expectedVersion: currentVersion }),
 });
 

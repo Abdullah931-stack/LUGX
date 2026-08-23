@@ -83,7 +83,7 @@ user actions surfaced as buttons in `AIStreamPreview`:
   `startStream` runs with identical inputs (fresh quota reservation).
 
 Quota rule of thumb: **system failures refund; user decisions settle-as-consumed.**
-See `docs/ai-quota-reservation-lifecycle.md` §4-D for the full settlement matrix.
+See [`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D for the full settlement matrix.
 
 ### 3.1 Allowed State Transition Matrix
 

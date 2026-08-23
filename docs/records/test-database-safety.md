@@ -1,6 +1,10 @@
 # Test Database Safety — Incident Record & Cleanup Architecture
 
-Status: ✅ Closed (2026-08-23) · Related: `TECHNICAL_DEBT_REGISTER.md` (TD-01), `ai-quota-reservation-lifecycle.md`
+Status: ✅ Closed (2026-08-23) · Related: [`TECHNICAL_DEBT_REGISTER.md`](../TECHNICAL_DEBT_REGISTER.md) (TD-01), [`ai-quota-reservation-lifecycle.md`](../architecture/ai-quota-reservation-lifecycle.md)
+
+> **Point-in-time record (2026-08-23).** Test counts and file inventories below
+> reflect the repository state at closure date; re-run the verification commands
+> for current numbers.
 
 ---
 

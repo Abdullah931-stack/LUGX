@@ -1,8 +1,12 @@
 # Three-Way Conflict Resolution & Offline Synchronization Architecture
 
+> **Point-in-time verification record.** Test counts in §4 and the merge-latency
+> observation below reflect the suite state at delivery; re-run the suites for
+> current numbers.
+
 ## 1. Architectural Overview & Context
 
-This document outlines the design, implementation, and verification of the **Three-Way Conflict Resolution Engine** (Phase 4 of the technical roadmap in `docs/.Plans/خطة التنفيذ التقنية.md`).
+This document outlines the design, implementation, and verification of the **Three-Way Conflict Resolution Engine** (Phase 4 of the original pre-implementation technical roadmap).
 
 The system resolves concurrent multi-device and offline-to-online edit discrepancies deterministically without blind overwrites or silent data loss.
 
