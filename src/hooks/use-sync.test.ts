@@ -1,190 +1,334 @@
 /**
+ * @vitest-environment jsdom
+ *
  * useSync Hook Tests
- * Tests for React hook behavior (unit tests without full React env)
+ *
+ * Scoped hook tests: verifies that the useSync hook creates user-isolated instances,
+ * properly manages user lifecycle, ensures clean resource teardown, and handles user switching.
  */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+// ---------- mock the unit modules the hook depends on ----------
+const mockStopGC = vi.fn();
 
-// Mock the dependencies using vi.hoisted
-const mockSyncManager = vi.hoisted(() => ({
-    init: vi.fn().mockResolvedValue(undefined),
-    destroy: vi.fn(),
-    sync: vi.fn().mockResolvedValue({
-        success: true,
-        filesPushed: 0,
-        filesPulled: 0,
-        conflicts: [],
-        errors: [],
-    }),
-    getStatus: vi.fn().mockReturnValue('idle'),
-    onStatusChange: vi.fn().mockReturnValue(() => { }),
-    setConflictCallback: vi.fn(),
+const mocks = vi.hoisted(() => ({
+    syncManager: {
+        init: vi.fn().mockResolvedValue(undefined),
+        destroy: vi.fn(),
+        sync: vi.fn().mockResolvedValue({
+            success: true,
+            filesProcessed: 0,
+            filesPushed: 0,
+            filesPulled: 0,
+            conflicts: [],
+            errors: [],
+            timestamp: Date.now(),
+        }),
+        syncFile: vi.fn().mockResolvedValue(undefined),
+        getStatus: vi.fn().mockReturnValue('idle'),
+        onStatusChange: vi.fn().mockReturnValue(() => undefined),
+        setConflictCallback: vi.fn(),
+    },
+    connectionDetector: {
+        init: vi.fn(),
+        destroy: vi.fn(),
+        getState: vi.fn().mockReturnValue('online'),
+        onChange: vi.fn().mockReturnValue(() => undefined),
+    },
+    indexedDBManager: {
+        init: vi.fn().mockResolvedValue({}),
+        getFile: vi.fn().mockResolvedValue(undefined),
+        saveFile: vi.fn().mockResolvedValue(undefined),
+        markFileDirty: vi.fn().mockResolvedValue(undefined),
+        coalesceOperation: vi.fn().mockResolvedValue(undefined),
+        getDirtyFiles: vi.fn().mockResolvedValue([]),
+        close: vi.fn(),
+    },
+    operationsGC: {
+        cleanup: vi.fn().mockResolvedValue(undefined),
+        schedule: vi.fn().mockImplementation(() => mockStopGC),
+    },
 }));
 
-const mockConnectionDetector = vi.hoisted(() => ({
-    getState: vi.fn().mockReturnValue('online'),
-    onChange: vi.fn().mockReturnValue(() => { }),
-}));
+vi.mock('@/lib/sync', async importOriginal => {
+    const original = await importOriginal<typeof import('@/lib/sync')>();
+    return {
+        ...original,
+        syncManager: mocks.syncManager,
+        createSyncManager: vi.fn(() => mocks.syncManager),
+        connectionDetector: mocks.connectionDetector,
+        indexedDBManager: mocks.indexedDBManager,
+        createIndexedDBManager: vi.fn(() => mocks.indexedDBManager),
+        operationsGC: mocks.operationsGC,
+        createOperationsGC: vi.fn(() => mocks.operationsGC),
+    };
+});
 
-const mockIndexedDBManager = vi.hoisted(() => ({
-    init: vi.fn().mockResolvedValue({}),
-    getFile: vi.fn(),
-    saveFile: vi.fn(),
-    markFileDirty: vi.fn(),
-    getDirtyFiles: vi.fn().mockResolvedValue([]),
-}));
+import { useSync } from './use-sync';
 
-vi.mock('../lib/sync/sync-manager', () => ({
-    syncManager: mockSyncManager,
-}));
-vi.mock('../lib/sync/connection-detector', () => ({
-    connectionDetector: mockConnectionDetector,
-}));
-vi.mock('../lib/sync/indexeddb', () => ({
-    indexedDBManager: mockIndexedDBManager,
-}));
-
-describe('useSync Hook (Unit)', () => {
+describe('useSync hook', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.operationsGC.schedule.mockImplementation(() => mockStopGC);
     });
 
-    describe('syncManager integration', () => {
-        it('should have init method', () => {
-            expect(mockSyncManager.init).toBeDefined();
-        });
+    it('should stay in stopped state when userId is empty or null', async () => {
+        const { result, rerender } = renderHook<ReturnType<typeof useSync>, { userId?: string | null }>(
+            (props) => useSync({ userId: props.userId }),
+            { initialProps: { userId: '' } }
+        );
 
-        it('should have sync method', () => {
-            expect(mockSyncManager.sync).toBeDefined();
-        });
 
-        it('should have getStatus method', () => {
-            expect(mockSyncManager.getStatus).toBeDefined();
-        });
+        expect(result.current.status).toBe('stopped');
+        expect(result.current.isInitialized).toBe(false);
+        expect(mocks.syncManager.init).not.toHaveBeenCalled();
+        expect(mocks.indexedDBManager.init).not.toHaveBeenCalled();
 
-        it('should have onStatusChange method', () => {
-            expect(mockSyncManager.onStatusChange).toBeDefined();
-        });
-
-        it('should have destroy method', () => {
-            expect(mockSyncManager.destroy).toBeDefined();
-        });
+        // Rerender with null
+        rerender({ userId: null });
+        expect(result.current.status).toBe('stopped');
+        expect(result.current.isInitialized).toBe(false);
+        expect(mocks.syncManager.init).not.toHaveBeenCalled();
     });
 
-    describe('connectionDetector integration', () => {
-        it('should have getState method', () => {
-            expect(mockConnectionDetector.getState).toBeDefined();
-        });
 
-        it('should have onChange method', () => {
-            expect(mockConnectionDetector.onChange).toBeDefined();
-        });
+    it('should initialize the sync manager with the provided userId and auto-sync interval', async () => {
+        const { result } = renderHook(() =>
+            useSync({ userId: 'user-123', autoSyncInterval: 60_000 }),
+        );
 
-        it('should return connection state', () => {
-            expect(mockConnectionDetector.getState()).toBe('online');
-        });
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+        expect(mocks.indexedDBManager.init).toHaveBeenCalledWith('user-123');
+        expect(mocks.syncManager.init).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'user-123',
+            autoSyncInterval: 60_000,
+        }));
+        expect(mocks.operationsGC.schedule).toHaveBeenCalled();
     });
 
-    describe('indexedDBManager integration', () => {
-        it('should have init method', () => {
-            expect(mockIndexedDBManager.init).toBeDefined();
+    it('should reflect sync status changes via the onStatusChange subscription', async () => {
+        let statusCallback: (status: string) => void = () => undefined;
+        mocks.syncManager.onStatusChange.mockImplementation(
+            (cb: (status: string) => void) => {
+                statusCallback = cb;
+                return () => undefined;
+            },
+        );
+
+        const { result } = renderHook(() => useSync({ userId: 'user-123' }));
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+        await act(async () => {
+            statusCallback('syncing');
         });
 
-        it('should have getFile method', () => {
-            expect(mockIndexedDBManager.getFile).toBeDefined();
-        });
-
-        it('should have saveFile method', () => {
-            expect(mockIndexedDBManager.saveFile).toBeDefined();
-        });
-
-        it('should have markFileDirty method', () => {
-            expect(mockIndexedDBManager.markFileDirty).toBeDefined();
-        });
-
-        it('should have getDirtyFiles method', () => {
-            expect(mockIndexedDBManager.getDirtyFiles).toBeDefined();
-        });
+        expect(result.current.status).toBe('syncing');
     });
 
-    describe('sync workflow', () => {
-        it('should initialize sync manager with userId', async () => {
-            await mockSyncManager.init({ userId: 'user-123' });
+    it('should trigger sync and record the last sync result', async () => {
+        const { result } = renderHook(() => useSync({ userId: 'user-123' }));
 
-            expect(mockSyncManager.init).toHaveBeenCalledWith({ userId: 'user-123' });
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+        await act(async () => {
+            await result.current.sync();
         });
 
-        it('should trigger sync and get result', async () => {
-            const result = await mockSyncManager.sync();
-
-            expect(result.success).toBe(true);
-            expect(result.filesPushed).toBe(0);
-            expect(result.filesPulled).toBe(0);
-        });
-
-        it('should get current status', () => {
-            const status = mockSyncManager.getStatus();
-
-            expect(status).toBe('idle');
-        });
-
-        it('should register status change callback', () => {
-            const callback = vi.fn();
-            const unsubscribe = mockSyncManager.onStatusChange(callback);
-
-            expect(typeof unsubscribe).toBe('function');
-        });
+        expect(mocks.syncManager.sync).toHaveBeenCalled();
+        expect(result.current.lastSyncResult?.success).toBe(true);
+        expect(result.current.lastSyncResult?.filesPushed).toBe(0);
     });
 
-    describe('local operations workflow', () => {
-        it('should save file locally', async () => {
-            const fileData = {
-                id: 'file-1',
-                content: 'Content',
-                title: 'Title',
-            };
+    it('should delegate syncFile to the sync manager', async () => {
+        const { result } = renderHook(() => useSync({ userId: 'user-123' }));
 
-            await mockIndexedDBManager.saveFile(fileData);
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
 
-            expect(mockIndexedDBManager.saveFile).toHaveBeenCalledWith(fileData);
+        await act(async () => {
+            await result.current.syncFile('file-abc');
         });
 
-        it('should load file from local storage', async () => {
-            const mockFile = {
-                id: 'file-1',
-                content: 'Stored content',
-                title: 'Title',
-            };
-            mockIndexedDBManager.getFile.mockResolvedValue(mockFile);
-
-            const result = await mockIndexedDBManager.getFile('file-1');
-
-            expect(result).toEqual(mockFile);
-        });
-
-        it('should mark file as dirty', async () => {
-            await mockIndexedDBManager.markFileDirty('file-1');
-
-            expect(mockIndexedDBManager.markFileDirty).toHaveBeenCalledWith('file-1');
-        });
-
-        it('should get dirty files count', async () => {
-            mockIndexedDBManager.getDirtyFiles.mockResolvedValue([
-                { id: '1', isDirty: true },
-                { id: '2', isDirty: true },
-            ]);
-
-            const dirtyFiles = await mockIndexedDBManager.getDirtyFiles();
-
-            expect(dirtyFiles.length).toBe(2);
-        });
+        expect(mocks.syncManager.syncFile).toHaveBeenCalledWith('file-abc');
     });
 
-    describe('cleanup', () => {
-        it('should call destroy on cleanup', () => {
-            mockSyncManager.destroy();
+    it('should save a file locally through the indexeddb manager', async () => {
+        const { result } = renderHook(() => useSync({ userId: 'user-123' }));
 
-            expect(mockSyncManager.destroy).toHaveBeenCalled();
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+        await act(async () => {
+            await result.current.saveLocal({
+                id: 'file-abc',
+                content: 'Hello',
+                title: 'Test',
+            });
         });
+
+        expect(mocks.indexedDBManager.saveFile).toHaveBeenCalled();
+    });
+
+    it('should load a file from local storage', async () => {
+        const mockFile = {
+            id: 'file-abc',
+            content: 'Stored content',
+            title: 'Test',
+            etag: 'etag-1',
+            version: 1,
+            isDirty: false,
+            parentFolderId: null,
+            isFolder: false,
+            lastModified: Date.now(),
+            lastSyncedAt: Date.now(),
+        };
+        (mocks.indexedDBManager.getFile as unknown as {
+            mockResolvedValue: (value: unknown) => void;
+        }).mockResolvedValue(mockFile);
+
+        const { result } = renderHook(() => useSync({ userId: 'user-123' }));
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+        let loaded: unknown = null;
+        await act(async () => {
+            loaded = await result.current.loadLocal('file-abc');
+        });
+
+        if (!loaded || typeof loaded !== 'object') {
+            throw new Error('Expected loadLocal to return a file');
+        }
+        expect((loaded as { content: string }).content).toBe('Stored content');
+        expect(mocks.indexedDBManager.getFile).toHaveBeenCalledWith('file-abc');
+    });
+
+    it('should mark a file as dirty through the indexeddb manager', async () => {
+        const { result } = renderHook(() => useSync({ userId: 'user-123' }));
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+        await act(async () => {
+            await result.current.markDirty('file-abc');
+        });
+
+        expect(mocks.indexedDBManager.markFileDirty).toHaveBeenCalledWith('file-abc');
+    });
+
+    it('should register the conflict callback when onConflict is provided', async () => {
+        const onConflict = vi.fn().mockResolvedValue('local');
+
+        renderHook(() => useSync({ userId: 'user-123', onConflict }));
+
+        await waitFor(() =>
+            expect(mocks.syncManager.setConflictCallback).toHaveBeenCalled(),
+        );
+
+        const registeredCb = mocks.syncManager.setConflictCallback.mock.calls[0][0];
+        const syncConflict = {
+            fileId: 'file-abc',
+            localContent: 'a',
+            localEtag: undefined,
+            serverContent: 'b',
+            serverEtag: undefined,
+        };
+
+        let transformedConflict: Record<string, unknown> | undefined;
+        await act(async () => {
+            await registeredCb(syncConflict);
+        });
+
+        expect(onConflict).toHaveBeenCalledTimes(1);
+        transformedConflict = onConflict.mock.calls[0][0];
+        expect(transformedConflict?.fileId).toBe('file-abc');
+        expect((transformedConflict?.localVersion as { content: string })?.content).toBe('a');
+        expect((transformedConflict?.serverVersion as { content: string })?.content).toBe('b');
+        expect(transformedConflict?.operations).toEqual([]);
+        expect(transformedConflict?.detectedAt).toBeDefined();
+    });
+
+    it('should handle user switching by destroying previous manager and reinitializing', async () => {
+        const { result, rerender } = renderHook<ReturnType<typeof useSync>, { userId: string }>(
+            (props) => useSync({ userId: props.userId }),
+            { initialProps: { userId: 'user-1' } }
+        );
+
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+        expect(mocks.syncManager.init).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-1' }));
+
+        // Switch user
+        rerender({ userId: 'user-2' });
+
+        expect(mocks.syncManager.destroy).toHaveBeenCalled();
+        expect(mockStopGC).toHaveBeenCalled();
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+        expect(mocks.syncManager.init).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-2' }));
+    });
+
+    it('should handle transition from user to null (logout) and then to another user', async () => {
+        const { result, rerender } = renderHook<ReturnType<typeof useSync>, { userId?: string | null }>(
+            (props) => useSync({ userId: props.userId }),
+            { initialProps: { userId: 'user-alpha' } }
+        );
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+        expect(mocks.syncManager.init).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-alpha' }));
+
+        // User logs out (userId becomes null)
+        rerender({ userId: null });
+
+        expect(mocks.syncManager.destroy).toHaveBeenCalled();
+        expect(mockStopGC).toHaveBeenCalled();
+        expect(result.current.status).toBe('stopped');
+        expect(result.current.isInitialized).toBe(false);
+
+        // User logs in as user-beta
+        rerender({ userId: 'user-beta' });
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+        expect(mocks.syncManager.init).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-beta' }));
+    });
+
+    it('should safely abort and clean up when unmounted during active sync', async () => {
+        let resolveSync: (val: unknown) => void;
+        const pendingSyncPromise = new Promise((resolve) => {
+            resolveSync = resolve;
+        });
+        mocks.syncManager.sync.mockReturnValue(pendingSyncPromise);
+
+        const { result, unmount } = renderHook(() => useSync({ userId: 'user-123' }));
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+        // Start sync (does not await)
+        const syncCall = result.current.sync();
+
+        // Unmount while sync is in-flight
+        unmount();
+
+        expect(mocks.syncManager.destroy).toHaveBeenCalled();
+        expect(mockStopGC).toHaveBeenCalled();
+
+        resolveSync!({ success: false, filesProcessed: 0, filesPushed: 0, filesPulled: 0, conflicts: [], errors: ['Aborted'], timestamp: Date.now() });
+        await syncCall;
+    });
+
+    it('should handle repeated mount/unmount cycles without leaking listeners or timers', async () => {
+        const unsubscribeStatus = vi.fn();
+        const unsubscribeConnection = vi.fn();
+        mocks.syncManager.onStatusChange.mockReturnValue(unsubscribeStatus);
+        mocks.connectionDetector.onChange.mockReturnValue(unsubscribeConnection);
+
+        for (let i = 0; i < 3; i++) {
+            const { unmount } = renderHook(() => useSync({ userId: `user-cycle-${i}` }));
+            await waitFor(() => expect(mocks.syncManager.init).toHaveBeenCalledWith(expect.objectContaining({ userId: `user-cycle-${i}` })));
+            unmount();
+            expect(unsubscribeStatus).toHaveBeenCalled();
+            expect(unsubscribeConnection).toHaveBeenCalled();
+            expect(mockStopGC).toHaveBeenCalled();
+            expect(mocks.syncManager.destroy).toHaveBeenCalled();
+        }
     });
 });

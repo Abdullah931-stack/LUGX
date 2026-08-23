@@ -29,6 +29,14 @@ export interface IDBFile {
     parentFolderId: string | null;
     /** Whether this is a folder */
     isFolder: boolean;
+    /** Pristine base snapshot before local uncommitted edits were made */
+    baseSnapshot?: {
+        content: string;
+        etag: string;
+        version: number;
+        title?: string;
+        parentFolderId?: string | null;
+    };
 }
 
 /**
@@ -37,14 +45,40 @@ export interface IDBFile {
 export type OperationType = 'insert' | 'delete' | 'update' | 'create' | 'rename' | 'move';
 
 /**
+ * Status lifecycle of a sync operation
+ */
+export type OperationStatus =
+    | 'queued'
+    | 'syncing'
+    | 'synced'
+    | 'failed'
+    | 'conflict'
+    | 'rollback_failed'
+    | 'dead_letter';
+
+/**
  * Represents a single edit operation for Operation Log
- * Used for delta sync and conflict resolution
+ * Used for deterministic queueing, delta sync, conflict resolution and rollback
  */
 export interface IDBOperation {
-    /** Unique operation identifier */
+    /** Unique operation identifier (keyPath in IndexedDB) */
     id: string;
+    /** Unique idempotent operation identifier (matches id) */
+    operationId?: string;
+    /** Owner user ID for security and isolation */
+    userId?: string;
     /** File this operation belongs to */
     fileId: string;
+    /** Base version expected for optimistic concurrency control */
+    baseVersion?: number;
+    /** Current lifecycle status of the operation */
+    status?: OperationStatus;
+    /** Number of sync attempts executed */
+    attempts?: number;
+    /** Next retry timestamp in ms (for exponential backoff) */
+    nextRetryAt?: number;
+    /** Last error message if failed */
+    lastError?: string;
     /** Type of operation performed */
     operationType: OperationType;
     /** Position in content where operation occurred */
@@ -57,6 +91,12 @@ export interface IDBOperation {
     synced: boolean;
     /** Previous content (for undo/conflict resolution) */
     previousContent?: string;
+    /** Pre-operation snapshot for safe rollback on failure */
+    snapshot?: {
+        content: string;
+        etag: string;
+        version: number;
+    };
 }
 
 /**
@@ -76,35 +116,44 @@ export interface IDBSyncMetadata {
 }
 
 /**
+ * State snapshot of a file version involved in a conflict
+ */
+export interface ConflictFileState {
+    content: string;
+    etag: string;
+    lastModified: number;
+    version: number;
+    title?: string;
+    parentFolderId?: string | null;
+    deleted?: boolean;
+}
+
+/**
  * Conflict data structure for resolution UI
  */
 export interface SyncConflict {
     /** File ID with conflict */
     fileId: string;
     /** Local version of the file */
-    localVersion: {
-        content: string;
-        etag: string;
-        lastModified: number;
-        version: number;
-    };
+    localVersion: ConflictFileState;
     /** Server version of the file */
-    serverVersion: {
-        content: string;
-        etag: string;
-        lastModified: number;
-        version: number;
-    };
+    serverVersion: ConflictFileState;
+    /** Pristine base version before local modifications occurred */
+    baseVersion?: ConflictFileState;
     /** Operations performed locally since last sync */
     operations: IDBOperation[];
     /** Timestamp when conflict was detected */
     detectedAt: number;
+    /** Conflict classification */
+    type?: 'content' | 'metadata' | 'delete_conflict';
 }
 
 /**
  * Sync queue item for prioritized synchronization
  */
 export interface SyncQueueItem {
+    /** Unique operation identifier */
+    operationId?: string;
     /** File ID to sync */
     fileId: string;
     /** Priority level (1 = highest, 3 = lowest) */
@@ -133,7 +182,9 @@ export interface IDBSchemaInfo {
  * Constants for IndexedDB configuration
  */
 export const IDB_CONFIG = {
-    /** Database name */
+    /** Default database name prefix */
+    DB_NAME_PREFIX: 'textai_db',
+    /** Default database name for backward compatibility */
     DB_NAME: 'textai_db',
     /** Current database version */
     DB_VERSION: 1,
@@ -148,3 +199,17 @@ export const IDB_CONFIG = {
     /** Maximum operations per file before compaction */
     MAX_OPERATIONS_PER_FILE: 1000,
 } as const;
+
+/**
+ * Get user-scoped database name
+ * 
+ * @param userId - Unique user identifier
+ * @returns Partitioned database name for the user
+ */
+export function getDatabaseName(userId?: string): string {
+    if (!userId || !userId.trim()) {
+        throw new Error('Valid userId is required for IndexedDB operations');
+    }
+    return `${IDB_CONFIG.DB_NAME_PREFIX}_${userId.trim()}`;
+}
+

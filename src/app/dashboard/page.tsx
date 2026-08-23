@@ -9,16 +9,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { FileText, Settings, LogOut, Plus, Sparkles } from "lucide-react";
 import { signOut } from "@/server/actions/auth-actions";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+    searchParams,
+}: {
+    searchParams?: Promise<{ session_id?: string }>;
+}) {
     const user = await getUser();
 
     if (!user) {
         redirect("/login");
     }
 
-    const [profileResult, quotaResult] = await Promise.all([
+    const [profileResult, quotaResult, params] = await Promise.all([
         getUserProfile(),
         getRemainingQuota(),
+        searchParams ? searchParams : Promise.resolve(undefined),
     ]);
 
     const profile = profileResult.data;
@@ -66,6 +71,18 @@ export default async function DashboardPage() {
 
             {/* Main Content */}
             <main className="pt-24 pb-12 px-4 max-w-7xl mx-auto">
+                {params?.session_id && (
+                    <div className="mb-6 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <span className="text-2xl">🎉</span>
+                            <div>
+                                <p className="font-medium text-emerald-200">Payment Successful!</p>
+                                <p className="text-xs text-emerald-400/80">Your subscription has been activated. Welcome to your upgraded workspace.</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Welcome Header */}
                 <div className="mb-8">
                     <h1 className="text-2xl font-medium text-zinc-50">

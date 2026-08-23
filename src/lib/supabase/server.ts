@@ -29,24 +29,34 @@ export async function createClient() {
 
 // Get the current authenticated user
 export async function getUser() {
-    const supabase = await createClient();
-    const { data: { user }, error } = await supabase.auth.getUser();
+    try {
+        const supabase = await createClient();
+        const { data: { user }, error } = await supabase.auth.getUser();
 
-    if (error || !user) {
+        if (error || !user) {
+            return null;
+        }
+
+        return user;
+    } catch (err) {
+        console.warn('[Supabase Server] getUser network/auth exception:', err);
         return null;
     }
-
-    return user;
 }
 
 // Get the current session
 export async function getSession() {
-    const supabase = await createClient();
-    const { data: { session }, error } = await supabase.auth.getSession();
+    try {
+        const supabase = await createClient();
+        const { data: { session }, error } = await supabase.auth.getSession();
 
-    if (error || !session) {
+        if (error || !session) {
+            return null;
+        }
+
+        return session;
+    } catch (err) {
+        console.warn('[Supabase Server] getSession network/auth exception:', err);
         return null;
     }
-
-    return session;
 }

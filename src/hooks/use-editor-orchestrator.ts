@@ -1,0 +1,868 @@
+"use client";
+
+/**
+ * useEditorOrchestrator
+ *
+ * Centralized State & Write Controller for TipTap Editor (Phase 9 / Gate G9)
+ *
+ * Enforces:
+ * 1. Single authoritative write path (manual save, AI commit, conflict resolution, sync replay).
+ * 2. Strict auto-save suspension invariants (never saves during streaming, reserving, committing, conflict, or stopped).
+ * 3. Manual edit during streaming policy: instantly aborts AI generation, clears ghost preview, refunds quota, and preserves user edits.
+ * 4. Offline-first loading and optimistic concurrency synchronization with ETag and version precondition guards.
+ * 5. Navigation & unload protection when dirty or in-flight committing.
+ */
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Editor } from "@tiptap/react";
+import { getFile, updateFileContent, renameFile, deleteFile } from "@/server/actions/file-ops";
+import { sanitizeHtml } from "@/lib/sanitize-client";
+import { debounce } from "@/lib/utils";
+import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
+import { useAIStream } from "@/hooks/use-ai-stream";
+import { AIOperationType } from "@/lib/ai/stream-handler";
+import { SyncConflict } from "@/lib/sync/idb-types";
+import { ConflictResolutionPayload } from "@/components/sync/conflict-dialog";
+import { broadcastCrossTabEvent, subscribeCrossTabSync } from "@/lib/sync/cross-tab-sync";
+import { classifyRemoteUpdate } from "@/lib/sync/reconciliation";
+import { AIStreamStatus } from "@/lib/ai/stream-session";
+import { streamingGhostPluginKey } from "@/lib/extensions/streaming-ghost-extension";
+import { EDITOR_AUTOSAVE_DEBOUNCE_MS } from "@/config/editor.config";
+
+export type WriteStateType =
+    | "idle"
+    | "saving"
+    | "ai_committing"
+    | "resolving_conflict"
+    | "syncing"
+    | "stopped";
+
+export interface UseEditorOrchestratorOptions {
+    fileId: string;
+    userId: string | null;
+    editor: Editor | null;
+    onNavigate?: (path: string) => void;
+}
+
+export interface UseEditorOrchestratorReturn {
+    // 1. Document State
+    title: string;
+    setTitle: (title: string) => void;
+    handleTitleChange: (newTitle: string) => Promise<void>;
+    handleDeleteFile: () => Promise<void>;
+
+    // 2. Preview & AI State
+    aiStatus: AIStreamStatus;
+    previewText: string;
+    isStreaming: boolean;
+    isCommitting: boolean;
+    isAIActive: boolean;
+    aiError: string | null;
+    isAIConflict: boolean;
+    startAIOperation: (operation: AIOperationType) => Promise<void>;
+    stopAIOperation: () => void;
+    resetAI: () => void;
+    /** Accept the completed AI preview: server-first commit + atomic local replace. */
+    commitAIPreview: () => Promise<void>;
+    /** Reject the completed AI preview: discard output, settle quota as consumed. */
+    rejectAIPreview: () => void;
+    /** Re-run the last AI operation with identical inputs after settling the current preview. */
+    retryAIPreview: () => Promise<void>;
+
+    // 3. Dirty & Save State
+    isDirty: boolean;
+    isSaving: boolean;
+    lastSaved: Date | null;
+    error: string | null;
+    setError: (error: string | null) => void;
+
+    // 4. Server Version State
+    serverVersion: number;
+    serverEtag: string | null;
+
+    // 5. Conflict State
+    activeConflict: SyncConflict | null;
+    isConflictDialogOpen: boolean;
+    setIsConflictDialogOpen: (open: boolean) => void;
+    isResolvingConflict: boolean;
+    handleResolveConflict: (resolution: ConflictResolutionPayload) => Promise<void>;
+
+    // 6. Write Controller & Sync State
+    writeState: WriteStateType;
+    syncHook: ReturnType<typeof useSync>;
+    handleEditorChange: (newContent: string) => void;
+}
+
+export function useEditorOrchestrator({
+    fileId,
+    userId,
+    editor,
+    onNavigate,
+}: UseEditorOrchestratorOptions): UseEditorOrchestratorReturn {
+    // --- 1. Document State ---
+    const [title, setTitle] = useState<string>("");
+
+    // --- 2. Save & Error State ---
+    const [isSaving, setIsSaving] = useState<boolean>(false);
+    const [lastSaved, setLastSaved] = useState<Date | null>(null);
+    const [isDirty, setIsDirty] = useState<boolean>(false);
+    const [error, setError] = useState<string | null>(null);
+
+    // --- 3. Conflict State ---
+    const [activeConflict, setActiveConflict] = useState<SyncConflict | null>(null);
+    const [isConflictDialogOpen, setIsConflictDialogOpen] = useState<boolean>(false);
+    const [isResolvingConflict, setIsResolvingConflict] = useState<boolean>(false);
+
+    // --- 4. Server Version State & Invariants ---
+    const [serverVersion, setServerVersion] = useState<number>(1);
+    const [serverEtag, setServerEtag] = useState<string | null>(null);
+
+    const fileVersionRef = useRef<number>(1);
+    const fileEtagRef = useRef<string | null>(null);
+    const editorGenerationRef = useRef<number>(1);
+    const isProgrammaticUpdateRef = useRef<boolean>(false);
+    const activeConflictRef = useRef<SyncConflict | null>(null);
+    const isResolvingConflictRef = useRef<boolean>(false);
+    // Synchronous mirror of the dirty flag, read by the reconciliation policy at
+    // decision time without waiting for a React state flush.
+    const isDirtyRef = useRef<boolean>(false);
+    // One-shot guard: the initial load pipeline (IDB paint + background server fetch
+    // + reconciliation) must run exactly once per mounted fileId.
+    const initialLoadDoneRef = useRef(false);
+
+    // Keep active conflict ref synchronized
+    useEffect(() => {
+        activeConflictRef.current = activeConflict;
+    }, [activeConflict]);
+
+    // Keep dirty ref synchronized for synchronous reads during async pipelines
+    useEffect(() => {
+        isDirtyRef.current = isDirty;
+    }, [isDirty]);
+
+    // Keep resolving conflict ref synchronized
+    useEffect(() => {
+        isResolvingConflictRef.current = isResolvingConflict;
+    }, [isResolvingConflict]);
+
+    // --- Sync Hook Integration ---
+    const syncHookRef = useRef<UseSyncReturn | null>(null);
+
+    const handleSyncConflict = useCallback(
+        async (conflict: SyncConflict): Promise<"local" | "server" | "merge"> => {
+            // Auto-resolve if identical
+            if (
+                conflict.localVersion.content === conflict.serverVersion.content ||
+                (conflict.localVersion.etag &&
+                    conflict.serverVersion.etag &&
+                    conflict.localVersion.etag === conflict.serverVersion.etag)
+            ) {
+                console.log("[Orchestrator] Auto-resolving identical conflict without modal");
+                if (syncHookRef.current?.isInitialized) {
+                    await syncHookRef.current.saveLocal({
+                        id: fileId,
+                        content: conflict.serverVersion.content,
+                        version: conflict.serverVersion.version,
+                        etag: conflict.serverVersion.etag,
+                        isDirty: false,
+                    });
+                }
+                fileVersionRef.current = conflict.serverVersion.version;
+                setServerVersion(conflict.serverVersion.version);
+                if (conflict.serverVersion.etag) {
+                    fileEtagRef.current = conflict.serverVersion.etag;
+                    setServerEtag(conflict.serverVersion.etag);
+                }
+                return "server";
+            }
+
+            activeConflictRef.current = conflict;
+            setActiveConflict(conflict);
+            setIsConflictDialogOpen(true);
+            return "server";
+        },
+        [fileId]
+    );
+
+    const syncHook = useSync({
+        userId: userId || "",
+        autoSyncInterval: 30000,
+        onConflict: handleSyncConflict,
+    });
+    syncHookRef.current = syncHook;
+
+    // --- AI Stream Hook Integration ---
+    const aiStream = useAIStream({
+        onCommitSuccess: ({ version, etag }) => {
+            fileVersionRef.current = version;
+            setServerVersion(version);
+            fileEtagRef.current = etag;
+            setServerEtag(etag);
+            editorGenerationRef.current += 1;
+            setLastSaved(new Date());
+            setIsDirty(false);
+
+            if (syncHook.isInitialized && editor) {
+                syncHook.saveLocal({
+                    id: fileId,
+                    content: editor.getHTML(),
+                    title,
+                    version,
+                    etag: etag || "",
+                    isDirty: false,
+                });
+            }
+
+            broadcastCrossTabEvent({
+                type: "file_saved",
+                fileId,
+                version,
+                etag,
+            });
+        },
+        onConflict: (svrVersion) => {
+            console.warn("[Orchestrator] AI commit version conflict:", svrVersion);
+        },
+        onError: (err) => {
+            setError(err.message);
+        },
+        onProgrammaticTransaction: (fn) => {
+            isProgrammaticUpdateRef.current = true;
+            try {
+                fn();
+            } finally {
+                isProgrammaticUpdateRef.current = false;
+            }
+        },
+    });
+
+    // Write State Computation
+    const writeState: WriteStateType = isResolvingConflict
+        ? "resolving_conflict"
+        : aiStream.isCommitting
+        ? "ai_committing"
+        : isSaving
+        ? "saving"
+        : syncHook.status === "syncing"
+        ? "syncing"
+        : syncHook.status === "stopped"
+        ? "stopped"
+        : "idle";
+
+    /**
+     * AutoSave Suspension Invariants Gate (Rule: Phase 9 Step 2)
+     * AutoSave MUST NOT run during:
+     * - streaming / reserving
+     * - preview_ready (completed AI output awaiting an explicit user decision)
+     * - committing
+     * - conflict (active unresolved conflict)
+     * - stopped (sync stopped)
+     * - programmatic updates (setContent from server / DB / conflict resolution)
+     */
+    const canAutoSave = useCallback((): boolean => {
+        if (isProgrammaticUpdateRef.current) return false;
+        if (aiStream.isLoading || aiStream.isStreaming || aiStream.isCommitting) return false;
+        if (
+            aiStream.status === "reserved" ||
+            aiStream.status === "streaming" ||
+            aiStream.status === "preview_ready" ||
+            aiStream.status === "committing"
+        ) {
+            return false;
+        }
+        if (activeConflictRef.current !== null) return false;
+        if (isResolvingConflictRef.current) return false;
+        if (syncHook.status === "stopped") return false;
+        return true;
+    }, [aiStream.isLoading, aiStream.isStreaming, aiStream.isCommitting, aiStream.status, syncHook.status]);
+
+    /**
+     * Centralized Server Write with ETag & Version Precondition Guard
+     */
+    const executeServerWrite = useCallback(
+        async (content: string) => {
+            if (!canAutoSave()) {
+                console.log("[Orchestrator] Auto-save skipped due to active suspension gate invariant");
+                return;
+            }
+
+            setIsSaving(true);
+
+            try {
+                const saveRes = await updateFileContent(fileId, content, {
+                    expectedVersion: fileVersionRef.current,
+                    expectedETag: fileEtagRef.current || undefined,
+                });
+
+                if (saveRes.success && saveRes.version) {
+                    fileVersionRef.current = saveRes.version;
+                    setServerVersion(saveRes.version);
+                    fileEtagRef.current = saveRes.etag || null;
+                    setServerEtag(saveRes.etag || null);
+                    editorGenerationRef.current += 1;
+                    setLastSaved(new Date());
+                    setIsDirty(false);
+
+                    // Broadcast cross-tab
+                    broadcastCrossTabEvent({
+                        type: "file_saved",
+                        fileId,
+                        version: saveRes.version,
+                        etag: saveRes.etag || undefined,
+                    });
+
+                    // Update local storage clean
+                    if (syncHook.isInitialized) {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content,
+                            title,
+                            version: saveRes.version,
+                            etag: saveRes.etag || fileEtagRef.current || "",
+                            isDirty: false,
+                        });
+                    }
+                } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
+                    // False conflict check
+                    if (
+                        content === saveRes.serverVersion.content ||
+                        (saveRes.serverVersion.etag && saveRes.serverVersion.etag === fileEtagRef.current)
+                    ) {
+                        console.log("[Orchestrator] Server conflict has identical content, auto-synchronizing version");
+                        fileVersionRef.current = saveRes.serverVersion.version || fileVersionRef.current;
+                        setServerVersion(fileVersionRef.current);
+                        fileEtagRef.current = saveRes.serverVersion.etag || null;
+                        setServerEtag(fileEtagRef.current);
+
+                        if (syncHook.isInitialized) {
+                            await syncHook.saveLocal({
+                                id: fileId,
+                                content,
+                                title,
+                                version: saveRes.serverVersion.version ?? fileVersionRef.current,
+                                etag: saveRes.serverVersion.etag || "",
+                                isDirty: false,
+                            });
+                        }
+                        setIsSaving(false);
+                        setIsDirty(false);
+                        return;
+                    }
+
+                    // True conflict (412 Precondition Failed)
+                    console.warn("[Orchestrator] 412 Sync conflict detected during save:", saveRes.serverVersion);
+                    const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
+                    const conflictObj: SyncConflict = {
+                        fileId,
+                        localVersion: {
+                            content,
+                            etag: fileEtagRef.current || "",
+                            lastModified: Date.now(),
+                            version: fileVersionRef.current,
+                            title,
+                            parentFolderId: null,
+                            deleted: false,
+                        },
+                        serverVersion: {
+                            content: saveRes.serverVersion.content || "",
+                            etag: saveRes.serverVersion.etag || "",
+                            lastModified: saveRes.serverVersion.updatedAt
+                                ? new Date(saveRes.serverVersion.updatedAt).getTime()
+                                : Date.now(),
+                            version: saveRes.serverVersion.version || 0,
+                            title,
+                            parentFolderId: null,
+                            deleted: false,
+                        },
+                        baseVersion: localFile?.baseSnapshot
+                            ? {
+                                  content: localFile.baseSnapshot.content,
+                                  etag: localFile.baseSnapshot.etag,
+                                  lastModified: localFile.lastSyncedAt || 0,
+                                  version: localFile.baseSnapshot.version,
+                                  title: localFile.baseSnapshot.title,
+                                  parentFolderId: localFile.baseSnapshot.parentFolderId,
+                                  deleted: false,
+                              }
+                            : undefined,
+                        operations: [],
+                        detectedAt: Date.now(),
+                        type: "content",
+                    };
+
+                    activeConflictRef.current = conflictObj;
+                    setActiveConflict(conflictObj);
+                    setIsConflictDialogOpen(true);
+
+                    if (syncHook.isInitialized) {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content,
+                            title,
+                            version: fileVersionRef.current,
+                            etag: fileEtagRef.current || "",
+                            isDirty: true,
+                        });
+                    }
+                } else {
+                    // Offline / Network failure -> save dirty locally
+                    if (syncHook.isInitialized) {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content,
+                            title,
+                            version: fileVersionRef.current,
+                            etag: fileEtagRef.current || "",
+                            isDirty: true,
+                        });
+                    }
+                }
+            } catch (saveErr) {
+                console.warn("[Orchestrator] Save failed, saving dirty to IndexedDB:", saveErr);
+                if (syncHook.isInitialized) {
+                    await syncHook.saveLocal({
+                        id: fileId,
+                        content,
+                        title,
+                        version: fileVersionRef.current,
+                        etag: fileEtagRef.current || "",
+                        isDirty: true,
+                    });
+                }
+            } finally {
+                setIsSaving(false);
+            }
+        },
+        [fileId, title, canAutoSave, syncHook]
+    );
+
+    const executeServerWriteRef = useRef(executeServerWrite);
+    useEffect(() => {
+        executeServerWriteRef.current = executeServerWrite;
+    }, [executeServerWrite]);
+
+    const debouncedAutoSaveRef = useRef(
+        debounce((content: string) => {
+            executeServerWriteRef.current(content);
+        }, EDITOR_AUTOSAVE_DEBOUNCE_MS)
+    );
+
+    /**
+     * Manual Edit Policy (Phase 9):
+     * If user performs manual edit:
+     * - If AI stream is active and user edits INSIDE the target selection/processing range:
+     *   1. Immediately abort AI stream to prevent corrupt merges.
+     *   2. Clear streaming ghost preview in TipTap.
+     *   3. Advance editor generation.
+     * - If user edits outside the active processing range (e.g. another paragraph):
+     *   Keep AI stream running smoothly; ProseMirror position mapping automatically shifts the target range.
+     * - Record dirty state and schedule debounced save.
+     */
+    const handleEditorChange = useCallback(
+        (newContent: string) => {
+            if (isProgrammaticUpdateRef.current) return;
+
+            // Target-scoped manual edit guard
+            if (aiStream.isLoading || aiStream.isStreaming || aiStream.status === "reserved" || aiStream.status === "preview_ready") {
+                const ghostState = editor ? streamingGhostPluginKey.getState(editor.state) : null;
+                const isWholeDoc = !ghostState?.active || (ghostState.from === 0 && (ghostState.to >= (editor?.state.doc.content.size || 0) || ghostState.to === 0));
+
+                let isOverlapping = true;
+                if (editor && ghostState?.active && !isWholeDoc) {
+                    const { from: userFrom, to: userTo } = editor.state.selection;
+                    isOverlapping = userFrom <= ghostState.to && userTo >= ghostState.from;
+                }
+
+                if (isOverlapping) {
+                    console.warn("[Orchestrator] User manual edit overlapped with active AI processing selection. Aborting AI generation.");
+                    aiStream.stopStream();
+                    if (editor && !editor.isDestroyed) {
+                        editor.commands.clearStreamingGhost();
+                    }
+                    editorGenerationRef.current += 1;
+                } else {
+                    console.log("[Orchestrator] User edited outside the AI processing range. Retaining active stream with mapped coordinates.");
+                }
+            } else {
+                editorGenerationRef.current += 1;
+            }
+
+            setIsDirty(true);
+            debouncedAutoSaveRef.current(newContent);
+        },
+        [aiStream, editor]
+    );
+
+    // Initial Load - Offline-First with Background Server Sync
+    //
+    // RUNTIME FIX: this pipeline previously re-executed on every render because the
+    // inline `onNavigate` arrow produced an unstable dependency identity. Each cycle
+    // performed a fresh getFile() and force-applied server content via setContent(),
+    // visibly wiping in-progress typing until the next sync restored it. The pipeline
+    // now runs exactly once per mounted fileId, and remote application is governed by
+    // the deterministic Local-First reconciliation policy instead of a blind content
+    // comparison.
+    useEffect(() => {
+        let isMounted = true;
+
+        async function loadInitialFile() {
+            if (initialLoadDoneRef.current) return;
+
+            // Step 1: Instant load from IndexedDB (offline-first paint)
+            if (syncHook.isInitialized) {
+                try {
+                    const localFile = await syncHook.loadLocal(fileId);
+                    if (localFile && isMounted) {
+                        setTitle(localFile.title);
+                        fileVersionRef.current = localFile.version || 1;
+                        setServerVersion(localFile.version || 1);
+                        fileEtagRef.current = localFile.etag || null;
+                        setServerEtag(localFile.etag || null);
+                        editorGenerationRef.current += 1;
+
+                        isProgrammaticUpdateRef.current = true;
+                        try {
+                            editor?.commands.setContent(sanitizeHtml(localFile.content || ""));
+                        } finally {
+                            isProgrammaticUpdateRef.current = false;
+                        }
+                    }
+                } catch (idbErr) {
+                    console.warn("[Orchestrator] Local load exception:", idbErr);
+                }
+            }
+
+            try {
+                // Step 2: Background Server Fetch + Reconciliation
+                const result = await getFile(fileId);
+                if (!isMounted) return;
+
+                if (result.success && result.data) {
+                    setTitle(result.data.title);
+
+                    const remoteVersion = result.data.version ?? 1;
+                    const remoteEtag = result.data.etag ?? null;
+                    const remoteUpdatedAt = result.data.updatedAt
+                        ? new Date(result.data.updatedAt).getTime()
+                        : null;
+
+                    const currentContent = editor?.getHTML() || "";
+                    const serverContent = result.data.content || "";
+                    const safeContent = sanitizeHtml(serverContent);
+
+                    // Deterministic Local-First reconciliation decision
+                    const decision = classifyRemoteUpdate({
+                        isDirty: isDirtyRef.current,
+                        localVersion: fileVersionRef.current,
+                        localEtag: fileEtagRef.current,
+                        localContent: currentContent,
+                        remoteVersion,
+                        remoteEtag,
+                        remoteContent: safeContent,
+                        remoteUpdatedAt,
+                        localLastModified: null,
+                    });
+
+                    if (decision.action === "apply") {
+                        // Fast-forward: verified-newer server revision built on our clean state.
+                        fileVersionRef.current = remoteVersion;
+                        setServerVersion(remoteVersion);
+                        fileEtagRef.current = remoteEtag;
+                        setServerEtag(remoteEtag);
+                        editorGenerationRef.current += 1;
+
+                        if (currentContent !== safeContent) {
+                            isProgrammaticUpdateRef.current = true;
+                            try {
+                                editor?.commands.setContent(safeContent);
+                            } finally {
+                                isProgrammaticUpdateRef.current = false;
+                            }
+                        }
+
+                        if (syncHook.isInitialized) {
+                            await syncHook.saveLocal({
+                                id: fileId,
+                                content: safeContent,
+                                title: result.data.title,
+                                version: remoteVersion,
+                                etag: remoteEtag || "",
+                                isDirty: false,
+                            });
+                        }
+                    } else if (decision.action === "adopt_metadata") {
+                        // Identical payload; silently adopt the authoritative metadata.
+                        fileVersionRef.current = remoteVersion;
+                        setServerVersion(remoteVersion);
+                        fileEtagRef.current = remoteEtag;
+                        setServerEtag(remoteEtag);
+
+                        if (syncHook.isInitialized) {
+                            await syncHook.saveLocal({
+                                id: fileId,
+                                content: safeContent,
+                                title: result.data.title,
+                                version: remoteVersion,
+                                etag: remoteEtag || "",
+                                isDirty: false,
+                            });
+                        }
+                    } else {
+                        // keep_local: dirty divergence or non-newer remote. The editor keeps
+                        // rendering local truth; version anchors are intentionally NOT
+                        // advanced so the next optimistic write surfaces a genuine 412 and
+                        // routes the case through explicit three-way conflict resolution.
+                        console.warn(
+                            `[Orchestrator] Remote update retained locally during initial load (reason: ${decision.reason}). Optimistic locking will surface a conflict if required.`
+                        );
+                    }
+                } else {
+                    const localFile = await syncHook.loadLocal(fileId);
+                    if (!localFile && onNavigate) {
+                        onNavigate("/workspace");
+                    }
+                }
+            } catch (fetchErr) {
+                console.warn("[Orchestrator] Server fetch offline / failed:", fetchErr);
+            } finally {
+                if (isMounted) {
+                    initialLoadDoneRef.current = true;
+                }
+            }
+        }
+
+        if (fileId && editor) {
+            loadInitialFile();
+        }
+
+        return () => {
+            isMounted = false;
+        };
+    }, [fileId, editor, syncHook, onNavigate]);
+
+    // Cross-tab synchronization listener
+    useEffect(() => {
+        const unsubscribe = subscribeCrossTabSync(async (event) => {
+            if (event.fileId === fileId) {
+                const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
+                const isLocalDirty = localFile?.isDirty || activeConflictRef.current !== null || isDirty;
+
+                if (!isLocalDirty) {
+                    if (event.version && event.version > fileVersionRef.current) {
+                        fileVersionRef.current = event.version;
+                        setServerVersion(event.version);
+                    }
+                    if (event.etag) {
+                        fileEtagRef.current = event.etag;
+                        setServerEtag(event.etag);
+                    }
+                } else {
+                    console.warn("[Orchestrator] Sibling tab saved file while local tab is dirty. Retaining local expectedVersion for optimistic conflict guard.");
+                }
+            }
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, [fileId, isDirty, syncHook]);
+
+    // Navigation & Unload Guard
+    useEffect(() => {
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (isDirty || aiStream.isCommitting || isSaving) {
+                e.preventDefault();
+                e.returnValue = "لديك تعديلات غير محفوظة، هل أنت متأكد من مغادرة الصفحة؟";
+                return e.returnValue;
+            }
+        };
+
+        window.addEventListener("beforeunload", handleBeforeUnload);
+        return () => {
+            window.removeEventListener("beforeunload", handleBeforeUnload);
+        };
+    }, [isDirty, aiStream.isCommitting, isSaving]);
+
+    // AI Operation Trigger
+    const startAIOperation = useCallback(
+        async (operation: AIOperationType) => {
+            if (!editor) return;
+
+            await aiStream.startStream({
+                editor,
+                operation,
+                fileId,
+                expectedVersion: fileVersionRef.current,
+                originalEtag: fileEtagRef.current,
+                editorGeneration: editorGenerationRef.current,
+            });
+        },
+        [editor, aiStream, fileId]
+    );
+
+    // Conflict Resolution Handler
+    const handleResolveConflict = useCallback(
+        async (resolution: ConflictResolutionPayload) => {
+            if (!activeConflict) return;
+
+            setIsResolvingConflict(true);
+            isResolvingConflictRef.current = true;
+            setError(null);
+
+            try {
+                if (resolution.strategy === "delete") {
+                    if (confirm("هل أنت متأكد من تأكيد حذف الملف؟")) {
+                        await deleteFile(fileId);
+                        if (onNavigate) onNavigate("/workspace");
+                    }
+                    setIsResolvingConflict(false);
+                    isResolvingConflictRef.current = false;
+                    return;
+                }
+
+                // Authoritative write conditioned on server's latest version
+                const targetExpectedVersion = activeConflict.serverVersion.version;
+                const targetExpectedETag = activeConflict.serverVersion.etag || undefined;
+
+                const saveRes = await updateFileContent(fileId, resolution.content, {
+                    expectedVersion: targetExpectedVersion,
+                    expectedETag: targetExpectedETag,
+                });
+
+                if (saveRes.success && saveRes.version) {
+                    fileVersionRef.current = saveRes.version;
+                    setServerVersion(saveRes.version);
+                    fileEtagRef.current = saveRes.etag || null;
+                    setServerEtag(saveRes.etag || null);
+                    editorGenerationRef.current += 1;
+
+                    const safeHtml = sanitizeHtml(resolution.content);
+                    isProgrammaticUpdateRef.current = true;
+                    try {
+                        editor?.commands.setContent(safeHtml);
+                    } finally {
+                        isProgrammaticUpdateRef.current = false;
+                    }
+
+                    if (resolution.title && resolution.title !== title) {
+                        setTitle(resolution.title);
+                        await renameFile(fileId, resolution.title);
+                    }
+
+                    if (syncHook.isInitialized) {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content: safeHtml,
+                            title: resolution.title || title,
+                            version: saveRes.version,
+                            etag: saveRes.etag || fileEtagRef.current || "",
+                            isDirty: false,
+                        });
+                    }
+
+                    setLastSaved(new Date());
+                    setIsDirty(false);
+
+                    broadcastCrossTabEvent({
+                        type: "conflict_resolved",
+                        fileId,
+                        version: saveRes.version,
+                        etag: saveRes.etag || undefined,
+                    });
+
+                    activeConflictRef.current = null;
+                    setActiveConflict(null);
+                    setIsConflictDialogOpen(false);
+                } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
+                    const updatedConflict: SyncConflict = {
+                        ...activeConflict,
+                        serverVersion: {
+                            content: saveRes.serverVersion.content || "",
+                            etag: saveRes.serverVersion.etag || "",
+                            lastModified: saveRes.serverVersion.updatedAt
+                                ? new Date(saveRes.serverVersion.updatedAt).getTime()
+                                : Date.now(),
+                            version: saveRes.serverVersion.version || 0,
+                            title: activeConflict.serverVersion.title,
+                            parentFolderId: activeConflict.serverVersion.parentFolderId,
+                            deleted: false,
+                        },
+                        detectedAt: Date.now(),
+                    };
+                    activeConflictRef.current = updatedConflict;
+                    setActiveConflict(updatedConflict);
+                    setError("حدث تعديل جديد على الخادم أثناء حل التعارض. يرجى المراجعة والتأكيد مجدداً.");
+                } else {
+                    setError(saveRes.error || "فشل تأكيد حفظ حل التعارض على الخادم");
+                }
+            } catch (err) {
+                console.error("[Orchestrator] Conflict resolution error:", err);
+                const detailMessage = err instanceof Error
+                    ? err.message
+                    : "حدث خطأ غير متوقع أثناء حل التعارض";
+                setError(detailMessage);
+            } finally {
+                setIsResolvingConflict(false);
+                isResolvingConflictRef.current = false;
+            }
+        },
+        [activeConflict, fileId, title, editor, syncHook, onNavigate]
+    );
+
+    // Title Change
+    const handleTitleChange = useCallback(
+        async (newTitle: string) => {
+            setTitle(newTitle);
+            await renameFile(fileId, newTitle);
+        },
+        [fileId]
+    );
+
+    // Delete File
+    const handleDeleteFile = useCallback(async () => {
+        if (confirm("Are you sure you want to delete this document?")) {
+            await deleteFile(fileId);
+            if (onNavigate) onNavigate("/workspace");
+        }
+    }, [fileId, onNavigate]);
+
+    return {
+        title,
+        setTitle,
+        handleTitleChange,
+        handleDeleteFile,
+
+        aiStatus: aiStream.status,
+        previewText: aiStream.previewText,
+        isStreaming: aiStream.isStreaming,
+        isCommitting: aiStream.isCommitting,
+        isAIActive: aiStream.isLoading,
+        aiError: aiStream.error,
+        isAIConflict: aiStream.isConflict,
+        startAIOperation,
+        stopAIOperation: aiStream.stopStream,
+        resetAI: aiStream.reset,
+        commitAIPreview: aiStream.commitPreview,
+        rejectAIPreview: aiStream.rejectPreview,
+        retryAIPreview: aiStream.retryPreview,
+
+        isDirty,
+        isSaving,
+        lastSaved,
+        error,
+        setError,
+
+        serverVersion,
+        serverEtag,
+
+        activeConflict,
+        isConflictDialogOpen,
+        setIsConflictDialogOpen,
+        isResolvingConflict,
+        handleResolveConflict,
+
+        writeState,
+        syncHook,
+        handleEditorChange,
+    };
+}

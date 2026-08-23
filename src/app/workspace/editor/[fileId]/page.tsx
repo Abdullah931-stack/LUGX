@@ -2,42 +2,34 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import { getFile, updateFileContent, renameFile, deleteFile } from "@/server/actions/file-ops";
 import { getRemainingQuota } from "@/server/actions/ai-ops";
-import { convertTextToHTML } from "@/lib/parsers/text-to-html";
 import { AutoDirectionExtension } from "@/lib/extensions/direction-extension";
+import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
 import { SearchReplace } from "@/components/editor/search-replace";
-import { countWords, debounce, detectTextDirection, countCharacters } from "@/lib/utils";
-import { Loader2 } from "lucide-react";
+import { countWords, detectTextDirection, countCharacters } from "@/lib/utils";
+import { Loader2, AlertTriangle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { useSync } from "@/hooks/use-sync";
 import { SyncIndicator } from "@/components/sync/sync-indicator";
+import { AIStreamStatus } from "@/components/editor/ai-stream-status";
+import { AIStreamPreview } from "@/components/editor/ai-stream-preview";
+import { ConflictDialog } from "@/components/sync/conflict-dialog";
+import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 
 export default function EditorPage() {
     const params = useParams();
     const router = useRouter();
     const fileId = params.fileId as string;
 
-    const [title, setTitle] = useState("");
-    const [saving, setSaving] = useState(false);
-    const [lastSaved, setLastSaved] = useState<Date | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
+    const [userId, setUserId] = useState<string | null>(null);
     const [showToPrompt, setShowToPrompt] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [selectedText, setSelectedText] = useState("");
-    const [userId, setUserId] = useState<string | null>(null);
 
-    // Initialize useSync hook (only when userId is available)
-    const syncHook = useSync({
-        userId: userId || "",
-        autoSyncInterval: 30000,
-    });
-
+    // Initialize TipTap Editor Instance
     const editor = useEditor({
         extensions: [
             StarterKit,
@@ -46,9 +38,10 @@ export default function EditorPage() {
                 emptyEditorClass: "is-editor-empty",
             }),
             AutoDirectionExtension,
+            StreamingGhostExtension,
         ],
         content: "",
-        immediatelyRender: false, // Fix SSR hydration mismatch
+        immediatelyRender: false,
         editorProps: {
             attributes: {
                 class: "tiptap-editor outline-none min-h-[70vh] text-zinc-300 p-6",
@@ -56,71 +49,77 @@ export default function EditorPage() {
         },
     });
 
-    // Load file content - Offline-First approach
+    // Stabilized navigation callback: a fresh arrow per render previously leaked into
+    // the orchestrator's initial-load effect dependencies and re-triggered a full
+    // server fetch + setContent cycle on every render (visible as text vanishing
+    // mid-typing while background sync ran).
+    const handleNavigate = useCallback((path: string) => router.push(path), [router]);
+
+    // Centralized Editor Orchestrator (Phase 9 / Gate G9)
+    const {
+        title,
+
+        aiStatus,
+        previewText,
+        isStreaming,
+        isCommitting,
+        isAIActive,
+        aiError,
+        isAIConflict,
+        startAIOperation,
+        stopAIOperation,
+        resetAI,
+        commitAIPreview,
+        rejectAIPreview,
+        retryAIPreview,
+
+        isSaving,
+        lastSaved,
+        error,
+        setError,
+
+        activeConflict,
+        isConflictDialogOpen,
+        setIsConflictDialogOpen,
+        isResolvingConflict,
+        handleResolveConflict,
+
+        syncHook,
+        handleEditorChange,
+    } = useEditorOrchestrator({
+        fileId,
+        userId,
+        editor,
+        onNavigate: handleNavigate,
+    });
+
+    // Bind TipTap update stream to Orchestrator with manual edit detection
     useEffect(() => {
-        let isMounted = true;
+        if (editor) {
+            const onUpdate = ({ editor: currentEditor }: { editor: Editor }) => {
+                handleEditorChange(currentEditor.getHTML());
+            };
+            editor.on("update", onUpdate);
 
-        async function loadFile() {
-            // Step 1: Try to load from IndexedDB first (instant)
-            if (syncHook.isInitialized) {
-                const localFile = await syncHook.loadLocal(fileId);
-                if (localFile && isMounted) {
-                    // Show local content immediately
-                    setTitle(localFile.title);
-                    editor?.commands.setContent(localFile.content || "");
-                    console.log('[Editor] Loaded from IndexedDB (instant)');
-                }
-            }
-
-            // Step 2: Fetch from server in background
-            const result = await getFile(fileId);
-
-            if (!isMounted) return;
-
-            if (result.success && result.data) {
-                // Update title and content from server
-                setTitle(result.data.title);
-
-                // Only update editor if content is different (to avoid cursor jump)
-                const currentContent = editor?.getHTML() || "";
-                const serverContent = result.data.content || "";
-
-                if (currentContent !== serverContent) {
-                    editor?.commands.setContent(serverContent);
-                    console.log('[Editor] Updated from server');
-                }
-
-                // Cache the server version locally
-                if (syncHook.isInitialized) {
-                    syncHook.saveLocal({
-                        id: fileId,
-                        content: serverContent,
-                        title: result.data.title,
-                    });
-                }
-            } else {
-                // File doesn't exist on server and no local copy
-                const localFile = await syncHook.loadLocal(fileId);
-                if (!localFile) {
-                    router.push("/workspace");
-                }
-            }
+            return () => {
+                editor.off("update", onUpdate);
+            };
         }
+    }, [editor, handleEditorChange]);
 
-        if (fileId && editor) {
-            loadFile();
-        }
-
-        return () => { isMounted = false; };
-    }, [fileId, editor, router, syncHook.isInitialized]);
-
-    // Fetch userId from Supabase client
+    // Fetch authenticated user ID
     useEffect(() => {
         async function fetchUser() {
-            const supabase = createClient();
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                setUserId(user.id);
+            try {
+                const supabase = createClient();
+                const {
+                    data: { user },
+                } = await supabase.auth.getUser();
+                if (user) {
+                    setUserId(user.id);
+                }
+            } catch (authErr) {
+                console.warn("[Editor] fetchUser network exception:", authErr);
             }
         }
         fetchUser();
@@ -129,240 +128,88 @@ export default function EditorPage() {
     // Check ToPrompt availability
     useEffect(() => {
         async function checkQuota() {
-            const quota = await getRemainingQuota();
-            setShowToPrompt(quota?.toPrompt !== null);
+            try {
+                const quota = await getRemainingQuota();
+                setShowToPrompt(quota?.toPrompt !== null);
+            } catch (quotaErr) {
+                console.warn("[Editor] checkQuota error:", quotaErr);
+            }
         }
         checkQuota();
-    }, []);
-
-    // Auto-save with debounce (server + local for sync)
-    const saveContent = useCallback(
-        debounce(async (content: string) => {
-            setSaving(true);
-
-            // Save to server
-            await updateFileContent(fileId, content);
-
-            // Also save locally for offline/sync
-            if (syncHook.isInitialized) {
-                await syncHook.saveLocal({
-                    id: fileId,
-                    content,
-                    title,
-                });
-            }
-
-            setLastSaved(new Date());
-            setSaving(false);
-        }, 1000),
-        [fileId, title, syncHook.isInitialized]
-    );
-
-    useEffect(() => {
-        if (editor) {
-            editor.on("update", ({ editor }) => {
-                saveContent(editor.getHTML());
-            });
-        }
-    }, [editor, saveContent]);
-
-    // Keyboard shortcut for search (Ctrl+F / Cmd+F)
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-                e.preventDefault();
-                setIsSearchOpen(true);
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown);
-        };
     }, []);
 
     // Track text selection for dynamic stats
     useEffect(() => {
         if (editor) {
-            // Listen to selection updates
             const handleSelectionUpdate = () => {
                 const { from, to } = editor.state.selection;
-                const text = editor.state.doc.textBetween(from, to, ' ');
+                const text = editor.state.doc.textBetween(from, to, " ");
                 setSelectedText(text);
             };
 
-            editor.on('selectionUpdate', handleSelectionUpdate);
+            editor.on("selectionUpdate", handleSelectionUpdate);
 
             return () => {
-                editor.off('selectionUpdate', handleSelectionUpdate);
+                editor.off("selectionUpdate", handleSelectionUpdate);
             };
         }
     }, [editor]);
 
-    // AI Operations
-    async function handleAIOperation(operation: "correct" | "improve" | "summarize" | "translate" | "toPrompt") {
-        if (!editor) return;
-
-        setIsLoading(true);
-        setError(null);
-        editor.setEditable(false);
-
-        // Save selection range and original content for proper undo
-        const { from, to } = editor.state.selection;
-        const hasSelection = from !== to;
-        const selectionStart = hasSelection ? from : 1; // Start of doc content (after doc node)
-        const selectionEnd = hasSelection ? to : editor.state.doc.content.size - 1;
-
-        try {
-            // Get selected text or full content
-            const text = hasSelection
-                ? editor.state.doc.textBetween(from, to)
-                : editor.getText();
-
-            if (!text.trim()) {
-                setError("Please enter some text first");
-                setIsLoading(false);
-                editor.setEditable(true);
-                return;
+    // Keyboard shortcuts (Ctrl+F for search, Escape for stopping AI generation)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+                e.preventDefault();
+                setIsSearchOpen(true);
+            } else if (e.key === "Escape" && isAIActive) {
+                stopAIOperation();
             }
+        };
 
-            // Delete the selected range WITHOUT adding to history (visual prep for streaming)
-            editor.chain()
-                .setMeta('addToHistory', false)
-                .setTextSelection({ from: selectionStart, to: selectionEnd })
-                .deleteSelection()
-                .run();
+        window.addEventListener("keydown", handleKeyDown);
 
-            const response = await fetch("/api/ai/stream", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text, operation }),
-            });
-
-            if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(errText || response.statusText);
-            }
-
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error("No response stream");
-
-            const decoder = new TextDecoder();
-            let collectedText = "";
-            let streamInsertPos = selectionStart;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value, { stream: true });
-                collectedText += chunk;
-
-                // Insert chunk at stream position without adding to history
-                editor.chain()
-                    .setMeta('addToHistory', false)
-                    .insertContent(chunk)
-                    .run();
-            }
-
-            // Final: Replace streamed text with formatted HTML as SINGLE undoable action
-            if (collectedText.trim()) {
-                const html = convertTextToHTML(collectedText);
-                const streamEndPos = editor.state.selection.from;
-
-                // Step 1: Undo ALL non-history changes to restore original state
-                // We do this by setting content back to what it was (WITH history)
-                // Then apply the final change
-
-                // First, select and delete the streamed content (without history)
-                editor.chain()
-                    .setMeta('addToHistory', false)
-                    .setTextSelection({ from: selectionStart, to: streamEndPos })
-                    .deleteSelection()
-                    .run();
-
-                // Restore original text at original position (without history)
-                editor.chain()
-                    .setMeta('addToHistory', false)
-                    .setTextSelection({ from: selectionStart, to: selectionStart })
-                    .insertContent(text)
-                    .run();
-
-                // Now apply the FINAL change WITH history:
-                // Select original text range and replace with AI result
-                const restoredEndPos = selectionStart + text.length;
-                editor.chain()
-                    .setTextSelection({ from: selectionStart, to: restoredEndPos })
-                    .insertContent(html)
-                    .run();
-            }
-
-        } catch (err: any) {
-            console.error(err);
-            setError(err.message || "An error occurred");
-            // Undo will restore to the last history state (before AI operation)
-            editor.commands.undo();
-        } finally {
-            setIsLoading(false);
-            editor.setEditable(true);
-        }
-    }
-
-    // Title update
-    async function handleTitleChange(newTitle: string) {
-        setTitle(newTitle);
-        await renameFile(fileId, newTitle);
-    }
-
-    // Delete file
-    async function handleDelete() {
-        if (confirm("Are you sure you want to delete this document?")) {
-            await deleteFile(fileId);
-            router.push("/workspace");
-        }
-    }
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [isAIActive, stopAIOperation]);
 
     // Copy to clipboard
-    function handleCopy() {
+    const handleCopy = useCallback(() => {
         if (editor) {
             navigator.clipboard.writeText(editor.getText());
         }
-    }
+    }, [editor]);
 
     // Toggle search and replace dialog
-    function handleSearch() {
-        setIsSearchOpen(!isSearchOpen);
-    }
+    const handleSearch = useCallback(() => {
+        setIsSearchOpen((prev) => !prev);
+    }, []);
 
-    // Export document in multiple formats (MD, TXT only)
-    async function handleExport(format: 'md' | 'txt' = 'txt') {
-        if (!editor) return;
+    // Export document in multiple formats (MD, TXT)
+    const handleExport = useCallback(
+        async (format: "md" | "txt" = "txt") => {
+            if (!editor) return;
 
-        try {
-            // Dynamic import to avoid SSR issues
-            const { exportContent, downloadBlob } = await import('@/lib/exporters');
+            try {
+                const { exportContent, downloadBlob } = await import("@/lib/exporters");
+                const content = editor.getHTML();
+                const result = await exportContent(content, title || "document", format);
 
-            // Get content from editor
-            const content = editor.getHTML();
-
-            // Export content in the specified format
-            const result = await exportContent(content, title || 'document', format);
-
-            if (result.success && result.blob && result.filename) {
-                // Trigger download
-                downloadBlob(result.blob, result.filename);
-            } else {
-                setError(result.error || 'Export failed');
+                if (result.success && result.blob && result.filename) {
+                    downloadBlob(result.blob, result.filename);
+                } else {
+                    setError(result.error || "Export failed");
+                }
+            } catch (err) {
+                setError("Export failed: " + (err instanceof Error ? err.message : "Unknown error"));
+                console.error("Export error:", err);
             }
-        } catch (err) {
-            setError('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
-            console.error('Export error:', err);
-        }
-    }
+        },
+        [editor, title, setError]
+    );
 
-    // Calculate stats based on selection or full text
-    const textToAnalyze = selectedText || (editor?.getText() || "");
+    // Text stats computation
+    const textToAnalyze = selectedText || editor?.getText() || "";
     const isSelection = selectedText.length > 0;
     const wordCount = countWords(textToAnalyze);
     const charCount = countCharacters(textToAnalyze);
@@ -372,19 +219,20 @@ export default function EditorPage() {
         <div className="h-full flex flex-col bg-zinc-950">
             {/* AI Toolbar - Fixed position */}
             <AIToolbar
-                onCorrect={() => handleAIOperation("correct")}
-                onImprove={() => handleAIOperation("improve")}
-                onSummarize={() => handleAIOperation("summarize")}
-                onTranslate={() => handleAIOperation("translate")}
-                onToPrompt={() => handleAIOperation("toPrompt")}
+                onCorrect={() => startAIOperation("correct")}
+                onImprove={() => startAIOperation("improve")}
+                onSummarize={() => startAIOperation("summarize")}
+                onTranslate={() => startAIOperation("translate")}
+                onToPrompt={() => startAIOperation("toPrompt")}
                 onUndo={() => editor?.commands.undo()}
                 onRedo={() => editor?.commands.redo()}
                 onExport={handleExport}
                 onCopy={handleCopy}
                 onSearch={handleSearch}
+                onStop={stopAIOperation}
                 canUndo={editor?.can().undo() || false}
                 canRedo={editor?.can().redo() || false}
-                isLoading={isLoading}
+                isLoading={isAIActive}
                 showToPrompt={showToPrompt}
             />
 
@@ -394,6 +242,56 @@ export default function EditorPage() {
                 isOpen={isSearchOpen}
                 onClose={() => setIsSearchOpen(false)}
             />
+
+            {/* AI Stream Ephemeral Status & Alerts */}
+            <AIStreamStatus
+                status={aiStatus}
+                isConflict={isAIConflict}
+                errorMessage={aiError}
+                onRetry={resetAI}
+                onCancel={stopAIOperation}
+            />
+
+            {/* AI Ephemeral Live Preview Panel (Active when streaming or text available) */}
+            {previewText && (
+                <AIStreamPreview
+                    text={previewText}
+                    operation="معالجة ذكية"
+                    isStreaming={isStreaming}
+                    onStop={stopAIOperation}
+                    onApply={commitAIPreview}
+                    onRetry={retryAIPreview}
+                    onReject={rejectAIPreview}
+                />
+            )}
+
+            {/* Persistent Conflict Alert Banner */}
+            {activeConflict && !isConflictDialogOpen && (
+                <div className="mx-6 mt-4 p-3.5 rounded-lg bg-amber-950/40 border border-amber-800/60 flex items-center justify-between text-xs text-amber-300 flex-shrink-0 animate-in fade-in">
+                    <div className="flex items-center gap-2.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        <span>
+                            <strong>تنبيه تعارض:</strong> تم اكتشاف تعديلات جديدة على الخادم. الحفظ التلقائي متوقف لحماية بياناتك المحلية حتى تسوية التعارض.
+                        </span>
+                    </div>
+                    <button
+                        onClick={() => setIsConflictDialogOpen(true)}
+                        className="px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-medium transition-colors shadow-sm"
+                    >
+                        مراجعة وحل التعارض
+                    </button>
+                </div>
+            )}
+
+            {/* Conflict Resolution Modal Dialog */}
+            {activeConflict && isConflictDialogOpen && (
+                <ConflictDialog
+                    conflict={activeConflict}
+                    onResolve={handleResolveConflict}
+                    onClose={() => setIsConflictDialogOpen(false)}
+                    isResolving={isResolvingConflict}
+                />
+            )}
 
             {/* Error Message */}
             {error && (
@@ -405,14 +303,6 @@ export default function EditorPage() {
                     >
                         Dismiss
                     </button>
-                </div>
-            )}
-
-            {/* Loading Overlay */}
-            {isLoading && (
-                <div className="mx-6 mt-4 p-3 rounded-md bg-indigo-900/20 border border-indigo-500/30 text-indigo-300 text-sm flex items-center gap-2 flex-shrink-0">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Processing with AI...
                 </div>
             )}
 
@@ -428,15 +318,15 @@ export default function EditorPage() {
                     {title || "Untitled"}
                 </span>
 
-                {/* Center: Save Status Indicator */}
+                {/* Center: Save Status & Sync Indicator */}
                 <div className="flex items-center gap-2">
                     <span>Save</span>
-                    {saving ? (
+                    {isSaving || isCommitting ? (
                         <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
                     ) : lastSaved ? (
-                        <div className="w-2 h-2 rounded-full bg-green-500/70 blur-[1px]" />
+                        <div className="w-2 h-2 rounded-full bg-green-500/70 blur-[1px]" title="Saved" />
                     ) : (
-                        <div className="w-2 h-2 rounded-full bg-red-500/70 blur-[1px]" />
+                        <div className="w-2 h-2 rounded-full bg-red-500/70 blur-[1px]" title="Unsaved" />
                     )}
 
                     {/* Sync Status Indicator */}
@@ -457,11 +347,11 @@ export default function EditorPage() {
                     {isSelection && (
                         <span className="text-indigo-400 text-xs">Selected:</span>
                     )}
-                    <span title={`${wordCount.toLocaleString()} word${wordCount !== 1 ? 's' : ''}`}>
+                    <span title={`${wordCount.toLocaleString()} word${wordCount !== 1 ? "s" : ""}`}>
                         {wordCount.toLocaleString()} words
                     </span>
                     <span className="text-zinc-700">|</span>
-                    <span title={`${charCount.toLocaleString()} character${charCount !== 1 ? 's' : ''}`}>
+                    <span title={`${charCount.toLocaleString()} character${charCount !== 1 ? "s" : ""}`}>
                         {charCount.toLocaleString()} chars
                     </span>
                     <span className="uppercase">{textDir}</span>

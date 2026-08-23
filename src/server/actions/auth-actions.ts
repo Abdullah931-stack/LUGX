@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
 import { createClient, getUser } from "@/lib/supabase/server";
 import { eq } from "drizzle-orm";
+import { authRateLimiter } from "@/lib/rate-limit";
 
 /**
  * Sign in with Google OAuth
@@ -35,6 +36,17 @@ export async function signInWithEmail(
     email: string,
     password: string
 ): Promise<{ error?: string }> {
+    // ENGINEERING UPGRADE (W4): auth endpoints are the primary target for
+    // brute-force credential stuffing; enforce the shared sliding-window
+    // limiter keyed by the normalized email so one account cannot be hammered
+    // past the window regardless of how many clients hit it.
+    const rateLimitResult = await authRateLimiter.limit(normalizeAuthKey(email));
+    if (!rateLimitResult.success) {
+        return {
+            error: "Too many login attempts. Please try again in a few minutes.",
+        };
+    }
+
     const supabase = await createClient();
 
     const { error } = await supabase.auth.signInWithPassword({
@@ -57,6 +69,16 @@ export async function signUpWithEmail(
     password: string,
     displayName?: string
 ): Promise<{ error?: string }> {
+    // ENGINEERING UPGRADE (W4): same brute-force protection on sign-up —
+    // an attacker can also enumerate emails through registration attempts,
+    // so the limiter key is the normalized email, not the session.
+    const rateLimitResult = await authRateLimiter.limit(normalizeAuthKey(email));
+    if (!rateLimitResult.success) {
+        return {
+            error: "Too many registration attempts. Please try again in a few minutes.",
+        };
+    }
+
     const supabase = await createClient();
 
     const { data, error } = await supabase.auth.signUp({
@@ -84,6 +106,15 @@ export async function signUpWithEmail(
     }
 
     redirect("/dashboard");
+}
+
+/**
+ * Normalize an email into a stable rate-limit key: lowercase and trimmed so
+ * trivial casing variations (User@Example.com / user@example.com ) cannot
+ * multiply the effective request budget.
+ */
+function normalizeAuthKey(email: string): string {
+    return email.trim().toLowerCase();
 }
 
 /**

@@ -13,7 +13,10 @@ import {
     RefreshCw,
     Check,
     AlertCircle,
-    Loader2
+    Loader2,
+    Clock,
+    AlertTriangle,
+    PauseCircle,
 } from "lucide-react";
 import { SyncStatus, SyncResult } from "@/lib/sync/sync-manager";
 import { ConnectionState } from "@/lib/sync/connection-detector";
@@ -49,11 +52,32 @@ const STATUS_CONFIG: Record<SyncStatus, {
         color: "text-green-400",
         label: "متزامن",
     },
+    loading: {
+        icon: Loader2,
+        color: "text-blue-400",
+        label: "جارٍ التحميل",
+        animate: true,
+    },
+    queued: {
+        icon: Clock,
+        color: "text-amber-300",
+        label: "في قائمة الانتظار",
+    },
     syncing: {
         icon: Loader2,
         color: "text-blue-400",
         label: "جارٍ المزامنة",
         animate: true,
+    },
+    conflict: {
+        icon: AlertTriangle,
+        color: "text-orange-400",
+        label: "تعارض في التعديلات",
+    },
+    failed: {
+        icon: AlertCircle,
+        color: "text-red-400",
+        label: "فشلت المزامنة",
     },
     error: {
         icon: AlertCircle,
@@ -65,7 +89,13 @@ const STATUS_CONFIG: Record<SyncStatus, {
         color: "text-amber-400",
         label: "غير متصل",
     },
+    stopped: {
+        icon: PauseCircle,
+        color: "text-zinc-500",
+        label: "المزامنة متوقفة",
+    },
 };
+
 
 export function SyncIndicator({
     status = 'idle',

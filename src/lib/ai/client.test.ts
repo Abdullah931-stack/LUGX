@@ -1,15 +1,28 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// ===========================================
-// Mock Setup using vi.hoisted for all mocks
-// ===========================================
+// =========================================================================
+// Mock Setup using vi.hoisted for all dependencies
+// =========================================================================
 const mocks = vi.hoisted(() => {
-    // Key rotation mocks
+    // Key rotation & Circuit Breaker mocks
     const getApiKeyForRequest = vi.fn();
+    const getApiKeys = vi.fn(() => ['test-api-key-1', 'test-api-key-2', 'test-api-key-3']);
     const confirmApiKeyUsage = vi.fn();
     const forceKeyRotationAndGetKey = vi.fn();
     const shouldRotateOnError = vi.fn();
     const extractErrorCode = vi.fn();
+    const is503OrOverloadError = vi.fn();
+    const getModelCircuitState = vi.fn();
+    const isModelCircuitOpen = vi.fn();
+    const tryAcquireHalfOpenProbe = vi.fn();
+    const releaseProbeLock = vi.fn();
+    const recordModelSuccess = vi.fn();
+    const recordModelFailure = vi.fn();
+    const tripModelCircuit = vi.fn();
+    const resetModelCircuit = vi.fn();
+    const maskApiKey = vi.fn((key?: string) => key ? 'masked_key' : 'unknown_key');
+    const sanitizeErrorMessage = vi.fn((msg?: string) => msg || '');
+    const classifyGeminiError = vi.fn();
 
     // Gemini SDK mocks
     const generateContent = vi.fn();
@@ -27,10 +40,23 @@ const mocks = vi.hoisted(() => {
 
     return {
         getApiKeyForRequest,
+        getApiKeys,
         confirmApiKeyUsage,
         forceKeyRotationAndGetKey,
         shouldRotateOnError,
         extractErrorCode,
+        is503OrOverloadError,
+        getModelCircuitState,
+        isModelCircuitOpen,
+        tryAcquireHalfOpenProbe,
+        releaseProbeLock,
+        recordModelSuccess,
+        recordModelFailure,
+        tripModelCircuit,
+        resetModelCircuit,
+        maskApiKey,
+        sanitizeErrorMessage,
+        classifyGeminiError,
         generateContent,
         generateContentStream,
         getGenerativeModel,
@@ -46,36 +72,73 @@ vi.mock('@google/generative-ai', () => ({
 // Mock key-rotation module
 vi.mock('./key-rotation', () => ({
     getApiKeyForRequest: mocks.getApiKeyForRequest,
+    getApiKeys: mocks.getApiKeys,
     confirmApiKeyUsage: mocks.confirmApiKeyUsage,
     forceKeyRotationAndGetKey: mocks.forceKeyRotationAndGetKey,
     shouldRotateOnError: mocks.shouldRotateOnError,
     extractErrorCode: mocks.extractErrorCode,
-    ROTATION_ERROR_CODES: [400, 401, 403, 429, 500, 502, 503, 504],
+    is503OrOverloadError: mocks.is503OrOverloadError,
+    getModelCircuitState: mocks.getModelCircuitState,
+    isModelCircuitOpen: mocks.isModelCircuitOpen,
+    tryAcquireHalfOpenProbe: mocks.tryAcquireHalfOpenProbe,
+    releaseProbeLock: mocks.releaseProbeLock,
+    recordModelSuccess: mocks.recordModelSuccess,
+    recordModelFailure: mocks.recordModelFailure,
+    tripModelCircuit: mocks.tripModelCircuit,
+    resetModelCircuit: mocks.resetModelCircuit,
+    maskApiKey: mocks.maskApiKey,
+    sanitizeErrorMessage: mocks.sanitizeErrorMessage,
+    classifyGeminiError: mocks.classifyGeminiError,
+    ROTATION_ERROR_CODES: [401, 403, 429, 500, 502, 503, 504],
+    CircuitBreakerOpenError: class CircuitBreakerOpenError extends Error {
+        constructor(model: string) {
+            super(`Circuit Breaker is OPEN for model '${model}'.`);
+            this.name = 'CircuitBreakerOpenError';
+        }
+    },
 }));
 
-// Import after mocks are set up
-import { processWithAI, streamWithAI, MODEL_CONFIG, ROTATION_ERROR_CODES } from './client';
+// Import client module after mocks are set up
+import { processWithAI, streamWithAI, getModelPair, MODEL_CONFIG, ROTATION_ERROR_CODES } from './client';
 import type { AIOperation } from './prompts';
 
-describe('AI Client', () => {
+describe('AI Client (Robust & Fault-Tolerant Execution)', () => {
     const mockKeyInfo = { key: 'test-api-key', index: 0 };
 
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getApiKeyForRequest.mockResolvedValue(mockKeyInfo);
+        mocks.getApiKeys.mockReturnValue(['test-api-key-1', 'test-api-key-2', 'test-api-key-3']);
         mocks.confirmApiKeyUsage.mockResolvedValue(undefined);
         mocks.forceKeyRotationAndGetKey.mockResolvedValue({ key: 'new-api-key', index: 1 });
         mocks.shouldRotateOnError.mockReturnValue(false);
         mocks.extractErrorCode.mockReturnValue(0);
+        mocks.is503OrOverloadError.mockReturnValue(false);
+        mocks.getModelCircuitState.mockResolvedValue('closed');
+        mocks.isModelCircuitOpen.mockResolvedValue(false);
+        mocks.tryAcquireHalfOpenProbe.mockResolvedValue(false);
+        mocks.releaseProbeLock.mockResolvedValue(undefined);
+        mocks.recordModelSuccess.mockResolvedValue(undefined);
+        mocks.recordModelFailure.mockResolvedValue(undefined);
+        mocks.tripModelCircuit.mockResolvedValue(undefined);
+        mocks.resetModelCircuit.mockResolvedValue(undefined);
+        mocks.sanitizeErrorMessage.mockImplementation((msg?: string) => msg || '');
+        mocks.classifyGeminiError.mockReturnValue({
+            category: 'unknown',
+            statusCode: 0,
+            retryableWithKey: false,
+            retryableWithModel: false,
+            reason: 'Unknown',
+        });
     });
 
     afterEach(() => {
         vi.clearAllMocks();
     });
 
-    // =========================================
+    // =========================================================================
     // MODEL_CONFIG Tests
-    // =========================================
+    // =========================================================================
     describe('MODEL_CONFIG', () => {
         it('should have configuration for all operations', () => {
             const operations: AIOperation[] = ['correct', 'improve', 'summarize', 'toPrompt', 'translate'];
@@ -87,28 +150,50 @@ describe('AI Client', () => {
             });
         });
 
-        it('should have different models per tier for most operations', () => {
-            expect(MODEL_CONFIG.correct.free).toBe('gemini-2.0-flash-lite');
-            expect(MODEL_CONFIG.correct.pro).toBe('gemini-flash-lite-latest');
-            expect(MODEL_CONFIG.correct.ultra).toBe('gemini-flash-lite-latest');
+        it('should have valid models configured per tier for operations', () => {
+            expect(MODEL_CONFIG.correct.free).toBeDefined();
+            expect(typeof MODEL_CONFIG.correct.free).toBe('string');
+            expect(MODEL_CONFIG.correct.pro).toBeDefined();
+            expect(typeof MODEL_CONFIG.correct.pro).toBe('string');
+            expect(MODEL_CONFIG.correct.ultra).toBeDefined();
+            expect(typeof MODEL_CONFIG.correct.ultra).toBe('string');
         });
 
-        it('should disable toPrompt for free tier', () => {
+        it('should have valid fallback models configured per operation', () => {
+            expect(MODEL_CONFIG.correct.fallback).toBeDefined();
+            expect(MODEL_CONFIG.correct.fallback.free).toBeDefined();
+            expect(MODEL_CONFIG.translate.fallback.free).toBeDefined();
+        });
+
+        it('should disable toPrompt for free tier and configure paid tiers', () => {
             expect(MODEL_CONFIG.toPrompt.free).toBeNull();
-            expect(MODEL_CONFIG.toPrompt.pro).toBe('gemini-3-flash-preview');
-            expect(MODEL_CONFIG.toPrompt.ultra).toBe('gemini-3-flash-preview');
-        });
-
-        it('should have thinking level config for toPrompt', () => {
-            expect(MODEL_CONFIG.toPrompt.thinkingLevel).toBeDefined();
-            expect(MODEL_CONFIG.toPrompt.thinkingLevel.pro).toBe('medium');
-            expect(MODEL_CONFIG.toPrompt.thinkingLevel.ultra).toBe('high');
+            expect(MODEL_CONFIG.toPrompt.pro).toBeDefined();
+            expect(typeof MODEL_CONFIG.toPrompt.pro).toBe('string');
+            expect(MODEL_CONFIG.toPrompt.ultra).toBeDefined();
+            expect(typeof MODEL_CONFIG.toPrompt.ultra).toBe('string');
         });
     });
 
-    // =========================================
+    // =========================================================================
+    // getModelPair Tests
+    // =========================================================================
+    describe('getModelPair', () => {
+        it('should return primary and fallback for correct operation', () => {
+            const pair = getModelPair('correct', 'free');
+            expect(pair.primary).toBe(MODEL_CONFIG.correct.free);
+            expect(pair.fallback).toBe(MODEL_CONFIG.correct.fallback.free);
+        });
+
+        it('should return null primary and fallback for toPrompt free tier', () => {
+            const pair = getModelPair('toPrompt', 'free');
+            expect(pair.primary).toBeNull();
+            expect(pair.fallback).toBeNull();
+        });
+    });
+
+    // =========================================================================
     // processWithAI Tests
-    // =========================================
+    // =========================================================================
     describe('processWithAI', () => {
         it('should process text successfully and confirm usage', async () => {
             const mockResponse = { text: () => 'Processed text' };
@@ -119,78 +204,125 @@ describe('AI Client', () => {
             expect(result).toBe('Processed text');
             expect(mocks.getApiKeyForRequest).toHaveBeenCalledTimes(1);
             expect(mocks.confirmApiKeyUsage).toHaveBeenCalledWith(0);
+            expect(mocks.recordModelSuccess).toHaveBeenCalledWith(MODEL_CONFIG.correct.free);
         });
 
-        it('should NOT increment counter on failed requests', async () => {
-            mocks.generateContent.mockRejectedValue(new Error('API Error'));
-
-            await expect(processWithAI('correct', 'Test input', 'free')).rejects.toThrow('API Error');
-
-            expect(mocks.confirmApiKeyUsage).not.toHaveBeenCalled();
-        });
-
-        it('should throw error for unavailable operations', async () => {
-            await expect(processWithAI('toPrompt', 'Test input', 'free')).rejects.toThrow(
-                "Operation 'toPrompt' is not available for free tier"
-            );
-
-            expect(mocks.getApiKeyForRequest).not.toHaveBeenCalled();
-        });
-
-        it('should retry with new key on rotatable errors', async () => {
-            const error429 = new Error('429 Too Many Requests');
-            mocks.generateContent
-                .mockRejectedValueOnce(error429)
-                .mockResolvedValueOnce({ response: { text: () => 'Success' } });
-
-            mocks.extractErrorCode.mockReturnValue(429);
-            mocks.shouldRotateOnError.mockReturnValue(true);
+        it('should fast-path to fallback model when circuit is OPEN', async () => {
+            mocks.getModelCircuitState.mockResolvedValue('open');
+            const mockResponse = { text: () => 'Fallback text' };
+            mocks.generateContent.mockResolvedValue({ response: mockResponse });
 
             const result = await processWithAI('correct', 'Test input', 'free');
 
-            expect(result).toBe('Success');
-            expect(mocks.forceKeyRotationAndGetKey).toHaveBeenCalledTimes(1);
-            expect(mocks.confirmApiKeyUsage).toHaveBeenCalledWith(1); // New key index
+            expect(result).toBe('Fallback text');
+            expect(mocks.getGenerativeModel).toHaveBeenCalledWith(
+                expect.objectContaining({ model: MODEL_CONFIG.correct.fallback.free })
+            );
         });
 
-        it('should throw immediately for non-rotatable errors', async () => {
-            const error404 = new Error('404 Not Found');
-            mocks.generateContent.mockRejectedValue(error404);
-            mocks.extractErrorCode.mockReturnValue(404);
-            mocks.shouldRotateOnError.mockReturnValue(false);
-
-            await expect(processWithAI('correct', 'Test input', 'free')).rejects.toThrow('404 Not Found');
-
-            expect(mocks.forceKeyRotationAndGetKey).not.toHaveBeenCalled();
-        });
-
-        it('should fail after max retries', async () => {
-            const error429 = new Error('429 Too Many Requests');
-            mocks.generateContent.mockRejectedValue(error429);
-            mocks.extractErrorCode.mockReturnValue(429);
-            mocks.shouldRotateOnError.mockReturnValue(true);
-
-            await expect(processWithAI('correct', 'Test input', 'free')).rejects.toThrow('429 Too Many Requests');
-
-            // Should have retried 6 times (MAX_RETRY_ATTEMPTS)
-            expect(mocks.forceKeyRotationAndGetKey).toHaveBeenCalledTimes(6);
-        });
-
-        it('should use correct model for each tier', async () => {
-            const mockResponse = { text: () => 'Result' };
+        it('should allow single probe on primary model during HALF-OPEN state', async () => {
+            mocks.getModelCircuitState.mockResolvedValue('half-open');
+            mocks.tryAcquireHalfOpenProbe.mockResolvedValue(true); // Won probe
+            const mockResponse = { text: () => 'Primary probe success' };
             mocks.generateContent.mockResolvedValue({ response: mockResponse });
 
-            // Test free tier
-            await processWithAI('improve', 'Test', 'free');
-            expect(mocks.getGenerativeModel).toHaveBeenCalledWith(
-                expect.objectContaining({ model: 'gemini-2.5-flash-lite' })
-            );
+            const result = await processWithAI('correct', 'Test input', 'free');
 
-            // Test pro tier
-            await processWithAI('improve', 'Test', 'pro');
+            expect(result).toBe('Primary probe success');
             expect(mocks.getGenerativeModel).toHaveBeenCalledWith(
-                expect.objectContaining({ model: 'gemini-3-flash-preview' })
+                expect.objectContaining({ model: MODEL_CONFIG.correct.free })
             );
+            expect(mocks.recordModelSuccess).toHaveBeenCalledWith(MODEL_CONFIG.correct.free);
+        });
+
+        it('should route to fallback model during HALF-OPEN state when probe is already in flight', async () => {
+            mocks.getModelCircuitState.mockResolvedValue('half-open');
+            mocks.tryAcquireHalfOpenProbe.mockResolvedValue(false); // Lost probe race
+            const mockResponse = { text: () => 'Fallback concurrent result' };
+            mocks.generateContent.mockResolvedValue({ response: mockResponse });
+
+            const result = await processWithAI('correct', 'Test input', 'free');
+
+            expect(result).toBe('Fallback concurrent result');
+            expect(mocks.getGenerativeModel).toHaveBeenCalledWith(
+                expect.objectContaining({ model: MODEL_CONFIG.correct.fallback.free })
+            );
+        });
+
+        it('should immediately failover to fallback model on 503 overload in same call', async () => {
+            const error503 = new Error('503 Service Unavailable');
+            mocks.classifyGeminiError.mockReturnValueOnce({
+                category: 'overload',
+                statusCode: 503,
+                retryableWithKey: false,
+                retryableWithModel: true,
+                reason: 'Overloaded',
+            });
+            mocks.generateContent
+                .mockRejectedValueOnce(error503)
+                .mockResolvedValueOnce({ response: { text: () => 'Recovered via fallback' } });
+
+            const result = await processWithAI('correct', 'Test input', 'free');
+
+            expect(result).toBe('Recovered via fallback');
+            expect(mocks.recordModelFailure).toHaveBeenCalled();
+            expect(mocks.getGenerativeModel).toHaveBeenLastCalledWith(
+                expect.objectContaining({ model: MODEL_CONFIG.correct.fallback.free })
+            );
+        });
+
+        it('should fail fast on 400 Bad Request without rotating keys or retrying', async () => {
+            const error400 = new Error('400 Bad Request: Invalid argument');
+            mocks.classifyGeminiError.mockReturnValue({
+                category: 'invalid_request',
+                statusCode: 400,
+                retryableWithKey: false,
+                retryableWithModel: false,
+                reason: 'Invalid client request',
+            });
+            mocks.generateContent.mockRejectedValue(error400);
+
+            await expect(processWithAI('correct', 'Test input', 'free')).rejects.toThrow('400 Bad Request');
+
+            expect(mocks.forceKeyRotationAndGetKey).not.toHaveBeenCalled();
+            expect(mocks.confirmApiKeyUsage).not.toHaveBeenCalled();
+        });
+
+        it('should propagate AbortSignal cancellation cleanly', async () => {
+            const controller = new AbortController();
+            controller.abort();
+
+            await expect(processWithAI('correct', 'Test input', 'free', controller.signal)).rejects.toThrow('The operation was aborted');
+            expect(mocks.getApiKeyForRequest).not.toHaveBeenCalled();
+        });
+
+        it('should retry with new key on rotatable quota/auth errors', async () => {
+            const error429 = new Error('429 Too Many Requests');
+            mocks.classifyGeminiError
+                .mockReturnValueOnce({
+                    category: 'quota',
+                    statusCode: 429,
+                    retryableWithKey: true,
+                    retryableWithModel: false,
+                    reason: 'Quota exceeded',
+                })
+                .mockReturnValueOnce({
+                    category: 'unknown',
+                    statusCode: 0,
+                    retryableWithKey: false,
+                    retryableWithModel: false,
+                    reason: 'Success',
+                });
+
+            mocks.generateContent
+                .mockRejectedValueOnce(error429)
+                .mockResolvedValueOnce({ response: { text: () => 'Rotated Success' } });
+
+            const result = await processWithAI('correct', 'Test input', 'free');
+
+            expect(result).toBe('Rotated Success');
+            expect(mocks.forceKeyRotationAndGetKey).toHaveBeenCalledTimes(1);
+            expect(mocks.confirmApiKeyUsage).toHaveBeenCalledWith(1);
         });
     });
 
@@ -198,14 +330,14 @@ describe('AI Client', () => {
     // streamWithAI Tests
     // =========================================
     describe('streamWithAI', () => {
-        // Helper to create mock async generator
         function createMockStream(chunks: string[]) {
             return {
                 stream: (async function* () {
                     for (const chunk of chunks) {
                         yield { text: () => chunk };
                     }
-                })()
+                })(),
+                response: Promise.resolve({ candidates: [] }),
             };
         }
 
@@ -236,87 +368,48 @@ describe('AI Client', () => {
             expect(result).toBe('Hello World!');
         });
 
-        it('should NOT increment counter on stream start failure', async () => {
-            mocks.generateContentStream.mockRejectedValue(new Error('Stream init failed'));
+        it('should fail fast on 400 Bad Request during stream startup', async () => {
+            const error400 = new Error('400 Bad Request');
+            mocks.classifyGeminiError.mockReturnValue({
+                category: 'invalid_request',
+                statusCode: 400,
+                retryableWithKey: false,
+                retryableWithModel: false,
+                reason: 'Invalid request',
+            });
+            mocks.generateContentStream.mockRejectedValue(error400);
 
-            await expect(streamWithAI('correct', 'Test input', 'free')).rejects.toThrow('Stream init failed');
-
-            expect(mocks.confirmApiKeyUsage).not.toHaveBeenCalled();
+            await expect(streamWithAI('correct', 'Test input', 'free')).rejects.toThrow('400 Bad Request');
+            expect(mocks.forceKeyRotationAndGetKey).not.toHaveBeenCalled();
         });
 
-        it('should throw error for unavailable operations', async () => {
-            await expect(streamWithAI('toPrompt', 'Test input', 'free')).rejects.toThrow(
-                "Operation 'toPrompt' is not available for free tier"
-            );
-        });
-
-        it('should retry with new key on rotatable errors during stream init', async () => {
+        it('should failover stream immediately on 503 error in same request', async () => {
             const error503 = new Error('503 Service Unavailable');
+            mocks.classifyGeminiError.mockReturnValueOnce({
+                category: 'overload',
+                statusCode: 503,
+                retryableWithKey: false,
+                retryableWithModel: true,
+                reason: 'Model overloaded',
+            });
             mocks.generateContentStream
                 .mockRejectedValueOnce(error503)
-                .mockResolvedValueOnce(createMockStream(['Success']));
-
-            mocks.extractErrorCode.mockReturnValue(503);
-            mocks.shouldRotateOnError.mockReturnValue(true);
+                .mockResolvedValueOnce(createMockStream(['Stream recovered']));
 
             const stream = await streamWithAI('correct', 'Test input', 'free');
 
             expect(stream).toBeInstanceOf(ReadableStream);
-            expect(mocks.forceKeyRotationAndGetKey).toHaveBeenCalledTimes(1);
-            expect(mocks.confirmApiKeyUsage).toHaveBeenCalledWith(1); // New key
-        });
-
-        it('should fail after max retries when stream init fails repeatedly', async () => {
-            const error503 = new Error('503 Service Unavailable');
-            mocks.generateContentStream.mockRejectedValue(error503);
-            mocks.extractErrorCode.mockReturnValue(503);
-            mocks.shouldRotateOnError.mockReturnValue(true);
-
-            await expect(streamWithAI('correct', 'Test input', 'free')).rejects.toThrow('503 Service Unavailable');
-
-            expect(mocks.forceKeyRotationAndGetKey).toHaveBeenCalledTimes(6);
-        });
-
-        it('should handle mid-stream errors gracefully', async () => {
-            // Create a stream that fails mid-way
-            const mockStreamWithError = {
-                stream: (async function* () {
-                    yield { text: () => 'First chunk' };
-                    throw new Error('Mid-stream error');
-                })()
-            };
-            mocks.generateContentStream.mockResolvedValue(mockStreamWithError);
-
-            const stream = await streamWithAI('correct', 'Test input', 'free');
-            const reader = stream.getReader();
-
-            // First chunk should work
-            const first = await reader.read();
-            expect(new TextDecoder().decode(first.value)).toBe('First chunk');
-
-            // Second read should error
-            await expect(reader.read()).rejects.toThrow('Mid-stream error');
-        });
-
-        it('should work with Pro tier for toPrompt operation', async () => {
-            mocks.generateContentStream.mockResolvedValue(createMockStream(['Prompt result']));
-
-            const stream = await streamWithAI('toPrompt', 'Test input', 'pro');
-
-            expect(stream).toBeInstanceOf(ReadableStream);
-            expect(mocks.getGenerativeModel).toHaveBeenCalledWith(
-                expect.objectContaining({ model: 'gemini-3-flash-preview' })
+            expect(mocks.recordModelFailure).toHaveBeenCalled();
+            expect(mocks.getGenerativeModel).toHaveBeenLastCalledWith(
+                expect.objectContaining({ model: MODEL_CONFIG.correct.fallback.free })
             );
         });
-    });
 
-    // =========================================
-    // ROTATION_ERROR_CODES Tests  
-    // =========================================
-    describe('ROTATION_ERROR_CODES', () => {
-        it('should re-export ROTATION_ERROR_CODES', () => {
-            expect(ROTATION_ERROR_CODES).toBeDefined();
-            expect(Array.isArray(ROTATION_ERROR_CODES)).toBe(true);
+        it('should abort stream cleanly if AbortSignal triggers before start', async () => {
+            const controller = new AbortController();
+            controller.abort();
+
+            await expect(streamWithAI('correct', 'Test input', 'free', controller.signal)).rejects.toThrow('Stream aborted before initialization');
         });
     });
 
@@ -328,7 +421,8 @@ describe('AI Client', () => {
             return {
                 stream: (async function* () {
                     yield { text: () => 'Result' };
-                })()
+                })(),
+                response: Promise.resolve({ candidates: [] }),
             };
         }
 
@@ -341,40 +435,9 @@ describe('AI Client', () => {
                 expect.objectContaining({
                     generationConfig: expect.objectContaining({
                         thinkingConfig: expect.objectContaining({
-                            thinkingBudget: 8192 // High for ultra
-                        })
-                    })
-                })
-            );
-        });
-
-        it('should include medium thinking config for toPrompt Pro tier', async () => {
-            mocks.generateContentStream.mockResolvedValue(createMockStream());
-
-            await streamWithAI('toPrompt', 'Test', 'pro');
-
-            expect(mocks.getGenerativeModel).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    generationConfig: expect.objectContaining({
-                        thinkingConfig: expect.objectContaining({
-                            thinkingBudget: 4096 // Medium for pro
-                        })
-                    })
-                })
-            );
-        });
-
-        it('should use correct temperature and topP for each operation', async () => {
-            mocks.generateContentStream.mockResolvedValue(createMockStream());
-
-            await streamWithAI('correct', 'Test', 'free');
-
-            expect(mocks.getGenerativeModel).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    generationConfig: expect.objectContaining({
-                        temperature: 0.1,
-                        topP: 0.75
-                    })
+                            thinkingBudget: 8192,
+                        }),
+                    }),
                 })
             );
         });

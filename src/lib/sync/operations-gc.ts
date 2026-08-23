@@ -5,7 +5,7 @@
  * cleaning up old synced operations and compacting operation logs.
  */
 
-import { indexedDBManager } from './indexeddb';
+import { indexedDBManager, IndexedDBManager } from './indexeddb';
 import { IDB_CONFIG, IDBOperation } from './idb-types';
 
 /**
@@ -51,19 +51,33 @@ const DEFAULT_CONFIG: GCConfig = {
  */
 export class OperationsGarbageCollector {
     private config: GCConfig;
+    private idb: IndexedDBManager;
     private lastGCTime = 0;
     private isRunning = false;
+    private customClock?: () => number;
 
-    constructor(config: Partial<GCConfig> = {}) {
+    constructor(idb?: IndexedDBManager, config: Partial<GCConfig> = {}) {
+        this.idb = idb || indexedDBManager;
         this.config = { ...DEFAULT_CONFIG, ...config };
+    }
+
+    /**
+     * Override clock function for deterministic time-travel testing
+     */
+    setClock(clockFn?: () => number): void {
+        this.customClock = clockFn;
+    }
+
+    private getCurrentTime(): number {
+        return this.customClock ? this.customClock() : Date.now();
     }
 
     /**
      * Run garbage collection
      * Returns early if minimum interval hasn't passed
      */
-    async run(force = false): Promise<GCResult> {
-        const now = Date.now();
+    async run(force = false, customNow?: number): Promise<GCResult> {
+        const now = customNow !== undefined ? customNow : this.getCurrentTime();
 
         // Check minimum interval
         if (!force && now - this.lastGCTime < this.config.minGCIntervalMs) {
@@ -90,7 +104,7 @@ export class OperationsGarbageCollector {
 
         try {
             // Check if we need aggressive GC
-            const storageInfo = await indexedDBManager.getStorageEstimate();
+            const storageInfo = await this.idb.getStorageEstimate();
             const wasAggressive = storageInfo.percentage / 100 > this.config.aggressiveGCThreshold;
 
             // Adjust max age for aggressive GC (reduce to 1 day)
@@ -98,8 +112,8 @@ export class OperationsGarbageCollector {
                 ? Math.min(this.config.maxOperationAgeMs, 24 * 60 * 60 * 1000)
                 : this.config.maxOperationAgeMs;
 
-            // Delete old operations
-            const operationsDeleted = await indexedDBManager.deleteOldOperations(maxAge);
+            // Delete old operations using current/custom time
+            const operationsDeleted = await this.idb.deleteOldOperations(maxAge, now);
 
             // Compact files with too many operations
             const filesCompacted = await this.compactOperations();
@@ -127,16 +141,16 @@ export class OperationsGarbageCollector {
      * Compact operations for files with too many entries
      */
     private async compactOperations(): Promise<number> {
-        const allFiles = await indexedDBManager.getAllFiles();
+        const allFiles = await this.idb.getAllFiles();
         let compactedCount = 0;
 
         for (const file of allFiles) {
-            const operations = await indexedDBManager.getOperations(file.id);
+            const operations = await this.idb.getOperations(file.id);
 
             if (operations.length > this.config.maxOperationsPerFile) {
-                // Keep only the most recent operations
+                // Keep only the most recent operations and protect all critical states
                 const toKeep = this.selectOperationsToKeep(operations);
-                await indexedDBManager.replaceOperations(file.id, toKeep);
+                await this.idb.replaceOperations(file.id, toKeep);
                 compactedCount++;
 
                 console.log(`[GC] Compacted ${file.id}: ${operations.length} -> ${toKeep.length} operations`);
@@ -148,23 +162,50 @@ export class OperationsGarbageCollector {
 
     /**
      * Select which operations to keep after compaction
-     * Keeps recent and unsynced operations
+     * Keeps unsynced, syncing, conflict, rollback_failed, queued and recent synced operations
      */
     private selectOperationsToKeep(operations: IDBOperation[]): IDBOperation[] {
         // Sort by timestamp descending
         const sorted = [...operations].sort((a, b) => b.timestamp - a.timestamp);
 
-        // Always keep unsynced operations
-        const unsynced = sorted.filter(op => !op.synced);
+        // Always keep critical / unresolved operations:
+        // - unsynced operations
+        // - syncing (in progress)
+        // - queued (pending)
+        // - conflict (unresolved)
+        // - rollback_failed (forensic retention)
+        const criticalOperations = sorted.filter(op => {
+            if (!op.synced) return true;
+            if (
+                op.status === 'syncing' ||
+                op.status === 'conflict' ||
+                op.status === 'rollback_failed' ||
+                op.status === 'queued'
+            ) {
+                return true;
+            }
+            return false;
+        });
 
         // Keep recent synced operations up to half the max
-        const syncedLimit = Math.floor(this.config.maxOperationsPerFile / 2);
+        const syncedLimit = Math.max(1, Math.floor(this.config.maxOperationsPerFile / 2));
         const recentSynced = sorted
-            .filter(op => op.synced)
+            .filter(op => op.synced && op.status === 'synced')
             .slice(0, syncedLimit);
 
-        return [...unsynced, ...recentSynced];
+        // Deduplicate operations by ID
+        const keptMap = new Map<string, IDBOperation>();
+        for (const op of criticalOperations) {
+            keptMap.set(op.id, op);
+        }
+        for (const op of recentSynced) {
+            keptMap.set(op.id, op);
+        }
+
+        return Array.from(keptMap.values()).sort((a, b) => a.timestamp - b.timestamp);
     }
+
+    private activeTimers = new Set<ReturnType<typeof setInterval>>();
 
     /**
      * Schedule periodic garbage collection
@@ -177,7 +218,23 @@ export class OperationsGarbageCollector {
             });
         }, intervalMs);
 
-        return () => clearInterval(timer);
+        this.activeTimers.add(timer);
+
+        return () => {
+            clearInterval(timer);
+            this.activeTimers.delete(timer);
+        };
+    }
+
+    /**
+     * Stop all active scheduled GC timers and cleanup
+     */
+    cleanup(): void {
+        for (const timer of this.activeTimers) {
+            clearInterval(timer);
+        }
+        this.activeTimers.clear();
+        this.isRunning = false;
     }
 
     /**
@@ -203,5 +260,13 @@ export class OperationsGarbageCollector {
     }
 }
 
-// Export singleton instance
+/**
+ * Factory for creating scoped OperationsGarbageCollector instances
+ */
+export function createOperationsGC(idb?: IndexedDBManager, config?: Partial<GCConfig>): OperationsGarbageCollector {
+    return new OperationsGarbageCollector(idb, config);
+}
+
+// Export singleton instance for default usage
 export const operationsGC = new OperationsGarbageCollector();
+

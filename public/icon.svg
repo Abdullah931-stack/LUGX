@@ -1,0 +1,34 @@
+<svg id="lugx-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" class="w-full h-full drop-shadow-2xl">
+  <defs>
+    <!-- Mask defined in unrotated World Space (0-1000) -->
+    <mask id="symbol-mask">
+      <!-- White fill for the mask layer -->
+      <rect width="1000" height="1000" fill="#ffffff"/>
+      <!-- Precision LUGX Cutout Path matching original image geometry:
+           Top stem angled parallel to outer diamond (300,230 -> 370,160),
+           Vertical inner stem (370,160 -> 370,450),
+           Upper-left body slant (370,450 -> 500,320),
+           Upper-right body slant (500,320 -> 700,520),
+           Lower-right body slant (700,520 -> 500,720),
+           Inner vertical notch (500,720 -> 500,640),
+           Base horizontal (500,640 -> 300,640),
+           Outer vertical stem (300,640 -> 300,230). -->
+      <path id="svg-mask-path" d="M 300,230 L 370,160 L 370,450 L 500,320 L 700,520 L 500,720 L 500,640 L 300,640 Z" fill="#000000"/>
+    </mask>
+  </defs>
+
+  <!-- Background Box (Transparent) -->
+  <rect id="svg-bg" width="1000" height="1000" fill="none"/>
+
+  <!-- Outer Group holding mask in world space to avoid tilt bug -->
+  <g id="svg-outer-group" mask="url(#symbol-mask)">
+    <!-- Outer White Diamond (Rotated 45° around 500,500) -->
+    <rect id="svg-outer-diamond" x="185" y="185" width="630" height="630" rx="100" ry="100" transform="rotate(45 500 500)" fill="#ffffff"/>
+  </g>
+
+  <!-- Solid Symbol Layer (Visible when fill is not 'none') -->
+  <path id="svg-icon-symbol" d="M 300,230 L 370,160 L 370,450 L 500,320 L 700,520 L 500,720 L 500,640 L 300,640 Z" fill="none"/>
+
+  <!-- Center Electric Blue Diamond (Centered at 500, 520) -->
+  <rect id="svg-center-square" x="435" y="455" width="130" height="130" transform="rotate(45 500 520)" fill="#2b14f8"/>
+</svg>
