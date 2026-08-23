@@ -69,6 +69,9 @@ export default function EditorPage() {
         startAIOperation,
         stopAIOperation,
         resetAI,
+        commitAIPreview,
+        rejectAIPreview,
+        retryAIPreview,
 
         isSaving,
         lastSaved,
@@ -256,7 +259,9 @@ export default function EditorPage() {
                     operation="معالجة ذكية"
                     isStreaming={isStreaming}
                     onStop={stopAIOperation}
-                    onRetry={resetAI}
+                    onApply={commitAIPreview}
+                    onRetry={retryAIPreview}
+                    onReject={rejectAIPreview}
                 />
             )}
 

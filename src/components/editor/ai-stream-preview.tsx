@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { detectTextDirection } from '@/lib/utils';
-import { Sparkles, StopCircle, Check, RefreshCw } from 'lucide-react';
+import { Sparkles, StopCircle, Check, RefreshCw, XCircle } from 'lucide-react';
 
 interface AIStreamPreviewProps {
     text: string;
@@ -11,6 +11,7 @@ interface AIStreamPreviewProps {
     onStop: () => void;
     onApply?: () => void;
     onRetry?: () => void;
+    onReject?: () => void;
 }
 
 /**
@@ -25,6 +26,7 @@ export const AIStreamPreview: React.FC<AIStreamPreviewProps> = ({
     onStop,
     onApply,
     onRetry,
+    onReject,
 }) => {
     if (!text && !isStreaming) return null;
 
@@ -54,6 +56,15 @@ export const AIStreamPreview: React.FC<AIStreamPreviewProps> = ({
                         </button>
                     ) : (
                         <>
+                            {onReject && (
+                                <button
+                                    onClick={onReject}
+                                    className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 text-red-300 text-xs transition-colors"
+                                >
+                                    <XCircle className="w-3.5 h-3.5" />
+                                    <span>رفض</span>
+                                </button>
+                            )}
                             {onRetry && (
                                 <button
                                     onClick={onRetry}

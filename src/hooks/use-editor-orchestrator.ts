@@ -27,6 +27,7 @@ import { broadcastCrossTabEvent, subscribeCrossTabSync } from "@/lib/sync/cross-
 import { classifyRemoteUpdate } from "@/lib/sync/reconciliation";
 import { AIStreamStatus } from "@/lib/ai/stream-session";
 import { streamingGhostPluginKey } from "@/lib/extensions/streaming-ghost-extension";
+import { EDITOR_AUTOSAVE_DEBOUNCE_MS } from "@/config/editor.config";
 
 export type WriteStateType =
     | "idle"
@@ -61,6 +62,12 @@ export interface UseEditorOrchestratorReturn {
     startAIOperation: (operation: AIOperationType) => Promise<void>;
     stopAIOperation: () => void;
     resetAI: () => void;
+    /** Accept the completed AI preview: server-first commit + atomic local replace. */
+    commitAIPreview: () => Promise<void>;
+    /** Reject the completed AI preview: discard output, settle quota as consumed. */
+    rejectAIPreview: () => void;
+    /** Re-run the last AI operation with identical inputs after settling the current preview. */
+    retryAIPreview: () => Promise<void>;
 
     // 3. Dirty & Save State
     isDirty: boolean;
@@ -246,6 +253,7 @@ export function useEditorOrchestrator({
      * AutoSave Suspension Invariants Gate (Rule: Phase 9 Step 2)
      * AutoSave MUST NOT run during:
      * - streaming / reserving
+     * - preview_ready (completed AI output awaiting an explicit user decision)
      * - committing
      * - conflict (active unresolved conflict)
      * - stopped (sync stopped)
@@ -254,7 +262,14 @@ export function useEditorOrchestrator({
     const canAutoSave = useCallback((): boolean => {
         if (isProgrammaticUpdateRef.current) return false;
         if (aiStream.isLoading || aiStream.isStreaming || aiStream.isCommitting) return false;
-        if (aiStream.status === "reserved" || aiStream.status === "streaming" || aiStream.status === "committing") return false;
+        if (
+            aiStream.status === "reserved" ||
+            aiStream.status === "streaming" ||
+            aiStream.status === "preview_ready" ||
+            aiStream.status === "committing"
+        ) {
+            return false;
+        }
         if (activeConflictRef.current !== null) return false;
         if (isResolvingConflictRef.current) return false;
         if (syncHook.status === "stopped") return false;
@@ -429,7 +444,7 @@ export function useEditorOrchestrator({
     const debouncedAutoSaveRef = useRef(
         debounce((content: string) => {
             executeServerWriteRef.current(content);
-        }, 1000)
+        }, EDITOR_AUTOSAVE_DEBOUNCE_MS)
     );
 
     /**
@@ -827,6 +842,9 @@ export function useEditorOrchestrator({
         startAIOperation,
         stopAIOperation: aiStream.stopStream,
         resetAI: aiStream.reset,
+        commitAIPreview: aiStream.commitPreview,
+        rejectAIPreview: aiStream.rejectPreview,
+        retryAIPreview: aiStream.retryPreview,
 
         isDirty,
         isSaving,
