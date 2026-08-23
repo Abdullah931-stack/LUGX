@@ -20,7 +20,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, sql, and } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb } from "@/test/test-db";
+import { testDb, cleanupTestUsers, TEST_USER_EMAIL_PATTERN } from "@/test/test-db";
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
 let dbAvailable = false;
@@ -47,13 +47,21 @@ beforeEach((ctx) => {
 
 afterAll(async () => {
     if (!dbAvailable) return;
+    // Scoped cleanup ONLY — never wipe whole tables on a live database.
     try {
-        await testDb.delete(schema.usage);
+        await testDb.delete(schema.usage).where(eq(schema.usage.userId, TEST_USER_ID));
     } catch {
         /* ignore */
     }
     try {
-        await testDb.delete(schema.files);
+        await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID));
+    } catch {
+        /* ignore */
+    }
+    // Remove this suite's seeded test accounts (fixed UUID + random *.test
+    // emails); CASCADE removes their dependent files/usage rows too.
+    try {
+        await cleanupTestUsers([TEST_USER_ID], { emailPattern: TEST_USER_EMAIL_PATTERN });
     } catch {
         /* ignore */
     }

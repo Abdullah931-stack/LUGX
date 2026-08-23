@@ -14,7 +14,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, and, isNull } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb } from "@/test/test-db";
+import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { conflictResolver } from "@/lib/sync/conflict-resolver";
 import { generateETagSync } from "@/lib/sync/etag-generator";
@@ -56,6 +56,8 @@ afterAll(async () => {
     } catch {
         /* ignore */
     }
+    // Remove this suite's seeded test account; CASCADE cleans dependents.
+    try { await cleanupTestUsers([TEST_USER_ID]); } catch { /* ignore */ }
 });
 
 /**

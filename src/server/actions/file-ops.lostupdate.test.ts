@@ -23,7 +23,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, and, isNull } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb } from "@/test/test-db";
+import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
 
 const TEST_USER_ID = "55555555-5555-5555-5555-555555555555";
@@ -52,6 +52,8 @@ beforeEach((ctx) => {
 afterAll(async () => {
     if (!dbAvailable) return;
     try { await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID)); } catch { /* ignore */ }
+    // Remove this suite's seeded test account; CASCADE cleans dependents.
+    try { await cleanupTestUsers([TEST_USER_ID]); } catch { /* ignore */ }
 });
 
 /**

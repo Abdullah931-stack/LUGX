@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { eq, and, isNull } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb } from "@/test/test-db";
+import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { generateETagSync } from "@/lib/sync/etag-generator";
 import { commitAIFileOperation, refundAIReservation } from "@/server/actions/ai-commit";
@@ -94,6 +94,8 @@ afterAll(async () => {
     } catch {
         /* ignore */
     }
+    // Remove this suite's seeded test accounts; CASCADE cleans dependents.
+    try { await cleanupTestUsers([TEST_USER_ID, OTHER_USER_ID]); } catch { /* ignore */ }
 });
 
 describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phase 8 Integration)", () => {

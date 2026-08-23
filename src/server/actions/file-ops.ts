@@ -450,17 +450,44 @@ export async function restoreFile(
                 )
             );
 
-        // If restoring a folder, restore its immediate children as well
+        // If restoring a folder, restore its entire descendant tree as well —
+        // symmetric with the cascading tombstone in `deleteFile` (which walks
+        // the full recursion). The traversal intentionally does NOT filter by
+        // `deletedAt`: after a folder deletion every descendant is tombstoned,
+        // so filtering would stop the walk at the first level.
         if (target.isFolder) {
-            await db
-                .update(schema.files)
-                .set({ deletedAt: null, updatedAt: now })
-                .where(
-                    and(
-                        eq(schema.files.parentFolderId, fileId),
+            const descendantIds: string[] = [];
+            const queue: string[] = [fileId];
+
+            while (queue.length > 0) {
+                const currentId = queue.shift()!;
+                const children = await db.query.files.findMany({
+                    where: and(
+                        eq(schema.files.parentFolderId, currentId),
                         eq(schema.files.userId, user.id)
-                    )
-                );
+                    ),
+                    columns: { id: true, isFolder: true },
+                });
+
+                for (const child of children) {
+                    descendantIds.push(child.id);
+                    if (child.isFolder) {
+                        queue.push(child.id);
+                    }
+                }
+            }
+
+            if (descendantIds.length > 0) {
+                await db
+                    .update(schema.files)
+                    .set({ deletedAt: null, updatedAt: now })
+                    .where(
+                        and(
+                            inArray(schema.files.id, descendantIds),
+                            eq(schema.files.userId, user.id)
+                        )
+                    );
+            }
         }
 
         try {

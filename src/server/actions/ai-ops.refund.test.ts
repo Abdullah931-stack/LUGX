@@ -19,11 +19,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb } from "@/test/test-db";
+import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { AIOperation } from "@/lib/ai/prompts";
 import { TIER_LIMITS } from "@/config/tiers.config";
 
-const TEST_USER_ID = "22222222-2222-2222-2222-222222222222";
+const TEST_USER_ID = "12121212-1212-1212-1212-121212121212"; // unique per suite — NOT shared with softdelete tests (parallel workers)
 const TIER = "pro";
 let dbAvailable = false;
 
@@ -51,6 +51,8 @@ afterAll(async () => {
     } catch {
         /* ignore */
     }
+    // Remove this suite's seeded test account; CASCADE cleans dependents.
+    try { await cleanupTestUsers([TEST_USER_ID]); } catch { /* ignore */ }
 });
 
 function today(): string {

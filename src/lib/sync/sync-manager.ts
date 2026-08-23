@@ -912,6 +912,27 @@ class SyncManager {
         if (serverFile.deletedAt) {
             const localFile = await this.idb.getFile(serverFile.id);
             if (localFile) {
+                // DATA-SAFETY GUARD: never silently discard unsaved local edits.
+                // If the local copy carries unpushed user edits (isDirty), keep it
+                // intact and surface a conflict instead of deleting it, so the user
+                // decides what happens to their content.
+                if (localFile.isDirty) {
+                    const dirtyOps = await this.idb.getOperations(serverFile.id);
+                    for (const op of dirtyOps) {
+                        if (op.status === 'queued' || op.status === 'syncing') {
+                            await this.idb.updateOperationStatus(op.id, 'failed', {
+                                lastError: 'Server deleted file with unsaved local edits (tombstone received)',
+                            });
+                        }
+                    }
+                    return {
+                        fileId: serverFile.id,
+                        success: false,
+                        action: 'conflict',
+                        error: 'Server deleted file with unsaved local edits',
+                    };
+                }
+
                 await this.idb.deleteFile(serverFile.id);
                 // Mark any pending operations for the deleted file as failed
                 const ops = await this.idb.getOperations(serverFile.id);

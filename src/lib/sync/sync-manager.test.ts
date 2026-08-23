@@ -724,4 +724,73 @@ describe('Sync Manager', () => {
             expect(customIdb.close).toHaveBeenCalled();
         });
     });
+
+    describe('pullFile tombstone handling (data-safety guard)', () => {
+        const tombstoneFile = {
+            id: 'file-tombstoned',
+            content: '',
+            etag: 'etag-dead',
+            version: 9,
+            title: 'Deleted on server',
+            parentFolderId: null,
+            isFolder: false,
+            deletedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+
+        it('should delete a CLEAN local copy when the server sends a tombstone', async () => {
+            await manager.init({ userId: 'user-123' });
+            mockIndexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'file-tombstoned',
+                content: '<p>clean</p>',
+                etag: 'etag-old',
+                version: 3,
+                isDirty: false,
+            });
+            mockIndexedDBManager.getOperations.mockResolvedValueOnce([
+                { id: 'op-1', fileId: 'file-tombstoned', status: 'queued' },
+            ]);
+
+            const result = await (manager as any).pullFile(tombstoneFile);
+
+            expect(result.success).toBe(true);
+            expect(result.action).toBe('pulled');
+            expect(mockIndexedDBManager.deleteFile).toHaveBeenCalledWith('file-tombstoned');
+            expect(mockIndexedDBManager.updateOperationStatus).toHaveBeenCalledWith(
+                'op-1',
+                'failed',
+                expect.objectContaining({ lastError: expect.stringContaining('tombstone') })
+            );
+        });
+
+        it('must NOT delete a DIRTY local copy — surface a conflict instead', async () => {
+            await manager.init({ userId: 'user-123' });
+            mockIndexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'file-tombstoned',
+                content: '<p>unsaved user edits</p>',
+                etag: 'etag-old',
+                version: 3,
+                isDirty: true,
+            });
+            mockIndexedDBManager.getOperations.mockResolvedValueOnce([
+                { id: 'op-2', fileId: 'file-tombstoned', status: 'syncing' },
+            ]);
+
+            const result = await (manager as any).pullFile(tombstoneFile);
+
+            // Local unsaved edits are preserved; the case is escalated as a conflict
+            expect(result.success).toBe(false);
+            expect(result.action).toBe('conflict');
+            expect(result.error).toContain('unsaved local edits');
+            expect(mockIndexedDBManager.deleteFile).not.toHaveBeenCalledWith('file-tombstoned');
+            expect(mockIndexedDBManager.updateOperationStatus).toHaveBeenCalledWith(
+                'op-2',
+                'failed',
+                expect.objectContaining({ lastError: expect.stringContaining('unsaved local edits') })
+            );
+
+            mockIndexedDBManager.getFile.mockReset();
+            mockIndexedDBManager.getOperations.mockReset();
+        });
+    });
 });
