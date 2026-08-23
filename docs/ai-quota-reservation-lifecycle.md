@@ -82,11 +82,28 @@ flowchart TD
 - If the user types new content into the editor while an AI stream is running, the document's `editorGeneration` increments.
 - When the stream ends:
   - `assertSessionIntegrity` detects the generation mismatch.
-  - The system dismantles the ghost layer (`clearStreamingGhost()`) and issues a refund (`refundAIReservation(operationId, 'conflict')`).
+  - The system dismantles the ghost layer (`clearStreamingGhost()`).
+  - **Quota settlement:** the abort is a *user decision*, so the reservation is settled as consumed under the Explicit Settlement Policy (§4-D) — it is NOT refunded.
   - **Critical Rule:** The system **NEVER** executes `editor.setContent(session.originalHtml)`. All manual edits written by the user are preserved 100% without data loss.
 
-### C. Server-Side Auto-Refund on Disconnect
-- In `/api/ai/stream/route.ts`, if the client tab closes or socket drops (`req.signal.aborted` or `ReadableStream.cancel()`), the server immediately triggers `refundAIReservation(operationId, 'client_disconnect')` so no quota remains locked.
+### C. Server-Side Disconnect Safety Net
+- In `/api/ai/stream/route.ts`, if the client tab closes or socket drops (`req.signal.aborted` or `ReadableStream.cancel()`), the server still triggers `refundAIReservation(operationId, 'stream_cancelled_by_client')` as a safety net so no quota remains locked from orphaned sessions.
+- **Ordering guarantee:** when the stop is client-initiated (`stopStream`), the client FIRST settles the reservation explicitly (see §4-D) and only then aborts the stream. The later server-side refund therefore no-ops with `already_committed`, so the safety net can never reverse an intentional settlement.
+
+### D. Explicit Settlement Policy (User Decisions) — v1.6.0
+Quota refunds are reserved for **system failures**. Any outcome driven by a **user decision** consumes the reservation, because the compute cost was already spent. Settlement is performed idempotently via `commitAIReservation(operationId)` (status `reserved -> committed`, no document write), which also pins the deduction against the TTL sweeper (`expireStaleReservations`) and any stray refund call (returns `already_committed`).
+
+| Outcome | Trigger | Quota action |
+|---|---|---|
+| Stream startup / mid-stream failure | System error | **Refund** (`refundAIReservation`) |
+| Optimistic-lock conflict (412) at commit time | System condition | **Refund** |
+| Client exception during pipeline | System error | **Refund** |
+| User rejects the completed preview (`rejectPreview`) | User decision | **Settle as consumed** |
+| User re-runs the operation (`retryPreview`) — old session | User decision | **Settle as consumed** (new session reserves fresh quota) |
+| User stops a running generation (`stopStream`) | User decision | **Settle as consumed** before abort |
+| Teardown while output awaits decision (unmount in `preview_ready`) | Undecided user teardown | **Settle as consumed** |
+
+Rationale: the provider call completed (or partially completed) for every settled case above — the tokens were spent regardless of what the user chooses to do with the output. Refunding would allow unlimited free regeneration by reject/retry cycles.
 
 ---
 

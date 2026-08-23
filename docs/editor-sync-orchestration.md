@@ -39,6 +39,7 @@ AutoSave is strictly suspended whenever any of the following invariants evaluate
 flowchart TD
     Trigger["Editor Content Update Trigger"] --> Gate{"canAutoSave() Check"}
     Gate -->|"Streaming / Reserving Active"| Suspend["Suspend AutoSave"]
+    Gate -->|"AI Preview Awaiting Decision (preview_ready)"| Suspend
     Gate -->|"Server Commit In-Flight"| Suspend
     Gate -->|"Active Conflict Unresolved"| Suspend
     Gate -->|"Resolving Conflict Active"| Suspend
@@ -51,7 +52,16 @@ flowchart TD
 const canAutoSave = useCallback((): boolean => {
     if (isProgrammaticUpdateRef.current) return false;
     if (aiStream.isLoading || aiStream.isStreaming || aiStream.isCommitting) return false;
-    if (aiStream.status === "reserved" || aiStream.status === "streaming" || aiStream.status === "committing") return false;
+    // preview_ready: a completed AI output is parked awaiting the user's
+    // Accept / Reject / Retry decision — autosave must not race it.
+    if (
+        aiStream.status === "reserved" ||
+        aiStream.status === "streaming" ||
+        aiStream.status === "preview_ready" ||
+        aiStream.status === "committing"
+    ) {
+        return false;
+    }
     if (activeConflictRef.current !== null) return false;
     if (isResolvingConflictRef.current) return false;
     if (syncHook.status === "stopped") return false;
@@ -68,7 +78,7 @@ When the user types or alters text while an AI stream is actively generating:
    - **Edits Outside Target Range (e.g. Other Paragraphs):** Allowed without interruption. ProseMirror's `tr.mapping` automatically maps and shifts the ghost preview coordinates forward/backward, and the AI streaming continues smoothly.
    - **Edits Inside Target Range:** If the user alters text inside the paragraph/selection being actively generated or modified:
      1. **Instant Abort:** The orchestrator signals the active `AbortController` in `useAIStream`.
-     2. **Quota Refund:** The backend reservation is refunded (`refundAIReservation`).
+     2. **Quota Settlement (Explicit Settlement Policy):** Overwriting the AI target range is a *user decision*, so the reservation is settled as consumed via `commitAIReservation` (`stopStream` settles before aborting) — it is NOT refunded. See `docs/ai-quota-reservation-lifecycle.md` §4-D.
      3. **Ghost Dismantled:** TipTap's `StreamingGhostExtension` decoration is immediately removed, leaving the underlying ProseMirror document model pristine.
      4. **Editor Generation Advance:** `editorGenerationRef` increments, preventing any stale in-flight AI chunks or delayed commit responses from applying to the altered document.
      5. **Debounced AutoSave:** The user's manual modification proceeds cleanly without silent corrupt merges.

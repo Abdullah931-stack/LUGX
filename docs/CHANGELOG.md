@@ -2,6 +2,88 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.6.0] - 2026-08-23 (AI Preview Explicit Decision Model & Data-Safety Hardening)
+
+### Added - Explicit Preview Decision Model (`useAIStream`)
+
+Stream completion no longer auto-commits. The sanitized AI output is parked in
+`preview_ready`, and the user decides via three explicit actions in `AIStreamPreview`
+(`src/hooks/use-ai-stream.ts`, `src/components/editor/ai-stream-preview.tsx`,
+`src/app/workspace/editor/[fileId]/page.tsx`):
+
+- **Accept (`commitPreview`)** — server-first atomic commit (`commitAIFileOperation`)
+  then a single atomic ProseMirror transaction replacing `[from, to]`. Handles the
+  existing 412 conflict rollback path unchanged. The preview panel hides on Accept
+  exactly like on Reject (`setPreviewText` cleared on commit success).
+- **Reject (`rejectPreview`)** — ghost dismantled, document untouched, session released.
+- **Retry (`retryPreview`)** — settles the current preview exactly like a rejection,
+  then starts a brand-new stream with identical inputs (`lastParamsRef`).
+
+### Changed - Quota Policy: Explicit Settlement for User Decisions
+
+Refunds are now reserved strictly for **system failures** (stream startup/mid-stream
+errors, client exceptions, 412 conflicts). Any **user-driven outcome** settles the
+reservation as consumed via idempotent `commitAIReservation(operationId)` — no document
+write, pinned against the TTL sweeper and stray refunds (`already_committed`):
+
+| Outcome | Quota action |
+|---|---|
+| Stream failure / startup error / exception / 412 conflict | Refund |
+| Reject completed preview | Settle as consumed |
+| Retry (old session; new session reserves fresh quota) | Settle as consumed |
+| Stop a running generation (`stopStream`) | Settle as consumed BEFORE abort |
+| Teardown/unmount while preview awaits decision | Settle as consumed |
+
+Key ordering guarantee: `stopStream` awaits the settlement round-trip **before**
+aborting the fetch, so the server-side disconnect refund handler (`cancel()` in
+`/api/ai/stream/route.ts`) deterministically no-ops with `already_committed` instead
+of winning the race. Full matrix: `docs/ai-quota-reservation-lifecycle.md` §4-D.
+Autosave suspension gate (`canAutoSave`) extended to cover `preview_ready`.
+
+### Fixed - Sync & Restore Data-Safety
+
+- **`pullFile` tombstone guard (`sync-manager.ts`)** — a server tombstone no longer
+  silently deletes a local copy carrying unsaved edits (`isDirty`); the case escalates
+  to an explicit conflict instead of discarding user content.
+- **`restoreFile` full cascade (`file-ops.ts`)** — restoring a folder now clears
+  tombstones across the entire descendant tree (BFS including deleted nodes),
+  symmetric with the cascading delete depth.
+
+### Changed - Autosave Debounce Constant
+
+- Extracted `EDITOR_AUTOSAVE_DEBOUNCE_MS = 1000` into `src/config/editor.config.ts`
+  (behavioral no-op; documents the earlier 400ms -> 1000ms decision).
+
+### Fixed - Test Database Safety (Root Cause of the Data-Loss Incident)
+
+**Incident:** files created through the app vanished permanently from both the UI and
+the database after a period away. Root cause (closed): integration-test `afterAll`
+hooks in `ai-ops.integrity.test.ts` and `file-ops.softdelete.test.ts` executed
+**unscoped** `DELETE FROM usage` / `DELETE FROM files` statements, and since
+`vitest.setup.ts` loads `.env.local`, they ran against the **live Neon database** —
+wiping every user's rows on every full test run. No production code was at fault.
+
+Remediation (`docs/test-database-safety.md`):
+
+- Both wipes are now scoped to their `TEST_USER_ID`.
+- New guarded helper `cleanupTestUsers(ids, { emailPattern? })` deletes ONLY
+  placeholder-pattern test accounts; wired into all 8 user-seeding suites with
+  per-suite ids (parallel-worker safe). Refund suite id de-conflicted to `1212…`.
+
+### Added - Tooling
+
+- `scripts/db-testusers-probe.mjs` — live-DB probe reporting placeholder test
+  accounts vs real users (`node scripts/db-testusers-probe.mjs`).
+
+### Tests
+
+- New suite `src/test/ai-preview-decision.test.ts`: preview_ready parking (no commit,
+  no mutation), reject/settle-no-refund, accept/server-first commit + panel hide,
+  retry settle + fresh session, mid-generation stop settle-no-refund.
+- New `sync-manager.test.ts` cases: clean-copy tombstone deletion preserved;
+  dirty-copy tombstone escalates to conflict without deletion.
+- Full suite green: 36 test files / 371 tests.
+
 ## [1.5.0] - 2026-08-23 (Runtime Remediation: AI Streaming & Local-First Editor Sync)
 
 ### Fixed - AI Streaming Deadlock & Invisible Ghost Preview

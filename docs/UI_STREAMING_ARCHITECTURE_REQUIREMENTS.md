@@ -14,11 +14,12 @@ In previous iterations, real-time UI streaming was replaced with an off-screen b
 ### 2.2 System Invariants
 Any acceptable architectural solution must rigorously satisfy the following five invariants:
 
-1. **Auto-Save Invariance:** The live ProseMirror document state (`editor.state.doc`) MUST NOT be mutated during active streaming. No intermediate chunk shall trigger debounced auto-save mutations to IndexedDB or the remote database (Supabase).
+1. **Auto-Save Invariance:** The live ProseMirror document state (`editor.state.doc`) MUST NOT be mutated during active streaming **or while a completed result awaits an explicit user decision** (`preview_ready`). No intermediate chunk shall trigger debounced auto-save mutations to IndexedDB or the remote database (Supabase).
 2. **Partial Selection & Scope Invariance:** When an operation targets a specific sub-range $[from, to]$ within the document, the preceding content $[0, from)$ and subsequent content $(to, \text{doc.content.size}]$ MUST remain in their normal, unaffected layout and state. Streaming occurs strictly at the anchor point $from$.
-3. **Atomic Commit Invariance:** Upon successful completion of the stream, the AI transformation MUST be applied in exactly ONE atomic ProseMirror transaction targeting $[from, to]$.
+3. **Atomic Commit Invariance (Acceptance-Triggered):** Stream completion does NOT mutate the document. The sanitized output is parked in `preview_ready`, and only an explicit user **Accept** applies the AI transformation in exactly ONE atomic ProseMirror transaction targeting $[from, to]$ (server-first commit confirmed before the local write). **Reject** and **Retry** leave the document fully untouched.
 4. **Single-Action Undo Invariance:** Exactly one history entry is produced. A single `Ctrl+Z` (or undo command) restores the original document state and selection range prior to the AI invocation.
 5. **Deterministic Rollback Invariance:** If the stream fails, times out, is aborted by the user, or encounters an API error (429/500/503), the ephemeral visual state is purged in $O(1)$ time with zero side effects on the document content.
+6. **Explicit Settlement Invariance (v1.6.0):** Quota refunds apply ONLY to system failures (stream errors, startup errors, 412 conflicts). User-driven outcomes — Reject, Retry, Stop-mid-generation, or abandoning a completed preview — settle the reservation as consumed (`commitAIReservation`, idempotent, no document write) and are never refunded.
 
 ---
 

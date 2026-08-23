@@ -50,25 +50,40 @@ stateDiagram-v2
     [*] --> idle
     idle --> reserving: startStream()
     reserving --> streaming: onMeta / onStart received
-    streaming --> preview_ready: onDone received
-    preview_ready --> committing: assertIntegrity() & commitAIFileOperation()
+    streaming --> preview_ready: onDone received (result parked, NO auto-commit)
+    preview_ready --> committing: User ACCEPTS (commitPreview)
     committing --> committed: Local TipTap transaction
     committed --> idle: Session recycled
 
-    reserving --> aborted: User abort
-    streaming --> aborted: User abort
-    preview_ready --> aborted: User abort (Double-decision guard)
+    streaming --> aborted: User STOPS (settle-as-consumed, never refund)
+    preview_ready --> aborted: User REJECTS / RETRIES (settle-as-consumed)
 
-    reserving --> failed: Startup / quota error
-    streaming --> failed: Network / model error
-    committing --> failed: Database commit error
+    reserving --> failed: Startup / quota error (refund)
+    streaming --> failed: Network / model error (refund)
+    committing --> failed: Database commit error (refund)
 
-    committing --> conflict: Version mismatch (HTTP 412)
+    committing --> conflict: Version mismatch (HTTP 412, refund)
     
     aborted --> idle: Reset
     failed --> idle: Reset
     conflict --> idle: Reset
 ```
+
+### 3.0 Explicit Decision Model (v1.6.0)
+
+Stream completion (`onDone`) does **not** commit anything. The sanitized result is parked
+in `pendingPreviewRef` while the session rests in `preview_ready`, exposing three explicit
+user actions surfaced as buttons in `AIStreamPreview`:
+
+- **Accept (`commitPreview`)** — `preview_ready -> committing`: server-first atomic commit
+  (`commitAIFileOperation`) followed by one atomic ProseMirror transaction replacing `[from, to]`.
+- **Reject (`rejectPreview`)** — `preview_ready -> aborted`: ghost dismantled, document untouched,
+  reservation settled as consumed (never refunded).
+- **Retry (`retryPreview`)** — old session settled exactly like a rejection, then a brand-new
+  `startStream` runs with identical inputs (fresh quota reservation).
+
+Quota rule of thumb: **system failures refund; user decisions settle-as-consumed.**
+See `docs/ai-quota-reservation-lifecycle.md` §4-D for the full settlement matrix.
 
 ### 3.1 Allowed State Transition Matrix
 
