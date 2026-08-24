@@ -19,6 +19,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import * as fileOps from "@/server/actions/file-ops";
+import { commitAIFileOperation } from "@/server/actions/ai-commit";
 
 // Mock server actions
 vi.mock("@/server/actions/file-ops", () => ({
@@ -32,6 +33,26 @@ vi.mock("@/server/actions/ai-commit", () => ({
     commitAIFileOperation: vi.fn(),
     refundAIReservation: vi.fn().mockResolvedValue({ success: true }),
 }));
+
+vi.mock("@/server/actions/ai-ops", () => ({
+    commitAIReservation: vi.fn().mockResolvedValue({ committed: true }),
+    refundAIReservation: vi.fn().mockResolvedValue({ refunded: true }),
+    getAIReservationStatus: vi.fn(),
+}));
+
+// Manual-callback NDJSON consumer mock (same harness style as
+// ai-preview-decision.test.ts): tests drive stream callbacks explicitly.
+type ConsumeCallbacks = {
+    onMeta?: (meta: { sessionId: string; operationId: string }) => void;
+    onChunk?: (accumulated: string, latestChunk: string) => void;
+    onComplete?: (finalRawText: string) => void | Promise<void>;
+    onError?: (err: Error) => void;
+};
+const mockConsumeAIStream = vi.fn();
+vi.mock("@/lib/ai/stream-handler", () => ({
+    consumeAIStream: (...args: unknown[]) => mockConsumeAIStream(...args),
+}));
+let capturedCallbacks: ConsumeCallbacks;
 
 // Mock IndexedDB and SyncManager dependencies
 const mockLocalDb: Record<string, Record<string, unknown>> = {};
@@ -119,6 +140,14 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         editor = new Editor({
             extensions: [StarterKit, StreamingGhostExtension],
             content: "<p>Original document content</p>",
+        });
+
+        capturedCallbacks = {} as ConsumeCallbacks;
+        mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
+            capturedCallbacks = options;
+            options.onMeta?.({ sessionId: "s1", operationId: "op1" });
+            options.onChunk?.("Partial ", "Partial ");
+            // Stream intentionally left open; individual tests complete it explicitly.
         });
     });
 
@@ -390,5 +419,210 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             },
             { timeout: 2000 }
         );
+    });
+
+    // ==================== Phase 11 closure assertions ====================
+
+    it("suspends autosave during active AI streaming for outside-range edits", async () => {
+        const { result } = renderHook(() =>
+            useEditorOrchestrator({ fileId, userId, editor })
+        );
+
+        await waitFor(() => expect(result.current.title).toBe("Test Note"));
+
+        // Real selection -> ghost target range [1, 10]
+        editor.commands.setTextSelection({ from: 1, to: 10 });
+        await act(async () => {
+            await result.current.startAIOperation("improve");
+        });
+        await waitFor(() => expect(result.current.isStreaming).toBe(true));
+        expect(result.current.canAutoSave()).toBe(false);
+
+        // Move the cursor OUTSIDE the ghost range, then edit there
+        const docEnd = editor.state.doc.content.size;
+        editor.commands.setTextSelection({ from: docEnd, to: docEnd });
+        act(() => {
+            result.current.handleEditorChange(
+                "<p>Original document content</p><p>Safe second paragraph</p>"
+            );
+        });
+
+        // Full debounce window elapses WITHOUT any server write (suspension invariant)
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        // No server write may carry THIS suspended edit (stale debounce timers
+        // from earlier suites may legally flush their own queued writes here).
+        const suspendedStreamingEdit = "<p>Original document content</p><p>Safe second paragraph</p>";
+        expect(
+            vi.mocked(fileOps.updateFileContent).mock.calls.some((c) => c[1] === suspendedStreamingEdit)
+        ).toBe(false);
+        // Stream retained because the edit was outside the target range
+        expect(result.current.isStreaming).toBe(true);
+
+        await act(async () => {
+            await result.current.stopAIOperation();
+        });
+    });
+
+    it("suspends autosave while a completed preview waits for an explicit decision (preview_ready)", async () => {
+        const { result } = renderHook(() =>
+            useEditorOrchestrator({ fileId, userId, editor })
+        );
+
+        await waitFor(() => expect(result.current.title).toBe("Test Note"));
+        editor.commands.setTextSelection({ from: 1, to: 10 });
+
+        await act(async () => {
+            await result.current.startAIOperation("improve");
+        });
+        await act(async () => {
+            await capturedCallbacks.onComplete?.("Improved AI output text");
+        });
+        await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
+        expect(result.current.canAutoSave()).toBe(false);
+
+        // Edit OUTSIDE the parked preview range: allowed, but autosave suspended
+        const docEnd = editor.state.doc.content.size;
+        editor.commands.setTextSelection({ from: docEnd, to: docEnd });
+        act(() => {
+            result.current.handleEditorChange("<p>Edit while preview parked</p>");
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        // No server write may carry THIS suspended edit while a decision is pending.
+        const suspendedPreviewEdit = "<p>Edit while preview parked</p>";
+        expect(
+            vi.mocked(fileOps.updateFileContent).mock.calls.some((c) => c[1] === suspendedPreviewEdit)
+        ).toBe(false);
+
+        // Explicit decision settles the session and releases autosave
+        await act(async () => {
+            await result.current.rejectAIPreview();
+        });
+        await waitFor(() => expect(result.current.aiStatus).toBe("aborted"));
+    });
+
+    it("blocks writes during ai_committing, warns on unload, then restores a single write path", async () => {
+        const { result } = renderHook(() =>
+            useEditorOrchestrator({ fileId, userId, editor })
+        );
+
+        await waitFor(() => expect(result.current.title).toBe("Test Note"));
+        editor.commands.setTextSelection({ from: 1, to: 10 });
+
+        await act(async () => {
+            await result.current.startAIOperation("improve");
+        });
+        await act(async () => {
+            await capturedCallbacks.onComplete?.("Commit candidate output");
+        });
+        await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
+
+        // Hang the server atomic commit to hold the session in committing state
+        let releaseCommit!: (value: unknown) => void;
+        const commitGate = new Promise((resolve) => {
+            releaseCommit = resolve;
+        });
+        vi.mocked(commitAIFileOperation).mockImplementationOnce(
+            () => commitGate as unknown as ReturnType<typeof commitAIFileOperation>
+        );
+
+        let commitPromise: Promise<void> | null = null;
+        act(() => {
+            commitPromise = result.current.commitAIPreview();
+        });
+        await waitFor(() => expect(result.current.isCommitting).toBe(true));
+        expect(result.current.writeState).toBe("ai_committing");
+        expect(result.current.canAutoSave()).toBe(false);
+
+        // Navigation/unload guard MUST warn while a commit is in flight
+        const preventDefaultSpy = vi.spyOn(Event.prototype, "preventDefault");
+        act(() => {
+            window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+        });
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        preventDefaultSpy.mockRestore();
+
+        // Edits during committing must NOT enqueue an interleaved server write
+        const docEnd = editor.state.doc.content.size;
+        editor.commands.setTextSelection({ from: docEnd, to: docEnd });
+        act(() => {
+            result.current.handleEditorChange("<p>Edit while committing</p>");
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        // No server write may carry THIS edit while the commit is in flight:
+        // the single-write-path invariant forbids interleaved autosaves.
+        const suspendedCommittingEdit = "<p>Edit while committing</p>";
+        expect(
+            vi.mocked(fileOps.updateFileContent).mock.calls.some((c) => c[1] === suspendedCommittingEdit)
+        ).toBe(false);
+
+        // Release the commit: single authoritative completion
+        releaseCommit({
+            success: true,
+            status: "committed",
+            version: 3,
+            etag: "etag-v3",
+        });
+        await act(async () => {
+            await commitPromise;
+        });
+        await waitFor(() => {
+            expect(result.current.serverVersion).toBe(3);
+            expect(result.current.serverEtag).toBe("etag-v3");
+        });
+    });
+
+    it("warns on unload while the document is dirty", async () => {
+        const { result } = renderHook(() =>
+            useEditorOrchestrator({ fileId, userId, editor })
+        );
+        await waitFor(() => expect(result.current.title).toBe("Test Note"));
+
+        act(() => {
+            result.current.handleEditorChange("<p>Unsaved user edit</p>");
+        });
+        expect(result.current.isDirty).toBe(true);
+
+        const preventDefaultSpy = vi.spyOn(Event.prototype, "preventDefault");
+        act(() => {
+            window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+        });
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        preventDefaultSpy.mockRestore();
+    });
+
+    it("warns on unload while an undecided preview waits (preview_ready) even when clean", async () => {
+        const { result } = renderHook(() =>
+            useEditorOrchestrator({ fileId, userId, editor })
+        );
+        await waitFor(() => expect(result.current.title).toBe("Test Note"));
+
+        editor.commands.setTextSelection({ from: 1, to: 10 });
+        await act(async () => {
+            await result.current.startAIOperation("improve");
+        });
+        await act(async () => {
+            await capturedCallbacks.onComplete?.("Undecided preview output");
+        });
+        await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
+        // Document is pristine: the warning must come from the parked preview alone
+        expect(result.current.isDirty).toBe(false);
+
+        const preventDefaultSpy = vi.spyOn(Event.prototype, "preventDefault");
+        act(() => {
+            window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+        });
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        preventDefaultSpy.mockRestore();
+
+        // After an explicit decision the guard releases navigation
+        await act(async () => {
+            await result.current.rejectAIPreview();
+        });
+        const afterDecisionSpy = vi.spyOn(Event.prototype, "preventDefault");
+        act(() => {
+            window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+        });
+        expect(afterDecisionSpy).not.toHaveBeenCalled();
+        afterDecisionSpy.mockRestore();
     });
 });

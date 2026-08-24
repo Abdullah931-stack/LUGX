@@ -79,11 +79,6 @@ const STATUS_CONFIG: Record<SyncStatus, {
         color: "text-red-400",
         label: "فشلت المزامنة",
     },
-    error: {
-        icon: AlertCircle,
-        color: "text-red-400",
-        label: "خطأ",
-    },
     offline: {
         icon: CloudOff,
         color: "text-amber-400",

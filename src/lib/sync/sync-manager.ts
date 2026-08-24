@@ -25,8 +25,7 @@ export type SyncStatus =
     | 'conflict'
     | 'failed'
     | 'stopped'
-    | 'offline'
-    | 'error';
+    | 'offline';
 
 /**
  * Sync result for a single file

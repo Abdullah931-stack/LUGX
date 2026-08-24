@@ -21,6 +21,7 @@ export const LIVE_TEST_FILES = [
     'src/test/ai-server-atomic-commit.live.test.ts',
     'src/test/editor-orchestration.live.test.ts',
     'src/test/ai-preview-decision.live.test.ts',
+    'src/test/ai-reservation-status.live.test.ts',
     'src/app/api/stripe/webhook/route.live.test.ts',
 ];
 

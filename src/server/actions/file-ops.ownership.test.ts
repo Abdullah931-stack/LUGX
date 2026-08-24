@@ -17,7 +17,7 @@ import * as schema from "@/lib/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
-import { generateETagSync, parseETagHeader } from "@/lib/sync/etag-generator";
+import { parseETagHeader } from "@/lib/sync/etag-generator";
 import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-naming";
 
 const USER_A_ID = "33333333-3333-3333-3333-333333333333";
@@ -61,13 +61,20 @@ afterAll(async () => {
     try { await cleanupTestUsers([USER_A_ID, USER_B_ID]); } catch { /* ignore */ }
 });
 
+type CycleFolderRow = {
+    parentFolderId: string | null;
+    isFolder: boolean;
+    deletedAt: Date | null;
+    userId: string;
+};
+
 /**
  * Pure in-memory cycle detection algorithm mirroring moveFile
  */
 function checkInMemoryCycle(
     fileId: string,
     newParentFolderId: string | null,
-    folderMap: Map<string, { parentFolderId: string | null; isFolder: boolean; deletedAt: Date | null; userId: string }>,
+    folderMap: Map<string, CycleFolderRow>,
     userId: string
 ): { allowed: boolean; status?: number; error?: string } {
     if (fileId === newParentFolderId) {
@@ -121,7 +128,7 @@ describe("Phase 3: Algorithm & Contract Specifications (Pure Logic)", () => {
     });
 
     it("pure cycle detection: blocks moving a folder into itself (409)", () => {
-        const folders = new Map<string, any>([
+        const folders = new Map<string, CycleFolderRow>([
             ["folder-1", { parentFolderId: null, isFolder: true, deletedAt: null, userId: USER_A_ID }],
         ]);
 
@@ -132,7 +139,7 @@ describe("Phase 3: Algorithm & Contract Specifications (Pure Logic)", () => {
     });
 
     it("pure cycle detection: blocks moving into descendant across arbitrary depth (409)", () => {
-        const folders = new Map<string, any>([
+        const folders = new Map<string, CycleFolderRow>([
             ["root", { parentFolderId: null, isFolder: true, deletedAt: null, userId: USER_A_ID }],
             ["child", { parentFolderId: "root", isFolder: true, deletedAt: null, userId: USER_A_ID }],
             ["grandchild", { parentFolderId: "child", isFolder: true, deletedAt: null, userId: USER_A_ID }],
@@ -150,7 +157,7 @@ describe("Phase 3: Algorithm & Contract Specifications (Pure Logic)", () => {
     });
 
     it("cross-user parent isolation: blocks selecting another user's folder as parent (403)", () => {
-        const folders = new Map<string, any>([
+        const folders = new Map<string, CycleFolderRow>([
             ["user-b-folder", { parentFolderId: null, isFolder: true, deletedAt: null, userId: USER_B_ID }],
         ]);
 

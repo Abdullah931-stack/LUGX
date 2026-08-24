@@ -14,8 +14,14 @@ import { previewBuffer } from '@/lib/ai/preview-buffer';
 import { consumeAIStream, AIOperationType } from '@/lib/ai/stream-handler';
 import { formatStreamOutputToHTML } from '@/lib/parsers/stream-markdown';
 import { commitAIFileOperation, refundAIReservation } from '@/server/actions/ai-commit';
-import { commitAIReservation } from '@/server/actions/ai-ops';
+import { commitAIReservation, getAIReservationStatus } from '@/server/actions/ai-ops';
 import { streamingGhostPluginKey } from '@/lib/extensions/streaming-ghost-extension';
+import {
+    trackPendingAIOperation,
+    updatePendingAIOperationPhase,
+    clearPendingAIOperation,
+    listPendingAIOperations,
+} from '@/lib/ai/pending-operation-store';
 
 export interface UseAIStreamOptions {
     onStreamStart?: () => void;
@@ -84,9 +90,41 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     // TTL sweeper can never refund a fully generated result.
                     commitAIReservation(session.operationId).catch(() => {});
                 }
+                clearPendingAIOperation(session.operationId);
                 pendingPreviewRef.current = null;
             }
         };
+    }, []);
+
+    // Phase 11 (hard-reload recovery): React cleanup never runs on a HARD page
+    // reload, so pending-operation records surviving in sessionStorage are
+    // settled here on the next mount. The abandoned preview is NEVER applied
+    // to the document and NEVER treated as committed - the server document is
+    // re-fetched by the orchestrator's initial-load pipeline as the single
+    // source of truth. Settlement follows the v1.6.0 quota policy:
+    // - preview_ready (completed generation): consumed (commitAIReservation)
+    // - generating (lost mid-generation reservation): refundAIReservation
+    useEffect(() => {
+        const orphans = listPendingAIOperations();
+        if (orphans.length === 0) return;
+
+        for (const record of orphans) {
+            void (async () => {
+                try {
+                    const status = await getAIReservationStatus(record.operationId);
+                    if (status.found && status.status === 'reserved') {
+                        if (record.phase === 'preview_ready') {
+                            await commitAIReservation(record.operationId);
+                        } else {
+                            await refundAIReservation(record.operationId, 'reload_recovery');
+                        }
+                    }
+                    clearPendingAIOperation(record.operationId);
+                } catch {
+                    // Transient failure: keep the record so a later mount retries.
+                }
+            })();
+        }
     }, []);
 
     /**
@@ -137,6 +175,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             console.error('[useAIStream] Error rejecting preview:', err);
         } finally {
             previewBuffer.close(session.sessionId);
+            clearPendingAIOperation(session.operationId);
             pendingPreviewRef.current = null;
             setPreviewText('');
             activeSessionRef.current = null;
@@ -203,6 +242,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         } finally {
             previewBuffer.close(session.sessionId);
             setPreviewText('');
+            clearPendingAIOperation(session.operationId);
             activeSessionRef.current = null;
         }
     }, [rejectPreview]);
@@ -266,6 +306,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         });
 
         activeSessionRef.current = session;
+        // Phase 11: durable tab-scoped record enabling hard-reload recovery.
+        trackPendingAIOperation(operationId, fileId, 'generating');
 
         previewBuffer.open(sessionId);
         transitionSession(session, 'reserved');
@@ -320,6 +362,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
                     transitionSession(session, 'preview_ready');
                     setStatus('preview_ready');
+                    updatePendingAIOperationPhase(operationId, 'preview_ready');
 
                     // Format and sanitize final AI output
                     const { html: safeHtml, isEmpty } = formatStreamOutputToHTML(finalRawText);
@@ -373,6 +416,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
                     // Auto-refund on failure
                     refundAIReservation(operationId, 'stream_error').catch(() => {});
+                    clearPendingAIOperation(operationId);
                     options.onError?.(err);
                 },
             });
@@ -395,6 +439,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 transitionSession(session, 'failed', detailMessage);
                 setStatus('failed');
                 refundAIReservation(operationId, 'exception_caught').catch(() => {});
+                clearPendingAIOperation(operationId);
                 activeSessionRef.current = null;
             }
         } finally {
@@ -457,6 +502,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
                 // Auto-refund reservation on conflict (system condition, not a user decision)
                 await refundAIReservation(operationId, 'version_conflict');
+                clearPendingAIOperation(operationId);
                 activeSessionRef.current = null;
                 pendingPreviewRef.current = null;
                 options.onConflict?.(commitResult.serverVersion);
@@ -495,6 +541,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
             transitionSession(session, 'committed');
             setStatus('committed');
+            clearPendingAIOperation(operationId);
             activeSessionRef.current = null;
             pendingPreviewRef.current = null;
             // Hide the preview panel on acceptance — the decision is final and
@@ -522,6 +569,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
             // Commit failure is a system condition, not a user decision: refund.
             refundAIReservation(operationId, 'commit_error').catch(() => {});
+            clearPendingAIOperation(operationId);
             options.onError?.(err instanceof Error ? err : new Error(detailMessage));
         }
     }, [options, runAsProgrammaticTransaction]);

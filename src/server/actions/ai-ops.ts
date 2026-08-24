@@ -591,6 +591,60 @@ export async function commitAIReservation(
 }
 
 /**
+ * Query an AI reservation lifecycle status by operationId for the CURRENT
+ * session user (read-only - never mutates the reservation).
+ *
+ * Phase 11 (reload / navigation recovery): after a HARD page reload or an
+ * abandoned tab, the client may still hold a pending-operation identifier and
+ * needs a server-authoritative answer about whether its quota reservation is
+ * still "reserved", or was already committed / refunded / expired.
+ *
+ * Ownership: the row is filtered by the session user id, so an operationId
+ * belonging to another user is indistinguishable from a missing one
+ * ("found: false") - no cross-user data leakage.
+ */
+export async function getAIReservationStatus(
+    operationId: string
+): Promise<
+    | {
+          found: true;
+          operationId: string;
+          status: "reserved" | "committed" | "refunded" | "expired";
+          operation: string;
+          periodKey: string;
+          reservedUnits: number;
+          committedUnits: number;
+          refundedUnits: number;
+          expiresAt: string;
+      }
+    | { found: false; reason: "unauthorized" | "not_found" }
+> {
+    const user = await getUser();
+    if (!user) return { found: false, reason: "unauthorized" };
+
+    const reservation = await db.query.aiReservations.findFirst({
+        where: and(
+            eq(schema.aiReservations.operationId, operationId),
+            eq(schema.aiReservations.userId, user.id)
+        ),
+    });
+
+    if (!reservation) return { found: false, reason: "not_found" };
+
+    return {
+        found: true,
+        operationId: reservation.operationId,
+        status: reservation.status,
+        operation: reservation.operation,
+        periodKey: reservation.periodKey,
+        reservedUnits: reservation.reservedUnits,
+        committedUnits: reservation.committedUnits,
+        refundedUnits: reservation.refundedUnits,
+        expiresAt: reservation.expiresAt.toISOString(),
+    };
+}
+
+/**
  * Sweep and expire stale reservations that passed their TTL.
  */
 export async function expireStaleReservations(): Promise<number> {

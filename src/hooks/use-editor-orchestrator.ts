@@ -89,6 +89,8 @@ export interface UseEditorOrchestratorReturn {
 
     // 6. Write Controller & Sync State
     writeState: WriteStateType;
+    /** Exposed for tests and UI gating: whether an auto-save may fire right now. */
+    canAutoSave: () => boolean;
     syncHook: ReturnType<typeof useSync>;
     handleEditorChange: (newContent: string) => void;
 }
@@ -670,7 +672,9 @@ export function useEditorOrchestrator({
     // Navigation & Unload Guard
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-            if (isDirty || aiStream.isCommitting || isSaving) {
+            // An undecided completed preview also blocks navigation: abandoning
+            // it silently consumes quota (Explicit Settlement Policy).
+            if (isDirty || aiStream.isCommitting || isSaving || aiStream.status === "preview_ready") {
                 e.preventDefault();
                 e.returnValue = "لديك تعديلات غير محفوظة، هل أنت متأكد من مغادرة الصفحة؟";
                 return e.returnValue;
@@ -681,7 +685,7 @@ export function useEditorOrchestrator({
         return () => {
             window.removeEventListener("beforeunload", handleBeforeUnload);
         };
-    }, [isDirty, aiStream.isCommitting, isSaving]);
+    }, [isDirty, aiStream.isCommitting, isSaving, aiStream.status]);
 
     // AI Operation Trigger
     const startAIOperation = useCallback(
@@ -862,6 +866,7 @@ export function useEditorOrchestrator({
         handleResolveConflict,
 
         writeState,
+        canAutoSave,
         syncHook,
         handleEditorChange,
     };

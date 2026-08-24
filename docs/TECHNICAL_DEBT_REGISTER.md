@@ -2,7 +2,7 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-08-24 (post Phase 10 closure).
+Last reviewed: 2026-08-25 (post Phase 11 debt-cleanup round).
 
 ---
 
@@ -40,12 +40,15 @@ Last reviewed: 2026-08-24 (post Phase 10 closure).
 - **Decision:** **declined** for now (owner: project lead) to avoid extra write
   load on Neon for prevention of a since-resolved issue.
 
-## TD-04 — Pre-existing lint errors in two legacy test files
+## TD-04 — Pre-existing lint errors in two legacy test files — ✅ RESOLVED (2026-08-25)
 
 - **Debt:** `file-ops.ownership.test.ts` (3× `no-explicit-any`, unused import) and
   `ai-atomic-commit.integration.test.ts` (1× `no-explicit-any`, unused imports)
   fail strict ESLint rules.
-- **Status:** open; pre-dates release 1.6.0 and left untouched intentionally.
+- **Resolution:** fixed in the Phase 11 debt-cleanup round — cycle-detection maps now
+  use a typed `CycleFolderRow` alias instead of `any`, unused imports pruned
+  (`generateETagSync`, `and`, `isNull`), and the Supabase session mock cast via
+  `Awaited<ReturnType<typeof getUser>>`. `npx eslint` exits clean on both files.
 
 ## TD-05 — Stop-action settlement latency
 
@@ -55,7 +58,7 @@ Last reviewed: 2026-08-24 (post Phase 10 closure).
 - **Status:** accepted trade-off for policy determinism
   ([`architecture/ai-quota-reservation-lifecycle.md`](architecture/ai-quota-reservation-lifecycle.md) §4-D).
 
-## TD-06 — Dead `'error'` member in the `SyncStatus` union
+## TD-06 — Dead `'error'` member in the `SyncStatus` union — ✅ RESOLVED (2026-08-25)
 
 - **Debt:** `SyncStatus` (`src/lib/sync/sync-manager.ts`) declares an `| 'error'`
   state, but no code path ever calls `setStatus('error')`. The manager emits only
@@ -63,6 +66,24 @@ Last reviewed: 2026-08-24 (post Phase 10 closure).
   `offline`. The sync state-machine documentation therefore (correctly) omits it.
 - **Impact:** none at runtime today; the dead union member invites future misuse
   and confuses consumers switching exhaustively on the status.
-- **Decision:** open — either wire a genuine terminal-error transition or remove
-  the member in a future cleanup pass. Do not document `'error'` as a live state
-  until one of the two happens.
+- **Resolution:** the dead member was removed in the Phase 11 debt-cleanup round.
+  Repo-wide audit found zero producers/consumers of `SyncStatus['error']`; every
+  other `'error'` literal belongs to the unrelated `FileOpResult.status` union.
+  If a terminal sync-error state is ever needed, re-add it together with a real
+  transition and consumer coverage.
+  The exhaustive `Record<SyncStatus, ...>` display map in `sync-indicator.tsx`
+  was trimmed of its dead `error` row accordingly.
+
+## TD-07 — Real-browser E2E coverage for editor recovery journeys (deferred to Phase 19)
+
+- **Debt:** Phase 11 closure proves reload-during-preview and
+  navigation-during-commit semantics via jsdom integration suites
+  (`editor-recovery-reload.test.ts`, extended `editor-orchestration.integration.test.ts`)
+  plus a documented manual checklist — but there are no automated real-browser
+  journeys yet (`@playwright/test` is intentionally introduced only in Phase 19).
+- **Interim mitigation:** jsdom hard-reload simulation is semantically faithful
+  (zero in-memory state survives; recovery runs from sessionStorage seeds), and
+  the unload-warning path is asserted directly against `beforeunload`.
+- **Decision:** deferred by project lead (2026-08-24). Unblocked when Phase 19
+  adds Playwright + webServer harness; then port the three manual-checklist
+  scenarios into automated E2E specs.
