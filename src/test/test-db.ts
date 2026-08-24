@@ -1,13 +1,30 @@
 /**
- * Test database client: plain `pg` driver pointing at the configured Postgres
- * database (local or live database from .env.local).
+ * Test database client: plain `pg` driver pointing at the ISOLATED Neon test
+ * branch (TEST_DATABASE_URL), never at the app's production main branch.
+ *
+ * Phase 10 fail-closed gate: `assertSafeTestDatabaseUrl()` throws BEFORE the
+ * Pool below is created unless the effective DATABASE_URL is exactly the
+ * designated TEST_DATABASE_URL. See `src/test/test-db-guard.ts` and
+ * docs/reference/test-database-isolation.md.
  */
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { inArray, like, or } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
+import {
+    assertSafeTestDatabaseUrl,
+    printTestDbIdentity,
+} from "@/test/test-db-guard";
 
 const dbUrl = process.env.DATABASE_URL || "";
+// Fail-closed identity check — no connection object exists until this passes.
+const branchIdentity = assertSafeTestDatabaseUrl({
+    databaseUrl: dbUrl,
+    testDatabaseUrl: process.env.TEST_DATABASE_URL,
+    forbiddenHosts: process.env.TEST_DB_FORBIDDEN_HOSTS,
+});
+printTestDbIdentity(branchIdentity);
+
 const isSsl =
     dbUrl.includes("sslmode=require") ||
     dbUrl.includes("neon.tech") ||

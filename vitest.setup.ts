@@ -1,7 +1,8 @@
-import { config as dotenvConfig } from "dotenv";
-import path from "node:path";
+import { loadTestEnv } from "./src/test/load-test-env";
 
-// Load .env.local first (user-configured live database & services), then .env
-const ROOT = path.resolve(__dirname);
-dotenvConfig({ path: path.join(ROOT, ".env.local"), override: true });
-dotenvConfig({ path: path.join(ROOT, ".env"), override: false });
+// Phase 10 (Neon Branch isolation): load the isolated test-branch environment
+// BEFORE any test module — and its database pool — is imported.
+// Priority: shell TEST_DATABASE_URL > .env.test.local > .env.test > .env.local > .env
+// Then DATABASE_URL is hard-bound to TEST_DATABASE_URL (fail-closed binding).
+loadTestEnv();
+

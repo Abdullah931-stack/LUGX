@@ -112,7 +112,8 @@ lugx/
 │   ├── server/actions/            # Authenticated Next.js Server Actions (file-ops, ai-ops)
 │   ├── test/                      # Database integration test harnesses & fixtures
 │   └── middleware.ts              # Route protection and Supabase session validation
-├── vitest.config.ts               # Test suite configuration (Isolated single-fork runner)
+├── vitest.config.ts                # Default test runner (unit/contract only)
+├── vitest.live.config.ts           # LIVE integration runner (isolated Neon branch)
 └── package.json
 ```
 
@@ -197,18 +198,52 @@ npm run start
 
 ### 5. Automated Test Suite
 
-Run the Vitest integration and unit test suite (225 passing tests):
+The suite is split into two isolated buckets so that everyday testing can
+never touch a real environment:
+
+| Command | Scope |
+|---|---|
+| `npm run test` | Unit & contract tests only — no database, no external services. |
+| `npm run test:live` | LIVE integration suites against an **isolated Neon test branch** (+ live AI keys for the streaming smoke). |
+| `npm run test:all` | Both buckets, sequentially. |
 
 ```bash
-# Execute complete test suite
-npx vitest run
+# Fast feedback loop (unit / contract only) — safe everywhere
+npm run test
 
-# Run specific test file
-npx vitest run src/app/api/files/[id]/route.putguard.test.ts
+# Full live integration run (REQUIRES the isolated test branch setup below)
+npm run test:live
+
+# Run a single file from either bucket
+npx vitest run src/lib/sanitize.test.ts
+npx vitest run --config vitest.live.config.ts src/server/actions/file-ops.softdelete.test.ts
 
 # Verify TypeScript types
 npx tsc --noEmit
 ```
+
+#### Isolated Test Branch (required for `test:live`)
+
+LIVE suites never run against the app's production/main database. A fail-closed
+guard (`src/test/test-db-guard.ts`) refuses to boot unless `TEST_DATABASE_URL`
+is configured and reachable; every live run prints its branch identity line.
+One-time setup:
+
+```bash
+# 1. Create a dedicated Neon branch and grab its pooled connection string
+neonctl branches create --name test-suite --project-id <PROJECT_ID>
+neonctl connection-string <BRANCH_ID> --project-id <PROJECT_ID> --pooled
+
+# 2. Store it in `.env.test.local` (git-ignored, never committed)
+#    TEST_DATABASE_URL=postgresql://...neon.tech/neondb?sslmode=require
+
+# 3. Apply the schema to the branch (re-run after any src/lib/db change)
+npx drizzle-kit push --config drizzle.config.test.ts --force
+```
+
+See [`docs/reference/test-database-isolation.md`](./docs/reference/test-database-isolation.md)
+for the full architecture, guard rules, and the registry of LIVE suites.
+
 
 ---
 

@@ -50,6 +50,7 @@ docs/
 | [SYNC_ARCHITECTURE.md](./reference/SYNC_ARCHITECTURE.md) | Layered sync system overview with actual `useSync` hook contract |
 | [SYNC_SYSTEM.md](./reference/SYNC_SYSTEM.md) | Original sync delivery snapshot *(historical banner inside)* |
 | [UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md](./reference/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md) | G1–G10 readiness-gate compliance matrix, dual atomicity model, feature flags |
+| [test-database-isolation.md](./reference/test-database-isolation.md) | Phase 10: isolated Neon test branch — fail-closed guard, `test` vs `test:live` split, closure evidence |
 
 ### Specifications (`specs/`)
 

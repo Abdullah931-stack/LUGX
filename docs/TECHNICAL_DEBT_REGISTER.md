@@ -2,20 +2,26 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-08-23 (release 1.6.0).
+Last reviewed: 2026-08-24 (post Phase 10 closure).
 
 ---
 
-## TD-01 — Integration tests run against the live database
+## TD-01 — Integration tests run against the live database — ✅ RESOLVED (2026-08-24)
 
-- **Debt:** `vitest.setup.ts` loads `.env.local`, so DB integration suites execute
+- **Original debt:** `vitest.setup.ts` loaded `.env.local`, so DB integration suites executed
   against the same Neon instance as the app instead of an isolated test branch
   (`TEST_DATABASE_URL` / Neon branch).
-- **Decision:** isolation **declined** for now (owner: project lead).
-- **Mitigations in place:** all destructive test statements are scoped to
-  placeholder-pattern accounts; guarded `cleanupTestUsers()`; per-suite id
-  ownership; probe utility `scripts/db-testusers-probe.mjs`.
-  Full background: [`records/test-database-safety.md`](records/test-database-safety.md).
+- **Decision reversal:** the earlier "isolation declined" decision is REVERSED
+  (owner: project lead). Phase 10 closed on 2026-08-24 with full isolation:
+  every Postgres-backed suite now runs exclusively on a dedicated Neon branch
+  (`TEST_DATABASE_URL`) behind a fail-closed guard, and unit/contract suites
+  are structurally separated from LIVE suites (`npm run test` vs `npm run test:live`).
+- **Second layer retained (not a substitute):** placeholder-pattern scoping,
+  guarded `cleanupTestUsers()`, per-suite id ownership, and probe utility
+  `scripts/db-testusers-probe.mjs` remain as defense-in-depth.
+- Full architecture, guard rules and closure evidence:
+  [`reference/test-database-isolation.md`](reference/test-database-isolation.md).
+  Background incident: [`records/test-database-safety.md`](records/test-database-safety.md).
 
 ## TD-02 — Quota TTL sweeper is not wired to any scheduler
 
