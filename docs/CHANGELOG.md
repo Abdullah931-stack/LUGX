@@ -2,6 +2,28 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.7.0] - 2026-08-25 (Phase 11: Editor Sync Orchestration, Hydration Lifecycle & Reload Recovery)
+
+### Added - Hydration Lifecycle & Sync-Before-Write (`useEditorOrchestrator`)
+
+- **Three-state hydration lifecycle (`hydrating` | `ready` | `fatal`):** TipTap editor surface begins frozen (`setEditable(false)`), and `handleEditorChange` / `canAutoSave` / `executeServerWrite` guard against pre-hydration writes until the initial load pipeline settles.
+- **Offline-First Contract:** A transport/network failure during hydration never freezes the editor (`ready`); offline composition completes locally into durable dirty IndexedDB snapshots, reconciling later through standard optimistic locking. Fatal is strictly reserved for server-answered missing files with no local snapshots.
+- **Tab-Scoped SessionStorage Reload Recovery (`pending-operation-store.ts`):** Tracks in-flight and preview operations across hard page reloads. Remount queries `getAIReservationStatus(operationId)` to settle orphaned quotas idempotently without applying abandoned preview text.
+- **UI Hydration Integration (`page.tsx`):** Added subtle backdrop loader during initial sync, fatal error recovery card with workspace navigation, and real-time status bar sync indicator (`Syncing...`).
+- **Single-Flight Document Switching:** Identity-stable execution keyed on `loadedFileIdRef` with unmount cancellation cleanup (`cancelled = true`).
+
+### Changed - Honest Cold-Start Reconciliation (`reconciliation.ts`)
+
+- `classifyRemoteUpdate` now operates over `localBaseline: LocalBaseline | null`, eliminating fabricated `v1/null` comparisons.
+- Introduced `bootstrap_server` (clean cold start) and `adopt_metadata_keep_edits` (eager in-flight typing preserved).
+- Unified `markServerPersisted(updatedAt)` across bootstrap, apply, and metadata adoption to eliminate persistent red save dot on cold opens.
+
+### Fixed - Technical Debt & Suite Governance
+
+- **TD-04 Resolved:** Fixed legacy test ESLint violations with typed `CycleFolderRow` maps and pruned unused imports.
+- **TD-06 Resolved:** Removed dead `SyncStatus['error']` union member and updated `sync-indicator.tsx`.
+- **Test Scripts Normalized:** Converted default `npm test` to non-interactive `vitest run` to eliminate watch-mode hangs, adding `test:watch` for interactive development.
+
 ## [1.6.0] - 2026-08-23 (AI Preview Explicit Decision Model & Data-Safety Hardening)
 
 ### Added - Explicit Preview Decision Model (`useAIStream`)

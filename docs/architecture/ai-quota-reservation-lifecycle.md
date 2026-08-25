@@ -98,6 +98,18 @@ Quota refunds are reserved for **system failures**. Any outcome driven by a **us
 | Stream startup / mid-stream failure | System error | **Refund** (`refundAIReservation`) |
 | Optimistic-lock conflict (412) at commit time | System condition | **Refund** |
 | Client exception during pipeline | System error | **Refund** |
+| HARD page reload mid-generation (cleanup never ran) | Lost baseline | **Refund** (`refundAIReservation(op, 'reload_recovery')` on next mount, after `getAIReservationStatus`) |
+| HARD page reload with a completed undecided preview | Undecided generation | **Settle as consumed** (`commitAIReservation`, idempotent) — preview itself is never applied |
+
+### E. Reload Recovery & Operation Query (Phase 11 amendment)
+
+A sessionStorage registry (`src/lib/ai/pending-operation-store.ts`) tracks every in-flight
+or undecided AI operation for the current TAB (identifiers + phase only — never document
+content). Because React cleanup never runs on a hard reload, orphaned records are settled
+on the next mount: the client queries `getAIReservationStatus(operationId)` (read-only
+session-scoped server action in `src/server/actions/ai-ops.ts`; cross-user ids collapse
+to `not_found`) and settles per the matrix above. The abandoned preview output is never
+applied to the document and never treated as committed.
 | User rejects the completed preview (`rejectPreview`) | User decision | **Settle as consumed** |
 | User re-runs the operation (`retryPreview`) — old session | User decision | **Settle as consumed** (new session reserves fresh quota) |
 | User stops a running generation (`stopStream`) | User decision | **Settle as consumed** before abort |

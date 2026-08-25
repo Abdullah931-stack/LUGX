@@ -625,4 +625,137 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         expect(afterDecisionSpy).not.toHaveBeenCalled();
         afterDecisionSpy.mockRestore();
     });
+
+    // ==================== Phase 11 hotfix: hydration lifecycle ====================
+
+    it("cold start: lost local snapshot still paints the server file (even server v1) and turns save green", async () => {
+        const seedSnapshot = { ...(mockLocalDb[fileId] as Record<string, unknown>) };
+        delete mockLocalDb[fileId]; // simulate the lost/corrupted local record
+        // Persistent gate: React 18 may double-invoke mount effects in tests,
+        // so EVERY mount must receive the same authoritative server payload.
+        vi.mocked(fileOps.getFile).mockImplementation(async () =>
+            ({
+                success: true,
+                data: {
+                    id: fileId,
+                    title: "Test Note",
+                    content: "<p>Server authoritative content</p>",
+                    version: 1,
+                    etag: "etag-server-v1",
+                    updatedAt: "2026-08-25T00:00:00.000Z",
+                },
+            }) as never
+        );
+
+        const { result } = renderHook(() =>
+            useEditorOrchestrator({ fileId, userId, editor })
+        );
+
+        await waitFor(() => expect(result.current.hydration).toBe("ready"));
+        expect(editor.getHTML()).toContain("Server authoritative content");
+        expect(result.current.serverVersion).toBe(1);
+        expect(result.current.lastSaved).not.toBeNull(); // green save dot
+        expect(result.current.isDirty).toBe(false);
+
+        // Hydration itself must never trigger a rogue autosave. Scoped to OUR
+        // payload: stale debounce timers from earlier suites may legally flush
+        // their own queued writes inside this wait window.
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        expect(
+            vi.mocked(fileOps.updateFileContent).mock.calls.some(
+                (c) => c[1] === "<p>Server authoritative content</p>"
+            )
+        ).toBe(false);
+
+        mockLocalDb[fileId] = seedSnapshot; // restore suite state
+    });
+
+    it("defers autosave until hydration completes, then writes with hydrated anchors", async () => {
+        let releaseGet!: (value: unknown) => void;
+        const getGate = new Promise((resolve) => {
+            releaseGet = resolve;
+        });
+        // Persistent gate: both effect invocations must hang on this promise.
+        vi.mocked(fileOps.getFile).mockImplementation(() => getGate as never);
+
+        const { result } = renderHook(() =>
+            useEditorOrchestrator({ fileId, userId, editor })
+        );
+        await waitFor(() => expect(result.current.title).toBe("")); // pre-hydration mount
+        expect(result.current.hydration).toBe("hydrating");
+
+        // Eager edit BEFORE the fetch resolves: must never reach the server.
+        act(() => {
+            result.current.handleEditorChange("<p>Eager pre-hydration edit</p>");
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+
+        // Resolve with content IDENTICAL to the seeded local snapshot so the
+        // policy lands on adopt_metadata and advances the anchors to v2.
+        releaseGet({
+            success: true,
+            data: {
+                id: fileId,
+                title: "Test Note",
+                content: "<p>Original document content</p>",
+                version: 2,
+                etag: "etag-v2",
+            },
+        });
+        await waitFor(() => expect(result.current.hydration).toBe("ready"));
+
+        act(() => {
+            result.current.handleEditorChange("<p>Post-hydration edit</p>");
+        });
+        // Debounce (1s) must fully elapse before the anchored write lands.
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledWith(
+            fileId,
+            "<p>Post-hydration edit</p>",
+            { expectedVersion: 2, expectedETag: "etag-v2" }
+        );
+    });
+
+    it("OFFLINE-FIRST: unreachable server with no local snapshot unlocks local composition", async () => {
+        // Transport-level failure (network down): the request was PRODUCED but
+        // the server could not be reached. Per offline-first, this is NEVER
+        // fatal \u2014 the user completes on the local copy.
+        // Persistent rejection gate: BOTH effect invocations must hit the same
+        // transport failure (React 18 double-invokes mount effects in tests).
+        vi.mocked(fileOps.getFile).mockImplementation(
+            (() => Promise.reject(new Error("network unreachable"))) as never
+        );
+        vi.mocked(fileOps.updateFileContent).mockRejectedValue(
+            new Error("network unreachable")
+        );
+
+        const { result } = renderHook(() =>
+            useEditorOrchestrator({ fileId, userId, editor })
+        );
+
+        // NOT fatal: hydration settles ready and releases the keyboard.
+        await waitFor(() => expect(result.current.hydration).toBe("ready"));
+
+        act(() => {
+            result.current.handleEditorChange("<p>Offline composition</p>");
+        });
+
+        // The sync attempt is honestly produced against the unreachable server...
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledWith(
+            fileId,
+            "<p>Offline composition</p>",
+            { expectedVersion: 1, expectedETag: undefined }
+        );
+
+        // ...and COMPLETES LOCALLY: durable dirty snapshot in IndexedDB.
+        const localRecord = mockLocalDb[fileId] as
+            | { content?: string; isDirty?: boolean }
+            | undefined;
+        expect(localRecord).toBeDefined();
+        expect(localRecord?.isDirty).toBe(true);
+        expect(String(localRecord?.content)).toContain("Offline composition");
+    });
 });

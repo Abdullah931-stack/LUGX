@@ -24,7 +24,10 @@ import { AIOperationType } from "@/lib/ai/stream-handler";
 import { SyncConflict } from "@/lib/sync/idb-types";
 import { ConflictResolutionPayload } from "@/components/sync/conflict-dialog";
 import { broadcastCrossTabEvent, subscribeCrossTabSync } from "@/lib/sync/cross-tab-sync";
-import { classifyRemoteUpdate } from "@/lib/sync/reconciliation";
+import {
+    classifyRemoteUpdate,
+    type LocalBaseline,
+} from "@/lib/sync/reconciliation";
 import { AIStreamStatus } from "@/lib/ai/stream-session";
 import { streamingGhostPluginKey } from "@/lib/extensions/streaming-ghost-extension";
 import { EDITOR_AUTOSAVE_DEBOUNCE_MS } from "@/config/editor.config";
@@ -91,6 +94,8 @@ export interface UseEditorOrchestratorReturn {
     writeState: WriteStateType;
     /** Exposed for tests and UI gating: whether an auto-save may fire right now. */
     canAutoSave: () => boolean;
+    /** Hydration lifecycle of the initial load pipeline for this file. */
+    hydration: "hydrating" | "ready" | "fatal";
     syncHook: ReturnType<typeof useSync>;
     handleEditorChange: (newContent: string) => void;
 }
@@ -128,9 +133,21 @@ export function useEditorOrchestrator({
     // Synchronous mirror of the dirty flag, read by the reconciliation policy at
     // decision time without waiting for a React state flush.
     const isDirtyRef = useRef<boolean>(false);
-    // One-shot guard: the initial load pipeline (IDB paint + background server fetch
+    // File-identity tracking guard: the initial load pipeline (IDB paint + background server fetch
     // + reconciliation) must run exactly once per mounted fileId.
-    const initialLoadDoneRef = useRef(false);
+    const loadedFileIdRef = useRef<string | null>(null);
+    // HYDRATION LIFECYCLE (sync-before-write): the editor surface stays frozen
+    // until the offline-first pipeline settled. 'fatal' means NOTHING could be
+    // loaded from either side (server failure AND no local snapshot).
+    const hydratedRef = useRef(false);
+    const loadFailureRef = useRef(false);
+    const [hydration, setHydration] = useState<"hydrating" | "ready" | "fatal">("hydrating");
+    // SINGLE-FLIGHT guard: the initial pipeline must never fork into competing
+    // getFile server-action cycles when render-scoped identities change.
+    const pipelineRef = useRef<Promise<void> | null>(null);
+    const markServerPersisted = useCallback((updatedAt?: string | Date | null) => {
+        setLastSaved(updatedAt ? new Date(updatedAt) : new Date());
+    }, []);
 
     // Keep active conflict ref synchronized
     useEffect(() => {
@@ -263,6 +280,7 @@ export function useEditorOrchestrator({
      */
     const canAutoSave = useCallback((): boolean => {
         if (isProgrammaticUpdateRef.current) return false;
+        if (hydratedRef.current !== true) return false;
         if (aiStream.isLoading || aiStream.isStreaming || aiStream.isCommitting) return false;
         if (
             aiStream.status === "reserved" ||
@@ -283,6 +301,10 @@ export function useEditorOrchestrator({
      */
     const executeServerWrite = useCallback(
         async (content: string) => {
+            if (!hydratedRef.current) {
+                console.log("[Orchestrator] Auto-save deferred: hydration not complete.");
+                return;
+            }
             if (!canAutoSave()) {
                 console.log("[Orchestrator] Auto-save skipped due to active suspension gate invariant");
                 return;
@@ -463,6 +485,8 @@ export function useEditorOrchestrator({
     const handleEditorChange = useCallback(
         (newContent: string) => {
             if (isProgrammaticUpdateRef.current) return;
+            // Sync-before-write: drop input events until hydration completed.
+            if (!hydratedRef.current) return;
 
             // Target-scoped manual edit guard
             if (aiStream.isLoading || aiStream.isStreaming || aiStream.status === "reserved" || aiStream.status === "preview_ready") {
@@ -505,16 +529,35 @@ export function useEditorOrchestrator({
     // the deterministic Local-First reconciliation policy instead of a blind content
     // comparison.
     useEffect(() => {
-        let isMounted = true;
+        // SINGLE-FLIGHT hydration pipeline (sync-before-write).
+        let cancelled = false;
 
         async function loadInitialFile() {
-            if (initialLoadDoneRef.current) return;
+            if (loadedFileIdRef.current === fileId || pipelineRef.current) return;
+            pipelineRef.current = Promise.resolve();
 
-            // Step 1: Instant load from IndexedDB (offline-first paint)
-            if (syncHook.isInitialized) {
-                try {
-                    const localFile = await syncHook.loadLocal(fileId);
-                    if (localFile && isMounted) {
+            // Freeze the editor surface so nothing can be typed pre-hydration.
+            hydratedRef.current = false;
+            loadFailureRef.current = false;
+            setHydration("hydrating");
+            if (editor && !editor.isDestroyed) editor.setEditable(false);
+
+            // Identity-stable handles: never depend on per-render identities.
+            const sh = syncHookRef.current;
+
+            // The REAL captured baseline (null on cold start - never fabricated).
+            let localBaseline: LocalBaseline | null = null;
+
+            try {
+                // Step 1: instant paint from IndexedDB (offline-first).
+                if (sh?.isInitialized) {
+                    const localFile = await sh.loadLocal(fileId);
+                    if (!cancelled && localFile) {
+                        localBaseline = {
+                            version: localFile.version || 1,
+                            etag: localFile.etag || null,
+                            content: sanitizeHtml(localFile.content || ""),
+                        };
                         setTitle(localFile.title);
                         fileVersionRef.current = localFile.version || 1;
                         setServerVersion(localFile.version || 1);
@@ -529,118 +572,147 @@ export function useEditorOrchestrator({
                             isProgrammaticUpdateRef.current = false;
                         }
                     }
-                } catch (idbErr) {
-                    console.warn("[Orchestrator] Local load exception:", idbErr);
                 }
-            }
 
-            try {
-                // Step 2: Background Server Fetch + Reconciliation
+                // Step 2: background authoritative fetch + reconciliation.
                 const result = await getFile(fileId);
-                if (!isMounted) return;
+                if (cancelled) return;
 
-                if (result.success && result.data) {
-                    setTitle(result.data.title);
+                if (!(result.success && result.data)) {
+                    const localNow = await sh?.loadLocal(fileId);
+                    if (!localNow && !isDirtyRef.current) {
+                        // Server ANSWERED missing AND nothing local/eager.
+                        loadFailureRef.current = true;
+                    }
+                    if (!localNow && onNavigate) {
+                        onNavigate("/workspace");
+                    }
+                } else {
+                    const data = result.data;
+                    setTitle(data.title);
+                    const remoteVersion = data.version ?? 1;
+                    const remoteEtag = data.etag ?? null;
+                    const safeContent = sanitizeHtml(data.content || "");
 
-                    const remoteVersion = result.data.version ?? 1;
-                    const remoteEtag = result.data.etag ?? null;
-                    const remoteUpdatedAt = result.data.updatedAt
-                        ? new Date(result.data.updatedAt).getTime()
-                        : null;
-
-                    const currentContent = editor?.getHTML() || "";
-                    const serverContent = result.data.content || "";
-                    const safeContent = sanitizeHtml(serverContent);
-
-                    // Deterministic Local-First reconciliation decision
                     const decision = classifyRemoteUpdate({
+                        localBaseline,
                         isDirty: isDirtyRef.current,
-                        localVersion: fileVersionRef.current,
-                        localEtag: fileEtagRef.current,
-                        localContent: currentContent,
                         remoteVersion,
                         remoteEtag,
                         remoteContent: safeContent,
-                        remoteUpdatedAt,
-                        localLastModified: null,
                     });
 
-                    if (decision.action === "apply") {
-                        // Fast-forward: verified-newer server revision built on our clean state.
+                    const adoptAnchors = () => {
                         fileVersionRef.current = remoteVersion;
                         setServerVersion(remoteVersion);
                         fileEtagRef.current = remoteEtag;
                         setServerEtag(remoteEtag);
+                    };
+                    const paintServer = () => {
                         editorGenerationRef.current += 1;
-
-                        if (currentContent !== safeContent) {
-                            isProgrammaticUpdateRef.current = true;
-                            try {
-                                editor?.commands.setContent(safeContent);
-                            } finally {
-                                isProgrammaticUpdateRef.current = false;
-                            }
+                        isProgrammaticUpdateRef.current = true;
+                        try {
+                            editor?.commands.setContent(safeContent);
+                        } finally {
+                            isProgrammaticUpdateRef.current = false;
                         }
-
-                        if (syncHook.isInitialized) {
-                            await syncHook.saveLocal({
+                    };
+                    const persistClean = async () => {
+                        if (sh?.isInitialized) {
+                            await sh.saveLocal({
                                 id: fileId,
                                 content: safeContent,
-                                title: result.data.title,
+                                title: data.title,
                                 version: remoteVersion,
                                 etag: remoteEtag || "",
                                 isDirty: false,
                             });
                         }
-                    } else if (decision.action === "adopt_metadata") {
-                        // Identical payload; silently adopt the authoritative metadata.
-                        fileVersionRef.current = remoteVersion;
-                        setServerVersion(remoteVersion);
-                        fileEtagRef.current = remoteEtag;
-                        setServerEtag(remoteEtag);
+                    };
 
-                        if (syncHook.isInitialized) {
-                            await syncHook.saveLocal({
-                                id: fileId,
-                                content: safeContent,
-                                title: result.data.title,
-                                version: remoteVersion,
-                                etag: remoteEtag || "",
-                                isDirty: false,
-                            });
+                    switch (decision.action) {
+                        case "bootstrap_server": {
+                            // COLD START (clean editor): the server document is
+                            // the only truth - paint + persist clean ancestor.
+                            adoptAnchors();
+                            paintServer();
+                            markServerPersisted(data.updatedAt);
+                            setIsDirty(false);
+                            await persistClean();
+                            break;
                         }
-                    } else {
-                        // keep_local: dirty divergence or non-newer remote. The editor keeps
-                        // rendering local truth; version anchors are intentionally NOT
-                        // advanced so the next optimistic write surfaces a genuine 412 and
-                        // routes the case through explicit three-way conflict resolution.
-                        console.warn(
-                            `[Orchestrator] Remote update retained locally during initial load (reason: ${decision.reason}). Optimistic locking will surface a conflict if required.`
-                        );
-                    }
-                } else {
-                    const localFile = await syncHook.loadLocal(fileId);
-                    if (!localFile && onNavigate) {
-                        onNavigate("/workspace");
+                        case "apply": {
+                            adoptAnchors();
+                            if (editor?.getHTML() !== safeContent) paintServer();
+                            markServerPersisted(data.updatedAt);
+                            await persistClean();
+                            break;
+                        }
+                        case "adopt_metadata": {
+                            adoptAnchors();
+                            markServerPersisted(data.updatedAt);
+                            await persistClean();
+                            break;
+                        }
+                        case "adopt_metadata_keep_edits": {
+                            // COLD START with eager in-flight edits: anchors ONLY.
+                            adoptAnchors();
+                            console.warn(
+                                "[Orchestrator] Cold-start eager edits: adopted remote metadata anchors only; user text kept dirty."
+                            );
+                            break;
+                        }
+                        case "keep_local":
+                        default:
+                            console.warn(
+                                `[Orchestrator] Remote update retained locally during initial load (reason: ${decision.reason}). Optimistic locking will surface a conflict if required.`
+                            );
+                            break;
                     }
                 }
             } catch (fetchErr) {
                 console.warn("[Orchestrator] Server fetch offline / failed:", fetchErr);
             } finally {
-                if (isMounted) {
-                    initialLoadDoneRef.current = true;
+                if (cancelled) return;
+
+                loadedFileIdRef.current = fileId;
+
+                const nothingUsable =
+                    !localBaseline && !isDirtyRef.current && loadFailureRef.current;
+                if (nothingUsable) {
+                    setHydration("fatal");
+                    setError(
+                        "تعذّر تحميل الملف من الخادم ولا توجد نسخة محلية. تحقق من الاتصال ثم أعد المحاولة."
+                    );
+                    // Stay frozen: an empty unanchored surface must not take input.
+                    hydratedRef.current = false;
+                    return;
                 }
+
+                // UNCONDITIONAL release (single-flight): even if an unmount or a
+                // newer render superseded this closure, hydration succeeded.
+                hydratedRef.current = true;
+                setHydration("ready");
+                if (editor && !editor.isDestroyed) editor.setEditable(true);
             }
         }
 
-        if (fileId && editor) {
-            loadInitialFile();
-        }
+        // SINGLE-FLIGHT trigger: identity-stable. syncHook/onNavigate are read
+        // through refs inside the pipeline, so fresh per-render objects can no
+        // longer re-arm this effect and fork competing getFile server-actions.
+        if (!fileId || !editor) return;
+        if (loadedFileIdRef.current === fileId || pipelineRef.current) return;
+        const run = loadInitialFile();
+        pipelineRef.current = run.finally(() => {
+            pipelineRef.current = null;
+        });
 
         return () => {
-            isMounted = false;
+            cancelled = true;
         };
-    }, [fileId, editor, syncHook, onNavigate]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- single-flight keyed on file identity
+    }, [fileId, editor]);
+
 
     // Cross-tab synchronization listener
     useEffect(() => {
@@ -867,6 +939,7 @@ export function useEditorOrchestrator({
 
         writeState,
         canAutoSave,
+        hydration,
         syncHook,
         handleEditorChange,
     };

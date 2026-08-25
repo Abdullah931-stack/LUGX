@@ -58,6 +58,7 @@ export default function EditorPage() {
     // Centralized Editor Orchestrator (Phase 9 / Gate G9)
     const {
         title,
+        hydration,
 
         aiStatus,
         previewText,
@@ -307,8 +308,30 @@ export default function EditorPage() {
             )}
 
             {/* Editor - Scrollable container */}
-            <div className="flex-1 overflow-auto custom-scrollbar">
-                <EditorContent editor={editor} className="max-w-4xl mx-auto" />
+            <div className="flex-1 overflow-auto custom-scrollbar relative">
+                {hydration === "hydrating" && !editor?.getText() && (
+                    <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-xs z-10 flex flex-col items-center justify-center gap-3">
+                        <Loader2 className="w-7 h-7 animate-spin text-indigo-400" />
+                        <span className="text-xs text-zinc-400 font-medium">جاري تحميل ومزامنة المستند...</span>
+                    </div>
+                )}
+                {hydration === "fatal" ? (
+                    <div className="m-6 p-8 rounded-xl bg-red-950/30 border border-red-800/40 text-center flex flex-col items-center justify-center gap-3 max-w-md mx-auto mt-16">
+                        <AlertTriangle className="w-10 h-10 text-red-400" />
+                        <h3 className="text-base font-semibold text-red-200">تعذّر فتح المستند</h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                            الملف المطلوب غير موجود على الخادم ولا تتوفر منه نسخة محلية محفوظة.
+                        </p>
+                        <button
+                            onClick={() => router.push("/workspace")}
+                            className="mt-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-medium transition-colors cursor-pointer"
+                        >
+                            العودة إلى مساحة العمل
+                        </button>
+                    </div>
+                ) : (
+                    <EditorContent editor={editor} className="max-w-4xl mx-auto" />
+                )}
             </div>
 
             {/* Status Bar - Fixed at bottom */}
@@ -320,13 +343,22 @@ export default function EditorPage() {
 
                 {/* Center: Save Status & Sync Indicator */}
                 <div className="flex items-center gap-2">
-                    <span>Save</span>
-                    {isSaving || isCommitting ? (
-                        <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
-                    ) : lastSaved ? (
-                        <div className="w-2 h-2 rounded-full bg-green-500/70 blur-[1px]" title="Saved" />
+                    {hydration === "hydrating" ? (
+                        <div className="flex items-center gap-1.5 text-zinc-400">
+                            <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />
+                            <span>Syncing...</span>
+                        </div>
                     ) : (
-                        <div className="w-2 h-2 rounded-full bg-red-500/70 blur-[1px]" title="Unsaved" />
+                        <>
+                            <span>Save</span>
+                            {isSaving || isCommitting ? (
+                                <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
+                            ) : lastSaved ? (
+                                <div className="w-2 h-2 rounded-full bg-green-500/70 blur-[1px]" title="Saved" />
+                            ) : (
+                                <div className="w-2 h-2 rounded-full bg-red-500/70 blur-[1px]" title="Unsaved" />
+                            )}
+                        </>
                     )}
 
                     {/* Sync Status Indicator */}

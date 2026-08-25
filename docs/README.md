@@ -51,6 +51,7 @@ docs/
 | [SYNC_SYSTEM.md](./reference/SYNC_SYSTEM.md) | Original sync delivery snapshot *(historical banner inside)* |
 | [UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md](./reference/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md) | G1–G10 readiness-gate compliance matrix, dual atomicity model, feature flags |
 | [test-database-isolation.md](./reference/test-database-isolation.md) | Phase 10: isolated Neon test branch — fail-closed guard, `test` vs `test:live` split, closure evidence |
+| [phase-11-editor-orchestration-closure.md](./reference/phase-11-editor-orchestration-closure.md) | Phase 11 closure: hydration lifecycle, cold-start reconciliation matrix, offline-first contract, reload recovery |
 
 ### Specifications (`specs/`)
 
@@ -105,7 +106,7 @@ docs/
 | Document | Scope |
 | :--- | :--- |
 | [CHANGELOG.md](./CHANGELOG.md) | Notable changes per release (append-only) |
-| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Known debt, accepted risks, decisions (TD-01 … TD-06) |
+| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Known debt, accepted risks, decisions (TD-01 … TD-07) |
 
 ---
 

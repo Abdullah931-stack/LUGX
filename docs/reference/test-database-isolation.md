@@ -32,7 +32,7 @@ remain in place as a **second layer of defense**, not a substitute.
 
 | Command | Scope |
 |---|---|
-| `npm run test` | Unit/contract tests only (334 tests across 28 files). No DB, no external services. |
+| `npm run test` | Unit/contract tests only (runs ONCE via `vitest run`; `test:watch` exists for watch mode). No DB, no external services. Counts evolve per phase — cite live numbers from the latest run output. |
 | `npm run test:live` | The 14 LIVE suites against the isolated Neon branch (+ live AI keys for the e2e smoke). |
 | `npm run test:all` | Both, sequentially. |
 
@@ -112,8 +112,12 @@ to a live URL; push failures surface immediately).
 
 ## 5. Evidence of isolation
 
-- Default run (`npx vitest run`): **28 files / 334 tests — all passed**, zero
-  LIVE files included.
+- **Phase 10 closure run (2026-08-24, dated record):** default `npx vitest run`
+  then measured **28 files / 334 tests — all passed**, zero LIVE files included.
+  *(Current counts live in the 2026-08-25 update bullet below.)*
+  - **Update (2026-08-25, post Phase 11):** default bucket now **29 files /
+    349 tests, all passed** (hydration-lifecycle + reload-recovery suites added;
+    `npm run test` runs once via `vitest run` — `test:watch` available).
 - Live run (`npm run test:live`) on the isolated branch: **14/14 files / 62 tests
   passed** — including all five live twins of formerly-mocked suites (see §2.1).
 - Guard unit tests → 7/7 passed (main-branch refusal, missing-URL refusal,

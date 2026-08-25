@@ -6,10 +6,8 @@ import {
 
 function base(overrides: Partial<ClassifyRemoteUpdateParams> = {}): ClassifyRemoteUpdateParams {
     return {
+        localBaseline: { version: 3, etag: '"etag-v3"', content: "<p>Local content</p>" },
         isDirty: false,
-        localVersion: 3,
-        localEtag: '"etag-v3"',
-        localContent: "<p>Local content</p>",
         remoteVersion: 4,
         remoteEtag: '"etag-v4"',
         remoteContent: "<p>Remote content</p>",
@@ -19,72 +17,105 @@ function base(overrides: Partial<ClassifyRemoteUpdateParams> = {}): ClassifyRemo
 
 describe("Local-First Remote Update Reconciliation Policy", () => {
     it("fast-forwards when local is clean and the server holds a verified-newer revision", () => {
-        const decision = classifyRemoteUpdate(base());
-        expect(decision).toEqual({
+        expect(classifyRemoteUpdate(base())).toEqual({
             action: "apply",
             reason: "fast_forward_clean",
         });
     });
 
-    it("corroborates freshness with server timestamps when both are available", () => {
-        const newer = classifyRemoteUpdate(
-            base({ remoteUpdatedAt: 5_000, localLastModified: 1_000 })
-        );
-        expect(newer.action).toBe("apply");
+    // --- Cold-start matrix (localBaseline === null) ------------------------------
 
-        // A server timestamp OLDER than the local one contradicts the version ladder
-        // (clock-skewed replica) -> refuse the fast-forward, keep local truth.
-        const staleTimestamp = classifyRemoteUpdate(
-            base({ remoteUpdatedAt: 500, localLastModified: 9_000 })
-        );
-        expect(staleTimestamp).toEqual({ action: "keep_local", reason: "remote_not_newer" });
+    it("BOOTSTRAPS from the server on a clean cold start (no local baseline at all)", () => {
+        expect(classifyRemoteUpdate(base({ localBaseline: null }))).toEqual({
+            action: "bootstrap_server",
+            reason: "no_local_baseline_clean",
+        });
     });
 
-    it("adopts metadata silently when contents are identical", () => {
+    it("keeps eager in-flight edits and adopts only metadata anchors on a dirty cold start", () => {
+        expect(classifyRemoteUpdate(base({ localBaseline: null, isDirty: true }))).toEqual({
+            action: "adopt_metadata_keep_edits",
+            reason: "no_local_baseline_eager",
+        });
+    });
+
+    it("bootstraps even when the server file is still at version 1 (lost-local regression guard)", () => {
         const decision = classifyRemoteUpdate(
             base({
-                localContent: "<p>Same</p>",
-                remoteContent: "<p>Same</p>",
-                remoteVersion: 9,
-                isDirty: true,
+                localBaseline: null,
+                remoteVersion: 1,
+                remoteEtag: '"etag-server-v1"',
+                remoteContent: "<p>Server authoritative content</p>",
             })
         );
-        expect(decision).toEqual({
+        expect(decision.action).toBe("bootstrap_server");
+    });
+
+    // --- Valid-baseline matrix ----------------------------------------------------
+
+    it("adopts metadata silently when contents are identical", () => {
+        expect(
+            classifyRemoteUpdate(
+                base({
+                    localBaseline: { version: 9, etag: '"etag-v9"', content: "<p>Same</p>" },
+                    remoteVersion: 9,
+                    remoteEtag: '"etag-v9b"',
+                    remoteContent: "<p>Same</p>",
+                    isDirty: true,
+                })
+            )
+        ).toEqual({
             action: "adopt_metadata",
             reason: "identical_content_metadata_drift",
         });
     });
 
     it("keeps local truth when the document is dirty over a superseded base", () => {
-        const decision = classifyRemoteUpdate(base({ isDirty: true }));
-        expect(decision).toEqual({ action: "keep_local", reason: "dirty_local_divergent" });
+        expect(classifyRemoteUpdate(base({ isDirty: true }))).toEqual({
+            action: "keep_local",
+            reason: "dirty_local_divergent",
+        });
     });
 
     it("keeps local truth when the remote is not newer than local", () => {
-        const decision = classifyRemoteUpdate(base({ remoteVersion: 3 }));
-        expect(decision).toEqual({ action: "keep_local", reason: "remote_not_newer" });
+        expect(classifyRemoteUpdate(base({ remoteVersion: 3 }))).toEqual({
+            action: "keep_local",
+            reason: "remote_not_newer",
+        });
     });
 
     it("keeps local truth when only the version advanced without an ETag change", () => {
-        const decision = classifyRemoteUpdate(base({ remoteEtag: '"etag-v3"' }));
-        expect(decision).toEqual({ action: "keep_local", reason: "remote_not_newer" });
+        expect(classifyRemoteUpdate(base({ remoteEtag: '"etag-v3"' }))).toEqual({
+            action: "keep_local",
+            reason: "remote_not_newer",
+        });
     });
 
     it("keeps local truth when the remote version regressed", () => {
-        const decision = classifyRemoteUpdate(base({ remoteVersion: 2 }));
-        expect(decision).toEqual({ action: "keep_local", reason: "remote_not_newer" });
+        expect(classifyRemoteUpdate(base({ remoteVersion: 2 }))).toEqual({
+            action: "keep_local",
+            reason: "remote_not_newer",
+        });
     });
 
     it("normalizes weak validators and surrounding quotes before ETag comparison", () => {
-        const weakForm = classifyRemoteUpdate(
-            base({ localEtag: "W/\"etag-v3\"", remoteEtag: "\"etag-v4\"" })
-        );
-        expect(weakForm.action).toBe("apply");
+        const b = base();
+        if (!b.localBaseline) throw new Error("unreachable");
 
-        const sameAfterNormalize = classifyRemoteUpdate(
-            base({ localEtag: '"etag-v4"', remoteEtag: "W/\"etag-v4\"" })
-        );
-        // Same effective validator + differing content + equal version -> remote not newer
+        // W/-prefixed local vs quoted remote: same effective validator ladder.
+        const weakLocal = classifyRemoteUpdate({
+            ...b,
+            localBaseline: { ...b.localBaseline, etag: 'W/"etag-v3"' },
+        });
+        expect(weakLocal.action).toBe("apply");
+
+        // Same effective validator after normalization + differing content:
+        // equal version means we already hold the latest known revision.
+        const sameAfterNormalize = classifyRemoteUpdate({
+            ...b,
+            localBaseline: { ...b.localBaseline, etag: '"etag-v4"' },
+            remoteEtag: 'W/"etag-v4"',
+        });
         expect(sameAfterNormalize).toEqual({
             action: "keep_local",
             reason: "remote_not_newer",

@@ -1,4 +1,4 @@
-﻿# Phase 11 Closure Report - TipTap Editor, AutoSave & Sync Orchestration
+# Phase 11 Closure Report - TipTap Editor, AutoSave & Sync Orchestration
 
 Status: **CLOSED** (2026-08-24)
 Session contract: Phase 9 session-execution template (one phase per session).
@@ -148,10 +148,11 @@ live test:
 
 Non-interactive reproduction (executed post-fix, all green):
 
-```
+```bash
 npx vitest run        # full default bucket (watch-free)
 npm run test:live     # LIVE bucket on the isolated branch
 ```
+
 ## 9. Full default-bucket sweep - PASSED
 
 After switching the invocation to non-interactive `vitest run` and normalizing
@@ -180,3 +181,39 @@ for `src/test/ai-reservation-status.live.test.ts` under the default config.
 Post-round verification: tsc --noEmit exit 0; full default bucket **29 files / 344 tests passed**.
 Deferred by owner decision (unchanged): TD-02 (Phase 17 cron wiring), TD-03 (declined), TD-07 (Phase 19 Playwright).
 Commit intentionally withheld — the owner will issue it explicitly at final closure.
+
+## 11. Post-9642816 hotfix - Hydration Lifecycle, Offline-First Contract & UI Integration (owner-reported)
+
+Owner bug: file lost locally while present in DB never rendered; save dot stayed red.
+
+ROOT CAUSES fixed structurally:
+1. Reconciliation contract fabricated a baseline (v1/null) on cold start, so a
+   server v1 file misclassified as remote_not_newer -> editor stayed empty.
+   Contract now takes `localBaseline: LocalBaseline | null` and owns two new
+   closed-matrix actions: `bootstrap_server` (clean) and
+   `adopt_metadata_keep_edits` (eager edits preserved, anchors only).
+2. No lifecycle existed for loading. Added `hydration: hydrating | ready |
+   fatal`; the editor surface is FROZEN (`setEditable(false)`) until settle -
+   sync-before-write is structural, with cheap defense gates in
+   handleEditorChange / executeServerWrite / canAutoSave.
+3. Pipeline resilience & identity stability:
+   - `loadedFileIdRef` tracks active document identity, ensuring clean file switching without unmounting.
+   - `useEffect` cleanup returns `cancelled = true`, preventing unmounted state leakage on aborted fetches.
+4. UI Layer Integration (`page.tsx`):
+   - Animated backdrop blur loader during active hydration (`Loader2`).
+   - Fatal error state card with direct workspace recovery routing.
+   - Real-time status bar sync indicator (`Syncing...`).
+5. markServerPersisted(updatedAt) unified save-dot semantics across
+   bootstrap / apply / adopt_metadata (red-dot-after-open defect eliminated).
+
+OFFLINE-FIRST CONTRACT (owner refinement): a TRANSPORT failure during
+hydration NEVER freezes the editor - only a server-ANSWERED missing-file
+response (no local snapshot, no eager edits) is fatal. Offline composition
+completes locally as durable dirty IndexedDB snapshots, reconciling later via
+the standard optimistic-locking path. Covered by test OFFLINE-FIRST:
+unreachable server with no local snapshot unlocks local composition.
+
+Verification: reconciliation 10/10 - orchestration integration 15/15 -
+tsc --noEmit exit 0 - full default bucket **29 files / 349 tests passed**.
+Changes across reconciliation.ts and its tests, use-editor-orchestrator.ts,
+page.tsx, and integration tests are verified and ready.
