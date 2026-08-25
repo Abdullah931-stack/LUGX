@@ -64,7 +64,8 @@ export async function middleware(request: NextRequest) {
         // Redirect to login for page navigation
         const url = request.nextUrl.clone();
         url.pathname = "/login";
-        url.searchParams.set("redirectTo", request.nextUrl.pathname);
+        const redirectTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+        url.searchParams.set("redirectTo", redirectTarget);
         return NextResponse.redirect(url);
     }
 

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
 import { createClient, getUser } from "@/lib/supabase/server";
 import { eq } from "drizzle-orm";
-import { authRateLimiter } from "@/lib/rate-limit";
+import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 
 /**
  * Sign in with Google OAuth
@@ -12,11 +12,15 @@ import { authRateLimiter } from "@/lib/rate-limit";
 export async function signInWithGoogle(redirectTo?: string) {
     const supabase = await createClient();
 
+    const safeRedirect = resolveSafeRedirectPath(redirectTo, "/dashboard");
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const callbackUrl = new URL("/auth/callback", appUrl);
+    callbackUrl.searchParams.set("redirectTo", safeRedirect);
+
     const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-            redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback${redirectTo ? `?redirectTo=${encodeURIComponent(redirectTo)}` : ""
-                }`,
+            redirectTo: callbackUrl.toString(),
         },
     });
 
@@ -27,94 +31,6 @@ export async function signInWithGoogle(redirectTo?: string) {
     if (data.url) {
         redirect(data.url);
     }
-}
-
-/**
- * Sign in with email and password
- */
-export async function signInWithEmail(
-    email: string,
-    password: string
-): Promise<{ error?: string }> {
-    // ENGINEERING UPGRADE (W4): auth endpoints are the primary target for
-    // brute-force credential stuffing; enforce the shared sliding-window
-    // limiter keyed by the normalized email so one account cannot be hammered
-    // past the window regardless of how many clients hit it.
-    const rateLimitResult = await authRateLimiter.limit(normalizeAuthKey(email));
-    if (!rateLimitResult.success) {
-        return {
-            error: "Too many login attempts. Please try again in a few minutes.",
-        };
-    }
-
-    const supabase = await createClient();
-
-    const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-    });
-
-    if (error) {
-        return { error: error.message };
-    }
-
-    redirect("/dashboard");
-}
-
-/**
- * Sign up with email and password
- */
-export async function signUpWithEmail(
-    email: string,
-    password: string,
-    displayName?: string
-): Promise<{ error?: string }> {
-    // ENGINEERING UPGRADE (W4): same brute-force protection on sign-up —
-    // an attacker can also enumerate emails through registration attempts,
-    // so the limiter key is the normalized email, not the session.
-    const rateLimitResult = await authRateLimiter.limit(normalizeAuthKey(email));
-    if (!rateLimitResult.success) {
-        return {
-            error: "Too many registration attempts. Please try again in a few minutes.",
-        };
-    }
-
-    const supabase = await createClient();
-
-    const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-            data: {
-                display_name: displayName,
-            },
-        },
-    });
-
-    if (error) {
-        return { error: error.message };
-    }
-
-    // Create user record in our database
-    if (data.user) {
-        await db.insert(schema.users).values({
-            id: data.user.id,
-            email: data.user.email!,
-            displayName: displayName || data.user.email?.split("@")[0],
-            tier: "free",
-        }).onConflictDoNothing();
-    }
-
-    redirect("/dashboard");
-}
-
-/**
- * Normalize an email into a stable rate-limit key: lowercase and trimmed so
- * trivial casing variations (User@Example.com / user@example.com ) cannot
- * multiply the effective request budget.
- */
-function normalizeAuthKey(email: string): string {
-    return email.trim().toLowerCase();
 }
 
 /**
@@ -137,36 +53,33 @@ export async function syncUserToDatabase(): Promise<{ success: boolean; error?: 
             return { success: false, error: "No authenticated user" };
         }
 
-        // Check if user exists
-        const existingUser = await db.query.users.findFirst({
-            where: eq(schema.users.id, user.id),
+        const userEmail = user.email || `${user.id}@auth.local`;
+        const displayName = user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
+        const avatarUrl = user.user_metadata?.avatar_url || null;
+
+        // Atomic UPSERT: insert new user or update profile metadata without read-modify-write race
+        await db.insert(schema.users).values({
+            id: user.id,
+            email: userEmail,
+            displayName,
+            avatarUrl,
+            tier: "free",
+        }).onConflictDoUpdate({
+            target: schema.users.id,
+            set: {
+                displayName,
+                avatarUrl,
+                updatedAt: new Date(),
+            },
         });
 
-        if (!existingUser) {
-            // Create user record
-            await db.insert(schema.users).values({
-                id: user.id,
-                email: user.email!,
-                displayName: user.user_metadata?.full_name || user.email?.split("@")[0],
-                avatarUrl: user.user_metadata?.avatar_url,
-                tier: "free",
-            });
-
-            // Create initial usage record
-            await db.insert(schema.usage).values({
-                userId: user.id,
-                date: new Date().toISOString().split("T")[0],
-            });
-        } else {
-            // Update user info
-            await db.update(schema.users)
-                .set({
-                    displayName: user.user_metadata?.full_name || existingUser.displayName,
-                    avatarUrl: user.user_metadata?.avatar_url || existingUser.avatarUrl,
-                    updatedAt: new Date(),
-                })
-                .where(eq(schema.users.id, user.id));
-        }
+        // Atomic ensure: inserts initial usage record idempotently
+        await db.insert(schema.usage).values({
+            userId: user.id,
+            date: new Date().toISOString().split("T")[0],
+        }).onConflictDoNothing({
+            target: [schema.usage.userId, schema.usage.date],
+        });
 
         return { success: true };
 

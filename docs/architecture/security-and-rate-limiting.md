@@ -14,15 +14,30 @@ The Next.js middleware runs on every route except static assets (see its
 
 | Concern | Implementation |
 | :--- | :--- |
-| Protected pages | `/workspace`, `/account`, `/dashboard` require a Supabase session (`supabase.auth.getUser()`); unauthenticated page navigations redirect to `/login?redirectTo=…` |
+| Protected pages | `/workspace`, `/account`, `/dashboard` require a Supabase session (`supabase.auth.getUser()`); unauthenticated page navigations redirect to `/login?redirectTo=…` (preserving search params / deep links) |
 | Server Actions & API routes | Under the same protected paths, an unauthenticated request receives a **JSON `401 Unauthorized`** instead of an HTML redirect (an HTML redirect breaks the Server Action client runtime) |
 | Logged-in access control | Authenticated users hitting `/login` are redirected to `/dashboard` |
 | OAuth code interception | Any request carrying an OAuth `code` query param is redirected to `/auth/callback`, unless it already targets that path |
 | Session refresh | The middleware refreshes the Supabase session cookie on every matched request |
 
+### 1.1. Open Redirect & Host Header Injection Hardening (`src/lib/auth/safe-redirect.ts`)
+
+All redirect parameters entering the authentication pipeline are strictly validated by `resolveSafeRedirectPath(target, defaultPath)`:
+- **MAX_URL_LENGTH = 2048**: Enforces upfront bounds to prevent ReDoS/CPU exhaustion.
+- **Universal Backslash Rejection**: Rejects any occurrence of `\` in the target or decoded representation.
+- **Unicode Normalization (`NFKC`)**: Rejects homographs (full-width solidus `／`, reverse solidus `＼`, small solidus `﹨`) and zero-width characters (`\u200B-\u200D`, `\uFEFF`).
+- **Control Character & Null-Byte Stripping**: Strips ASCII `0x00-0x1F`, `0x7F`, and blocks null-byte/CRLF injection.
+- **Iterative 3-Pass Decoding**: Prevents multi-encoded bypasses (`/%2F%2Fevil.com`).
+- **Scheme & Protocol Rejection**: Rejects `javascript:`, `data:`, `vbscript:`, `blob:`, `file:`, `about:`, `mailto:`, `tel:`, `sms:`, `urn:`, and external protocols `http:`, `https:`.
+- **OAuth Callback (`/auth/callback`)**: Redirection targets are anchored exclusively to trusted origins (`process.env.NEXT_PUBLIC_APP_URL || origin`), completely ignoring spoofable `x-forwarded-host` headers.
+
+### 1.2. Cross-User Resource Isolation & Anti-Enumeration (404 vs 403)
+
+To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `file-ops.ts`, `import-file.ts`, `storage.ts`, and `stream/route.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed.
+
 Defense-in-depth note: middleware gating complements — never replaces — the
 per-route `getUser()` checks performed inside every API route and server action
-(see [`file-ownership-and-versioning.md`](./file-ownership-and-versioning.md)).
+(see [`file-ownership-and-versioning.md`](./file-ownership-and-versioning.md) and [`../reference/phase-12-auth-ownership-closure.md`](../reference/phase-12-auth-ownership-closure.md)).
 
 ---
 
@@ -120,6 +135,8 @@ user-facing deletions are tombstones
 ## 6. Verification
 
 ```bash
+npx vitest run src/test/auth-redirect.test.ts                  # open redirect & OAuth security
+npx vitest run src/test/cross-user-ownership.test.ts           # cross-user isolation & atomic sync
 npx vitest run src/app/api/files/[id]/route.putguard.test.ts   # auth + rate-limit + version guards
 npx vitest run src/server/actions/file-ops.ownership.test.ts   # ownership isolation
 npx tsc --noEmit                                               # type safety gate

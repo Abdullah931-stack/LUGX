@@ -1,10 +1,8 @@
 /**
- * Subscription Server Actions
+ * Subscription Database Utilities (Internal Server-Only)
  * 
  * Handles database operations for user subscriptions.
  */
-
-'use server';
 
 import { db } from '@/lib/db';
 import { users, subscriptions } from '@/lib/db/schema';

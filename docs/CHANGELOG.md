@@ -2,6 +2,24 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.8.0] - 2026-08-25 (Phase 12: Authentication, OAuth & Operation Ownership Hardening)
+
+### Added - Security Hardening & Safe Redirection (`src/lib/auth/safe-redirect.ts`)
+
+- **Deterministic Safe Redirect Path Resolver (`resolveSafeRedirectPath`):** Universal protection against Open Redirect and Host Header Injection vulnerabilities. Enforces `MAX_URL_LENGTH = 2048`, universal backslash rejection, `NFKC` Unicode homograph rejection, control/null-byte stripping, 3-pass decoding, and scheme/pseudo-protocol rejection (`javascript:`, `data:`, `vbscript:`, `blob:`, `file:`, `about:`, `mailto:`, `tel:`, `sms:`, `urn:`).
+- **OAuth Callback Hardening (`/auth/callback`):** Enforces canonical trusted origin resolution (`NEXT_PUBLIC_APP_URL || origin`) and ignores spoofable `x-forwarded-host` headers.
+- **Deep Link & Search Parameter Preservation (`src/middleware.ts`):** Preserves pathname and query string (`${pathname}${search}`) on unauthenticated login redirects, ensuring seamless return to active editor documents.
+- **Atomic UPSERT User Synchronization (`syncUserToDatabase`):** Eliminates race conditions during concurrent OAuth logins with atomic `onConflictDoUpdate` on `users.id` and `onConflictDoNothing` on `(user_id, date)` usage rows.
+
+### Changed - Unified Anti-Enumeration Error Mapping (404 vs 403)
+
+- **Unified 404 Not Found Semantics:** `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `restoreFile`, and `importFile` return `404 Not Found` for unauthorized or foreign parent/file resources to prevent attacker resource enumeration.
+- **AI Streaming Route Payload & Ownership Validation (`/api/ai/stream`):** Enforces non-empty string type validation on `fileId` (400 Bad Request on invalid format) and verifies session ownership against database records before quota reservation (404 Not Found if missing/foreign).
+- **Tenant-Isolated Storage Paths (`src/lib/supabase/storage.ts`):** Enforces `${userId}/` path prefix via `assertSafeStoragePath` and blocks directory traversal (`..`) sequences.
+- **Dead Code Cleanup:** Permanently removed unused legacy email authentication functions (`signInWithEmail`, `signUpWithEmail`, `normalizeAuthKey`) from `src/server/actions/auth-actions.ts`.
+- **Subscription Server Action Encapsulation:** Removed `'use server'` directive from `src/server/actions/subscription-actions.ts` to restrict DB mutation helpers to server-internal usage only.
+- **Hierarchy Traversal Cycle Guards:** Added `visited` set guard in `getDescendantIds` and `restoreFile` BFS queues to prevent infinite loops on cyclic parent structures.
+
 ## [1.7.0] - 2026-08-25 (Phase 11: Editor Sync Orchestration, Hydration Lifecycle & Reload Recovery)
 
 ### Added - Hydration Lifecycle & Sync-Before-Write (`useEditorOrchestrator`)

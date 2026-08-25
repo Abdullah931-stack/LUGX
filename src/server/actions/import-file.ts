@@ -55,7 +55,7 @@ export async function importFile(
             });
 
             if (!parent) {
-                return { success: false, error: "Parent folder not found or forbidden" };
+                return { success: false, error: "Parent folder not found" };
             }
 
             if (!parent.isFolder) {

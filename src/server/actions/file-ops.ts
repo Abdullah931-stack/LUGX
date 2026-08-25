@@ -36,6 +36,7 @@ import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-namin
 async function getDescendantIds(folderId: string, userId: string): Promise<string[]> {
     const descendantIds: string[] = [];
     const queue: string[] = [folderId];
+    const visited = new Set<string>([folderId]);
 
     while (queue.length > 0) {
         const currentId = queue.shift()!;
@@ -49,9 +50,12 @@ async function getDescendantIds(folderId: string, userId: string): Promise<strin
         });
 
         for (const child of children) {
-            descendantIds.push(child.id);
-            if (child.isFolder) {
-                queue.push(child.id);
+            if (!visited.has(child.id)) {
+                visited.add(child.id);
+                descendantIds.push(child.id);
+                if (child.isFolder) {
+                    queue.push(child.id);
+                }
             }
         }
     }
@@ -85,7 +89,7 @@ export async function createFile(
             });
 
             if (!parent) {
-                return { success: false, status: "forbidden", error: "Parent folder not found or forbidden" };
+                return { success: false, status: "not_found", error: "Parent folder not found" };
             }
 
             if (parent.deletedAt) {
@@ -458,6 +462,7 @@ export async function restoreFile(
         if (target.isFolder) {
             const descendantIds: string[] = [];
             const queue: string[] = [fileId];
+            const visited = new Set<string>([fileId]);
 
             while (queue.length > 0) {
                 const currentId = queue.shift()!;
@@ -470,9 +475,12 @@ export async function restoreFile(
                 });
 
                 for (const child of children) {
-                    descendantIds.push(child.id);
-                    if (child.isFolder) {
-                        queue.push(child.id);
+                    if (!visited.has(child.id)) {
+                        visited.add(child.id);
+                        descendantIds.push(child.id);
+                        if (child.isFolder) {
+                            queue.push(child.id);
+                        }
                     }
                 }
             }
@@ -547,7 +555,7 @@ export async function copyFile(
             });
 
             if (!destParent) {
-                return { success: false, status: "forbidden", error: "Destination folder not found or forbidden" };
+                return { success: false, status: "not_found", error: "Destination folder not found" };
             }
 
             if (!destParent.isFolder) {
@@ -669,7 +677,7 @@ export async function moveFile(
             });
 
             if (!parent) {
-                return { success: false, status: "forbidden", error: "Target parent folder not found or forbidden" };
+                return { success: false, status: "not_found", error: "Target parent folder not found" };
             }
 
             if (!parent.isFolder) {

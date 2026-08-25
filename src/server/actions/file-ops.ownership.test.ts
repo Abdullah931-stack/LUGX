@@ -85,7 +85,7 @@ function checkInMemoryCycle(
 
     const parent = folderMap.get(newParentFolderId);
     if (!parent || parent.userId !== userId || parent.deletedAt) {
-        return { allowed: false, status: 403, error: "Target parent folder not found or forbidden" };
+        return { allowed: false, status: 404, error: "Target parent folder not found" };
     }
 
     if (!parent.isFolder) {
@@ -156,14 +156,14 @@ describe("Phase 3: Algorithm & Contract Specifications (Pure Logic)", () => {
         expect(validRes.allowed).toBe(true);
     });
 
-    it("cross-user parent isolation: blocks selecting another user's folder as parent (403)", () => {
+    it("cross-user parent isolation: blocks selecting another user's folder as parent (404)", () => {
         const folders = new Map<string, CycleFolderRow>([
             ["user-b-folder", { parentFolderId: null, isFolder: true, deletedAt: null, userId: USER_B_ID }],
         ]);
 
         const res = checkInMemoryCycle("user-a-doc", "user-b-folder", folders, USER_A_ID);
         expect(res.allowed).toBe(false);
-        expect(res.status).toBe(403);
+        expect(res.status).toBe(404);
     });
 
     it("precondition check: enforces mandatory If-Match or expectedVersion on updates (428 / 412)", () => {

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/supabase/server";
+import { db, schema } from "@/lib/db";
+import { eq, and, isNull } from "drizzle-orm";
 import {
     getUserTier,
     reserveAndUpdateUsage,
@@ -51,6 +53,24 @@ export async function POST(req: NextRequest) {
         const MAX_INPUT_CHARS = 100_000;
         if (text.length > MAX_INPUT_CHARS) {
             return new NextResponse(`Payload too large: text exceeds ${MAX_INPUT_CHARS} characters limit`, { status: 400 });
+        }
+
+        // File ownership verification if fileId is supplied
+        if (fileId !== undefined && fileId !== null) {
+            if (typeof fileId !== "string" || !fileId.trim()) {
+                return new NextResponse("Invalid request: fileId must be a non-empty string", { status: 400 });
+            }
+
+            const targetFile = await db.query.files.findFirst({
+                where: and(
+                    eq(schema.files.id, fileId.trim()),
+                    eq(schema.files.userId, user.id),
+                    isNull(schema.files.deletedAt)
+                ),
+            });
+            if (!targetFile) {
+                return new NextResponse("File not found", { status: 404 });
+            }
         }
 
         // 1. Get User Tier

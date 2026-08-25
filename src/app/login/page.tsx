@@ -3,6 +3,7 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import { getUser } from "@/lib/supabase/server";
 import { signInWithGoogle } from "@/server/actions/auth-actions";
+import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -15,7 +16,7 @@ export default async function LoginPage({
     const params = await searchParams;
 
     if (user) {
-        redirect(params.redirectTo || "/dashboard");
+        redirect(resolveSafeRedirectPath(params.redirectTo, "/dashboard"));
     }
 
     return (

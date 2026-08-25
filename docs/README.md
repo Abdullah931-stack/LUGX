@@ -52,6 +52,7 @@ docs/
 | [UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md](./reference/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md) | G1–G10 readiness-gate compliance matrix, dual atomicity model, feature flags |
 | [test-database-isolation.md](./reference/test-database-isolation.md) | Phase 10: isolated Neon test branch — fail-closed guard, `test` vs `test:live` split, closure evidence |
 | [phase-11-editor-orchestration-closure.md](./reference/phase-11-editor-orchestration-closure.md) | Phase 11 closure: hydration lifecycle, cold-start reconciliation matrix, offline-first contract, reload recovery |
+| [phase-12-auth-ownership-closure.md](./reference/phase-12-auth-ownership-closure.md) | Phase 12 closure: Open Redirect elimination, OAuth callback hardening, 404 anti-enumeration error mapping, atomic user sync |
 
 ### Specifications (`specs/`)
 

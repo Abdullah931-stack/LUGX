@@ -18,8 +18,7 @@ Phase 3 establishes end-to-end server-side ownership enforcement, hierarchy vali
 | Status Code | Reason | Behavior |
 | :--- | :--- | :--- |
 | `401 Unauthorized` | Missing/expired server session | Fails closed before executing database queries. |
-| `403 Forbidden` | Target parent folder belongs to another user | Fails closed without disclosing foreign subtree structure. |
-| `404 Not Found` | Target file/folder does not exist or is soft-deleted | Returns standard not found response. |
+| `404 Not Found` | Target file/folder does not exist, is soft-deleted, or belongs to another user | Unified anti-enumeration response preventing discovery of foreign resources. |
 | `409 Conflict` | Semantic collision or cycle | Triggered when moving a folder into itself or its descendant. |
 | `412 Precondition Failed` | Stale ETag or version mismatch | Returns `412` with current `serverVersion` data for conflict resolution. |
 | `428 Precondition Required` | Missing `If-Match` and `expectedVersion` | Enforces optimistic locking protocol on all mutations. |
@@ -90,16 +89,16 @@ const [updatedFile] = await db.update(schema.files)
 ### G. Next.js Turbopack Server Actions Separation
 All pure synchronous utilities (such as `generateRestoredTitle` and `generateCopyTitle`) reside in `src/lib/utils/file-naming.ts` outside of `"use server"` files, ensuring full compliance with Next.js 16 requirements where all exported functions in server action files must be `async`.
 
-### H. Client-Side Offline & Sync Synchronization (`useSync` & `SyncManager`)
-- `useSync.saveLocal` accurately records the server-confirmed `version` and `etag` upon successful server writes and sets `isDirty: false`, preventing spurious `412 Precondition Failed` loops.
-- `SyncManager.pushFile` automatically formats `If-Match` headers, provides `expectedVersion`, and handles `404 Not Found` by clearing non-existent server files from the local dirty sync queue.
+### I. BFS Hierarchy Traversal Cycle Guards (`getDescendantIds` & `restoreFile`)
+When recursively collecting descendant file/folder IDs for cascading deletion or tree restoration, BFS queue traversals maintain a `visited = new Set<string>()` guard. If corrupt or cyclic parent pointers exist in the database, the traversal terminates safely without infinite loops or memory exhaustion.
 
 ---
 
 ## 4. Verification & Testing Evidence
 
+- `src/test/cross-user-ownership.test.ts`: 14 integration tests verifying cross-user isolation across `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `importFile`, AI reservations, streaming, storage paths, and atomic UPSERT user sync.
 - `src/server/actions/file-ops.ownership.test.ts`: Covers cross-user parent validation, cycle detection across arbitrary hierarchy depth, and precondition enforcement (428/412).
 - `src/app/api/files/[id]/route.putguard.test.ts`: Verifies lost-update mitigation and atomic ETag/version updates.
 - `src/server/actions/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments.
 - `src/server/actions/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job.
-- Full suite execution: 14 test suites, 177 tests passing (100% pass rate).
+- Full suite execution: 31 test suites, 384 tests passing (100% pass rate).
