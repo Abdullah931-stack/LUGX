@@ -6,7 +6,7 @@ export default defineConfig({
     test: {
         environment: 'node', setupFiles: ['./vitest.setup.ts'],
         globals: true,
-        include: ['src/**/*.test.ts'],
+        include: ['src/**/*.test.{ts,tsx}', 'src/**/*.test.ts'],
         // Phase 10: LIVE integration suites (real Neon branch / live AI keys)
         // are excluded here and run exclusively via `npm run test:live`.
         exclude: [...configDefaults.exclude, ...LIVE_TEST_FILES],
