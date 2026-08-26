@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Editor } from '@tiptap/react';
+import type { EditorAdapter } from '@/components/editor/markdown/types';
 import {
     AIStreamSession,
     AIStreamStatus,
@@ -12,7 +13,7 @@ import {
 } from '@/lib/ai/stream-session';
 import { previewBuffer } from '@/lib/ai/preview-buffer';
 import { consumeAIStream, AIOperationType } from '@/lib/ai/stream-handler';
-import { formatStreamOutputToHTML } from '@/lib/parsers/stream-markdown';
+import { formatStreamOutputToHTML, validateStreamMarkdownOutput } from '@/lib/parsers/stream-markdown';
 import { commitAIFileOperation, refundAIReservation } from '@/server/actions/ai-commit';
 import { commitAIReservation, getAIReservationStatus } from '@/server/actions/ai-ops';
 import { streamingGhostPluginKey } from '@/lib/extensions/streaming-ghost-extension';
@@ -28,6 +29,8 @@ export interface UseAIStreamOptions {
     onCommitSuccess?: (result: { version: number; etag: string }) => void;
     onConflict?: (serverVersion?: { version?: number | null; etag?: string | null }) => void;
     onError?: (error: Error) => void;
+    getLatestVersion?: () => number;
+    getLatestETag?: () => string | null;
     /**
      * Wraps every programmatic document mutation (atomic AI commit, conflict rollback,
      * exception rollback) so the orchestrator can raise its `isProgrammaticUpdate`
@@ -36,8 +39,10 @@ export interface UseAIStreamOptions {
     onProgrammaticTransaction?: (fn: () => void) => void;
 }
 
+export type EditorInstance = EditorAdapter | Editor | any;
+
 export interface StartStreamParams {
-    editor: Editor;
+    editor: EditorInstance;
     operation: AIOperationType;
     fileId: string;
     expectedVersion: number;
@@ -58,6 +63,7 @@ interface PendingPreview {
     editorGeneration: number;
     selectionStart: number;
     selectionEnd: number;
+    resultMarkdown: string;
     safeHtml: string;
 }
 
@@ -68,11 +74,27 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     const [isConflict, setIsConflict] = useState<boolean>(false);
 
     const activeSessionRef = useRef<AIStreamSession | null>(null);
-    const editorRef = useRef<Editor | null>(null);
+    const editorRef = useRef<EditorInstance | null>(null);
     /** Sanitized result awaiting the user's Accept / Reject / Retry decision. */
     const pendingPreviewRef = useRef<PendingPreview | null>(null);
     /** Params of the most recent stream, enabling "Retry" with identical inputs. */
     const lastParamsRef = useRef<StartStreamParams | null>(null);
+
+    // Callbacks refs for inline widget actions
+    const commitPreviewRef = useRef<(() => Promise<void>) | null>(null);
+    const rejectPreviewRef = useRef<(() => void) | null>(null);
+    const retryPreviewRef = useRef<(() => Promise<void>) | null>(null);
+    const stopStreamRef = useRef<(() => Promise<void>) | null>(null);
+
+    // Helper to safely invoke ghost methods across both EditorAdapter and TipTap
+    const clearGhostDecoration = useCallback((editor: EditorInstance | null): void => {
+        if (!editor || editor.isDestroyed) return;
+        if (typeof editor.clearStreamingGhost === 'function') {
+            editor.clearStreamingGhost();
+        } else if (editor.commands?.clearStreamingGhost) {
+            editor.commands.clearStreamingGhost();
+        }
+    }, []);
 
     // Clean up on unmount
     useEffect(() => {
@@ -164,9 +186,9 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             transitionSession(session, 'aborted');
             setStatus('aborted');
 
-            if (editorRef.current && !(editorRef.current as any).isDestroyed) {
+            if (editorRef.current && !editorRef.current.isDestroyed) {
                 runAsProgrammaticTransaction(() => {
-                    (editorRef.current as any)?.commands?.clearStreamingGhost?.();
+                    clearGhostDecoration(editorRef.current);
                 });
             }
 
@@ -180,7 +202,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             setPreviewText('');
             activeSessionRef.current = null;
         }
-    }, [runAsProgrammaticTransaction, settleReservationAsConsumed]);
+    }, [clearGhostDecoration, runAsProgrammaticTransaction, settleReservationAsConsumed]);
 
     /**
      * Stop / Abort the active AI streaming session.
@@ -234,8 +256,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             setStatus('aborted');
 
             // Dismantle ghost preview in editor
-            if (editorRef.current && !(editorRef.current as any).isDestroyed) {
-                (editorRef.current as any).commands?.clearStreamingGhost?.();
+            if (editorRef.current && !editorRef.current.isDestroyed) {
+                clearGhostDecoration(editorRef.current);
             }
         } catch (err) {
             console.error('[useAIStream] Error stopping stream:', err);
@@ -245,7 +267,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             clearPendingAIOperation(session.operationId);
             activeSessionRef.current = null;
         }
-    }, [rejectPreview]);
+    }, [clearGhostDecoration, rejectPreview]);
 
     /**
      * Initiate an AI streaming operation with Ephemeral Preview & Atomic Commit
@@ -273,25 +295,25 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         setIsConflict(false);
         setPreviewText('');
 
-        const selection = typeof (editor as any).getSelection === 'function'
-            ? (editor as any).getSelection()
-            : ((editor as any).state?.selection || { from: 0, to: 0 });
+        const selection = typeof editor.getSelection === 'function'
+            ? editor.getSelection()
+            : (editor.state?.selection || { from: 0, to: 0 });
         const from = selection.from ?? 0;
         const to = selection.to ?? 0;
         const hasSelection = from !== to;
-        const docSize = typeof (editor as any).getCharCount === 'function'
-            ? (editor as any).getCharCount()
-            : ((editor as any).state?.doc?.content?.size || (editor as any).getText?.().length || 0);
+        const docSize = typeof editor.getCharCount === 'function'
+            ? editor.getCharCount()
+            : (editor.state?.doc?.content?.size || editor.getText?.().length || 0);
         const selectionStart = hasSelection ? from : 0;
         const selectionEnd = hasSelection ? to : docSize;
 
         const textToProcess = hasSelection
-            ? (typeof (editor as any).getSelectedText === 'function'
-                ? (editor as any).getSelectedText()
-                : ((editor as any).state?.doc?.textBetween(from, to) || ''))
-            : (typeof (editor as any).getValue === 'function'
-                ? (editor as any).getValue()
-                : ((editor as any).getText?.() || ''));
+            ? (typeof editor.getSelectedText === 'function'
+                ? editor.getSelectedText()
+                : (editor.state?.doc?.textBetween(from, to) || ''))
+            : (typeof editor.getValue === 'function'
+                ? editor.getValue()
+                : (editor.getText?.() || ''));
 
         if (!textToProcess.trim()) {
             setError('Please enter some text first');
@@ -302,15 +324,16 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         const operationId = `op_${crypto.randomUUID()}`;
         const abortController = new AbortController();
 
-        const originalContent = typeof (editor as any).getValue === 'function'
-            ? (editor as any).getValue()
-            : ((editor as any).getHTML?.() || '');
+        const originalContent = typeof editor.getValue === 'function'
+            ? editor.getValue()
+            : (editor.getHTML?.() || '');
 
         const session = createStreamSession({
             sessionId,
             operationId,
             fileId,
             operation,
+            originalMarkdown: originalContent,
             originalHtml: originalContent,
             originalText: textToProcess,
             selection: { from: selectionStart, to: selectionEnd },
@@ -329,13 +352,27 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         setStatus('reserved');
         options.onStreamStart?.();
 
-        // Start ghost decoration layer in TipTap (zero doc node mutation)
-        (editor as any).commands?.startStreamingGhost?.({
-            from: selectionStart,
-            to: selectionEnd,
-            text: '',
-            operation,
-        });
+        // Start ghost decoration layer in editor (zero doc mutation)
+        if (typeof editor.startStreamingGhost === 'function') {
+            editor.startStreamingGhost({
+                from: selectionStart,
+                to: selectionEnd,
+                text: '',
+                operation,
+                isStreaming: true,
+                onApply: () => { void commitPreviewRef.current?.(); },
+                onReject: () => { rejectPreviewRef.current?.(); },
+                onRetry: () => { void retryPreviewRef.current?.(); },
+                onStop: () => { void stopStreamRef.current?.(); },
+            });
+        } else if (editor.commands?.startStreamingGhost) {
+            editor.commands.startStreamingGhost({
+                from: selectionStart,
+                to: selectionEnd,
+                text: '',
+                operation,
+            });
+        }
 
         try {
             await consumeAIStream({
@@ -355,14 +392,16 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 onChunk: (accumulated, latestChunk) => {
                     if (activeSessionRef.current?.sessionId !== sessionId) return;
 
-                    // Append only the latest delta. Appending the accumulated text here
-                    // would duplicate the buffer quadratically (O(n^2)) and corrupt
-                    // previewBuffer.getText().
+                    // Append only the latest delta to previewBuffer
                     previewBuffer.append(sessionId, latestChunk);
                     setPreviewText(accumulated);
 
-                    if (editor && !(editor as any).isDestroyed) {
-                        (editor as any).commands?.updateStreamingGhost?.(accumulated);
+                    if (editor && !editor.isDestroyed) {
+                        if (typeof editor.updateStreamingGhost === 'function') {
+                            editor.updateStreamingGhost(accumulated, true);
+                        } else if (editor.commands?.updateStreamingGhost) {
+                            editor.commands.updateStreamingGhost(accumulated);
+                        }
                     }
                 },
                 onComplete: async (finalRawText) => {
@@ -379,13 +418,16 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     setStatus('preview_ready');
                     updatePendingAIOperationPhase(operationId, 'preview_ready');
 
-                    // Format and sanitize final AI output
-                    const { html: safeHtml, isEmpty } = formatStreamOutputToHTML(finalRawText);
+                    // Validate pure Markdown output
+                    const { markdown: validatedMarkdown, isEmpty } = validateStreamMarkdownOutput(finalRawText);
                     if (isEmpty) {
                         throw new Error('AI produced an empty or invalid response');
                     }
 
-                    // Check session integrity before commit
+                    // Format ephemeral HTML for UI preview badge if requested
+                    const { html: safeHtml } = formatStreamOutputToHTML(finalRawText);
+
+                    // Check session integrity before preparing preview decision
                     const integrity = assertSessionIntegrity(session, editorGeneration, expectedVersion);
                     if (!integrity.valid) {
                         throw new Error(`Integrity error: ${integrity.reason}`);
@@ -396,7 +438,14 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         return;
                     }
 
-                    // EXPLICIT DECISION MODEL: park the sanitized result and wait for the
+                    // Update ghost widget state to preview_ready (switching action buttons to Reject/Retry/Apply)
+                    if (editor && !editor.isDestroyed) {
+                        if (typeof editor.updateStreamingGhost === 'function') {
+                            editor.updateStreamingGhost(validatedMarkdown, false);
+                        }
+                    }
+
+                    // EXPLICIT DECISION MODEL: park the validated Markdown result and wait for the
                     // user's Accept / Reject / Retry decision. Neither the document, nor the
                     // server version, nor the quota reservation is touched until then.
                     pendingPreviewRef.current = {
@@ -408,14 +457,15 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         editorGeneration,
                         selectionStart,
                         selectionEnd,
+                        resultMarkdown: validatedMarkdown,
                         safeHtml,
                     };
                 },
                 onError: (err) => {
                     if (activeSessionRef.current?.sessionId !== sessionId) return;
 
-                    if (editor && !(editor as any).isDestroyed) {
-                        (editor as any).commands?.clearStreamingGhost?.();
+                    if (editor && !editor.isDestroyed) {
+                        clearGhostDecoration(editor);
                     }
 
                     if (err.name === 'AbortError') {
@@ -437,16 +487,18 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             });
 
         } catch (err) {
-            const detailMessage = err instanceof Error ? err.message : "An unexpected error occurred";
+            const detailMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
             console.error('[useAIStream] Exception during execution:', err);
             if (activeSessionRef.current?.sessionId === sessionId) {
-                if (editor && !(editor as any).isDestroyed) {
+                if (editor && !editor.isDestroyed) {
                     runAsProgrammaticTransaction(() => {
-                        (editor as any).commands?.clearStreamingGhost?.();
+                        clearGhostDecoration(editor);
                         // USER DATA PROTECTION (AUD-02): Never overwrite user's manual edits
-                        if (editorGeneration === session.editorGeneration && session.originalHtml && typeof (editor as any).getHTML === 'function' && (editor as any).getHTML() !== session.originalHtml) {
-                            if (typeof (editor as any).chain === 'function') {
-                                (editor as any).chain().setContent(session.originalHtml).run();
+                        if (editorGeneration === session.editorGeneration && session.originalMarkdown) {
+                            if (typeof editor.setValue === 'function' && editor.getValue() !== session.originalMarkdown) {
+                                editor.setValue(session.originalMarkdown);
+                            } else if (typeof editor.chain === 'function' && editor.getHTML() !== (session.originalHtml || session.originalMarkdown)) {
+                                editor.chain().setContent(session.originalHtml || session.originalMarkdown).run();
                             }
                         }
                     });
@@ -464,12 +516,12 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 previewBuffer.close(sessionId);
             }
         }
-    }, [options, runAsProgrammaticTransaction]);
+    }, [clearGhostDecoration, options, runAsProgrammaticTransaction]);
 
     /**
-     * Accept the completed preview: server-first atomic commit, then a single
-     * atomic ProseMirror transaction replacing [from, to]. Only this action —
-     * not stream completion — mutates the document and finalizes the operation.
+     * Accept the completed preview: server-first atomic commit on pure Markdown,
+     * then a single atomic editor transaction replacing the dynamically tracked [from, to] range.
+     * Only this action — not stream completion — mutates the document and finalizes the operation.
      */
     const commitPreview = useCallback(async (): Promise<void> => {
         const session = activeSessionRef.current;
@@ -480,19 +532,60 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         }
 
         const editor = editorRef.current;
-        const { operationId, fileId, expectedVersion, originalEtag, editorGeneration, selectionStart, selectionEnd, safeHtml } = pending;
+        const {
+            operationId,
+            fileId,
+            expectedVersion,
+            originalEtag,
+            editorGeneration,
+            selectionStart,
+            selectionEnd,
+            resultMarkdown,
+            safeHtml,
+        } = pending;
 
         transitionSession(session, 'committing');
         setStatus('committing');
 
         try {
-            // STEP 1: Server Atomic Commit
+            // Dynamic Position Resolution: Query current shifted ghost range from CodeMirror StateField
+            const ghostRange = typeof editor?.getGhostRange === 'function'
+                ? editor.getGhostRange()
+                : null;
+            const currentDocLength = typeof editor?.getCharCount === 'function'
+                ? editor.getCharCount()
+                : (typeof editor?.getValue === 'function' ? editor.getValue().length : (editor?.state?.doc?.content?.size || 0));
+
+            const targetFrom = ghostRange ? ghostRange.from : Math.max(0, Math.min(selectionStart, currentDocLength));
+            const targetTo = ghostRange ? ghostRange.to : Math.max(targetFrom, Math.min(selectionEnd, currentDocLength));
+
+            // Compute server Markdown content
+            let finalDocumentMarkdown: string;
+            if (typeof editor?.getValue === 'function') {
+                const currentFullContent = editor.getValue();
+                const isFullDoc = targetFrom === 0 && targetTo >= currentFullContent.length;
+                finalDocumentMarkdown = isFullDoc
+                    ? resultMarkdown
+                    : currentFullContent.slice(0, targetFrom) + resultMarkdown + currentFullContent.slice(targetTo);
+            } else {
+                finalDocumentMarkdown = resultMarkdown;
+            }
+
+            // STEP 1: Server Atomic Commit on raw Markdown
+            const effectiveExpectedVersion = typeof options.getLatestVersion === 'function'
+                ? options.getLatestVersion()
+                : expectedVersion;
+            const effectiveExpectedETag = typeof options.getLatestETag === 'function'
+                ? options.getLatestETag()
+                : originalEtag;
+
             const commitResult = await commitAIFileOperation({
                 operationId,
                 fileId,
-                expectedVersion,
-                expectedETag: originalEtag,
-                resultContent: safeHtml,
+                expectedVersion: effectiveExpectedVersion,
+                expectedETag: effectiveExpectedETag || undefined,
+                resultContent: finalDocumentMarkdown,
+                originalContent: session.originalMarkdown || session.originalHtml || undefined,
             });
 
             // Check if session was aborted during network commit
@@ -509,10 +602,14 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
                 if (editor && !editor.isDestroyed) {
                     runAsProgrammaticTransaction(() => {
-                        editor.commands.clearStreamingGhost();
+                        clearGhostDecoration(editor);
                         // USER DATA PROTECTION (AUD-02): Only rollback if editor generation hasn't changed
-                        if (editorGeneration === session.editorGeneration && session.originalHtml && editor.getHTML() !== session.originalHtml) {
-                            editor.chain().setContent(session.originalHtml).run();
+                        if (editorGeneration === session.editorGeneration && session.originalMarkdown) {
+                            if (typeof editor.setValue === 'function' && editor.getValue() !== session.originalMarkdown) {
+                                editor.setValue(session.originalMarkdown);
+                            } else if (typeof editor.chain === 'function' && editor.getHTML() !== (session.originalHtml || session.originalMarkdown)) {
+                                editor.chain().setContent(session.originalHtml || session.originalMarkdown).run();
+                            }
                         }
                     });
                 }
@@ -534,29 +631,37 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             }
 
             // STEP 2: Local Atomic Commit (1 Transaction in History)
-            if (editor && !(editor as any).isDestroyed) {
+            if (editor && !editor.isDestroyed) {
                 runAsProgrammaticTransaction(() => {
-                    if (typeof (editor as any).replaceRange === 'function') {
-                        // Markdown EditorAdapter
-                        (editor as any).replaceRange(selectionStart, selectionEnd, previewText);
-                    } else if (typeof (editor as any).chain === 'function') {
-                        // TipTap Editor
-                        const ghostState = streamingGhostPluginKey.getState((editor as any).state);
-                        const docSize = (editor as any).state?.doc?.content?.size || 0;
-                        const targetFrom = ghostState?.active
+                    if (typeof editor.replaceRange === 'function') {
+                        // CodeMirror Markdown EditorAdapter: query latest dynamic range before clearing
+                        const latestGhost = typeof editor.getGhostRange === 'function' ? editor.getGhostRange() : null;
+                        const docLen = typeof editor.getCharCount === 'function'
+                            ? editor.getCharCount()
+                            : (typeof editor.getValue === 'function' ? editor.getValue().length : 0);
+                        const actualFrom = latestGhost ? latestGhost.from : Math.max(0, Math.min(targetFrom, docLen));
+                        const actualTo = latestGhost ? latestGhost.to : Math.max(actualFrom, Math.min(targetTo, docLen));
+
+                        editor.replaceRange(actualFrom, actualTo, resultMarkdown);
+                    } else if (typeof editor.chain === 'function') {
+                        // TipTap Editor fallback
+                        const ghostState = streamingGhostPluginKey.getState(editor.state);
+                        const docSize = editor.state?.doc?.content?.size || 0;
+                        const tFrom = ghostState?.active
                             ? Math.max(0, Math.min(ghostState.from, docSize))
                             : Math.max(0, Math.min(selectionStart, docSize));
-                        const targetTo = ghostState?.active
-                            ? Math.max(targetFrom, Math.min(ghostState.to, docSize))
-                            : Math.max(targetFrom, Math.min(selectionEnd, docSize));
+                        const tTo = ghostState?.active
+                            ? Math.max(tFrom, Math.min(ghostState.to, docSize))
+                            : Math.max(tFrom, Math.min(selectionEnd, docSize));
 
-                        (editor as any).commands?.clearStreamingGhost?.();
-                        (editor as any).chain()
-                            .setTextSelection({ from: targetFrom, to: targetTo })
+                        editor.chain()
+                            .setTextSelection({ from: tFrom, to: tTo })
                             .deleteSelection()
-                            .insertContent(safeHtml)
+                            .insertContent(safeHtml || resultMarkdown)
                             .run();
                     }
+
+                    clearGhostDecoration(editor);
                 });
             }
 
@@ -576,9 +681,9 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const detailMessage = err instanceof Error ? err.message : 'Preview commit failed';
             console.error('[useAIStream] Preview commit error:', err);
 
-            if (editor && !(editor as any).isDestroyed) {
+            if (editor && !editor.isDestroyed) {
                 runAsProgrammaticTransaction(() => {
-                    (editor as any).commands?.clearStreamingGhost?.();
+                    clearGhostDecoration(editor);
                 });
             }
 
@@ -593,7 +698,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             clearPendingAIOperation(operationId);
             options.onError?.(err instanceof Error ? err : new Error(detailMessage));
         }
-    }, [options, runAsProgrammaticTransaction]);
+    }, [clearGhostDecoration, options, runAsProgrammaticTransaction]);
 
     /**
      * Retry the last AI operation with the same feature and original text.
@@ -616,6 +721,12 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         setPreviewText('');
     }, [stopStream]);
 
+    // Sync callback refs with latest closures
+    commitPreviewRef.current = commitPreview;
+    rejectPreviewRef.current = rejectPreview;
+    retryPreviewRef.current = retryPreview;
+    stopStreamRef.current = stopStream;
+
     return {
         status,
         previewText,
@@ -633,3 +744,4 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         retryPreview,
     };
 }
+

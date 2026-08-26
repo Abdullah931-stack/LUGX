@@ -16,7 +16,6 @@ import { Loader2, AlertTriangle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { SyncIndicator } from "@/components/sync/sync-indicator";
 import { AIStreamStatus } from "@/components/editor/ai-stream-status";
-import { AIStreamPreview } from "@/components/editor/ai-stream-preview";
 import { ConflictDialog } from "@/components/sync/conflict-dialog";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 
@@ -242,19 +241,6 @@ export default function EditorPage() {
                 onRetry={resetAI}
                 onCancel={stopAIOperation}
             />
-
-            {/* AI Ephemeral Live Preview Panel */}
-            {previewText && (
-                <AIStreamPreview
-                    text={previewText}
-                    operation="معالجة ذكية"
-                    isStreaming={isStreaming}
-                    onStop={stopAIOperation}
-                    onApply={commitAIPreview}
-                    onRetry={retryAIPreview}
-                    onReject={rejectAIPreview}
-                />
-            )}
 
             {/* Persistent Conflict Alert Banner */}
             {activeConflict && !isConflictDialogOpen && (

@@ -6,11 +6,10 @@
 import type { IExporter, ExportResult } from '../types';
 import { ExportError } from '../types';
 import { validateContent, createSafeFilename } from '../utils/validator';
-import { htmlToPlainText } from '../utils/markdown-stripper';
 
 /**
  * Markdown Exporter
- * Preserves all Markdown formatting characters
+ * Preserves all Markdown formatting characters directly from raw Markdown source
  */
 export class MarkdownExporter implements IExporter {
     async export(content: string, filename: string): Promise<ExportResult> {
@@ -18,15 +17,14 @@ export class MarkdownExporter implements IExporter {
             // Validate inputs
             validateContent(content);
 
-            // Convert HTML to plain text (TipTap editor provides HTML)
-            // For Markdown export, we want to preserve the raw text
-            const plainText = htmlToPlainText(content);
+            // Raw Markdown content is preserved without passing through HTML or stripping filters
+            const rawMarkdown = content;
 
             // Create safe filename
             const safeFilename = createSafeFilename(filename, 'md');
 
             // Create blob with UTF-8 encoding
-            const blob = new Blob([plainText], {
+            const blob = new Blob([rawMarkdown], {
                 type: 'text/markdown;charset=utf-8',
             });
 
@@ -52,3 +50,4 @@ export class MarkdownExporter implements IExporter {
         }
     }
 }
+

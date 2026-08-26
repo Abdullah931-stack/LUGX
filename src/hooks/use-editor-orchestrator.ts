@@ -244,6 +244,8 @@ export function useEditorOrchestrator({
         onError: (err) => {
             setError(err.message);
         },
+        getLatestVersion: () => fileVersionRef.current,
+        getLatestETag: () => fileEtagRef.current,
         onProgrammaticTransaction: (fn) => {
             isProgrammaticUpdateRef.current = true;
             try {
@@ -821,6 +823,9 @@ export function useEditorOrchestrator({
     const startAIOperation = useCallback(
         async (operation: AIOperationType) => {
             if (!adapterRef.current) return;
+
+            // Invariant: cancel any pending auto-save before launching AI stream
+            debouncedAutoSaveRef.current?.cancel?.();
 
             await aiStream.startStream({
                 editor: adapterRef.current as any,

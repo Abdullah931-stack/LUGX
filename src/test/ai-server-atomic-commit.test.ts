@@ -240,6 +240,60 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
         }
     });
 
+    it('should self-heal and succeed when expectedVersion differs but originalContent matches server content', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
+        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+            id: 'res-heal',
+            operationId: 'op-heal',
+            userId: 'user-1',
+            fileId: 'file-1',
+            status: 'reserved',
+            reservedUnits: 10,
+        } as any);
+
+        const baseline = 'Exact unchanged baseline markdown content';
+        vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
+            id: 'file-1',
+            userId: 'user-1',
+            version: 3,
+            etag: 'etag-v3',
+            content: baseline,
+            updatedAt: new Date(),
+        } as any);
+
+        const txMock = {
+            update: vi.fn((table: any) => ({
+                set: vi.fn(() => ({
+                    where: vi.fn(() => ({
+                        returning: vi.fn().mockResolvedValue([
+                            table === 'files'
+                                ? { id: 'file-1', version: 4, etag: 'new-etag' }
+                                : { id: 'res-heal', status: 'committed' },
+                        ]),
+                    })),
+                })),
+            })),
+        };
+
+        vi.mocked(txDb.transaction).mockImplementationOnce(async (callback: any) => {
+            return callback(txMock);
+        });
+
+        const res = await commitAIFileOperation({
+            operationId: 'op-heal',
+            fileId: 'file-1',
+            expectedVersion: 2, // Client had stale version 2
+            originalContent: baseline, // Baseline content matches server content exactly
+            resultContent: 'Updated text with AI changes',
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.status).toBe('committed');
+        if (res.status === 'committed') {
+            expect(res.version).toBe(4); // Incremented from current server version 3
+        }
+    });
+
     it('should atomically commit file and reservation via transactional DB when versions match', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
         vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({

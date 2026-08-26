@@ -23,7 +23,32 @@ export function sanitizePreviewChunk(rawText: string): string {
 }
 
 /**
- * Convert completed streaming AI text into validated, sanitized HTML
+ * Validate and prepare raw streaming Markdown output
+ * Markdown is the single source of truth - no HTML conversion enters storage.
+ */
+export function validateStreamMarkdownOutput(rawText: string): {
+    markdown: string;
+    isEmpty: boolean;
+    isValid: boolean;
+} {
+    if (!rawText || typeof rawText !== "string") {
+        return { markdown: "", isEmpty: true, isValid: false };
+    }
+
+    const trimmed = rawText.trim();
+    if (!trimmed) {
+        return { markdown: "", isEmpty: true, isValid: false };
+    }
+
+    return {
+        markdown: trimmed,
+        isEmpty: false,
+        isValid: true,
+    };
+}
+
+/**
+ * Convert completed streaming AI text into validated, sanitized HTML (for ephemeral preview display only)
  */
 export function formatStreamOutputToHTML(rawText: string): {
     html: string;

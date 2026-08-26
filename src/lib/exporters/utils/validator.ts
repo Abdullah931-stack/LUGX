@@ -42,14 +42,19 @@ export function validateFilename(filename: string): void {
  * @returns Sanitized filename
  */
 export function sanitizeFilename(filename: string): string {
-    // Remove invalid characters
-    let sanitized = filename.replace(/[<>:"/\\|?*]/g, '');
+    // Remove invalid OS characters and non-printable control characters
+    let sanitized = filename.replace(/[<>:"/\\|?*\x00-\x1F\x7F]/g, '');
 
     // Replace multiple spaces with single space
     sanitized = sanitized.replace(/\s+/g, ' ');
 
-    // Trim
-    sanitized = sanitized.trim();
+    // Trim and strip leading dots
+    sanitized = sanitized.trim().replace(/^\.+/, '');
+
+    // Limit maximum filename length to 200 characters for filesystem safety
+    if (sanitized.length > 200) {
+        sanitized = sanitized.slice(0, 200).trim();
+    }
 
     // If empty after sanitization, use default
     if (sanitized.length === 0) {

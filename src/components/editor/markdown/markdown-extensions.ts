@@ -22,6 +22,7 @@ import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { GFM } from "@lezer/markdown";
 import { EditorMode } from "./types";
 import { markdownThemeExtension } from "./markdown-theme";
+import { codeMirrorStreamingGhostField } from "@/lib/extensions/streaming-ghost-extension";
 
 // Compartments for dynamic reconfiguration without state recreation
 export const modeCompartment = new Compartment();
@@ -418,7 +419,10 @@ export function createMarkdownExtensions(options: EditorExtensionOptions = {}): 
         // 8. Line Wrapping
         EditorView.lineWrapping,
 
-        // 9. Update Listener
+        // 9. Streaming Ghost Extension (Dynamic AI Preview Layer)
+        codeMirrorStreamingGhostField,
+
+        // 10. Update Listener
         EditorView.updateListener.of((update) => {
             if (options.onUpdate) {
                 options.onUpdate(update);

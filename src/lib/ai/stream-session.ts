@@ -25,8 +25,10 @@ export interface AIStreamSession {
     operationId: string;
     fileId: string;
     operation: AIOperation;
-    originalHtml: string;
+    originalMarkdown: string;
+    originalHtml?: string;
     originalText: string;
+    resultMarkdown?: string;
     selection: SelectionAnchor;
     expectedVersion: number;
     originalEtag: string | null;
@@ -81,7 +83,8 @@ export function createStreamSession(params: {
     operationId: string;
     fileId: string;
     operation: AIOperation;
-    originalHtml: string;
+    originalMarkdown: string;
+    originalHtml?: string;
     originalText: string;
     selection: SelectionAnchor;
     expectedVersion: number;
@@ -94,6 +97,7 @@ export function createStreamSession(params: {
         operationId: params.operationId,
         fileId: params.fileId,
         operation: params.operation,
+        originalMarkdown: params.originalMarkdown,
         originalHtml: params.originalHtml,
         originalText: params.originalText,
         selection: params.selection,

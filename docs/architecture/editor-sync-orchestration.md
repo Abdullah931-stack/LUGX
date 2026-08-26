@@ -283,15 +283,28 @@ In Phase 4 of the Markdown migration roadmap, all synchronization channels, conf
 
 ---
 
+## 6e. AI Launch Auto-Save Debounce Cancellation & Live Version Resolution (Phase 5 Amendment)
+
+To prevent race conditions where a pending debounced auto-save executes in the background while an AI stream is starting (which would advance the server version and cause a 412 conflict on user commit):
+
+1. **Auto-Save Debounce Cancellation (`startAIOperation`):** Starting an AI operation immediately invokes `debouncedAutoSaveRef.current?.cancel?.()`, clearing any queued timers before capturing the initial version.
+2. **Live Version Resolution at Commit Time:** `useAIStream` accepts `getLatestVersion` and `getLatestETag` getters connecting directly to `fileVersionRef` and `fileEtagRef`, resolving the most up-to-date local orchestrator version at the moment of commit rather than relying on a stale start snapshot.
+3. **Self-Session Healing in Server Commit:** If `commitAIFileOperation` detects that the database version advanced due to an in-flight background save, but `currentFile.content` is identical to `originalContent`, the server automatically self-heals by adopting the current version without disrupting the user.
+
+---
+
 ## 7. Verification Proof
 
 - Automated Tests (current):
   - `src/lib/sync/conflict-resolver.test.ts` (32/32 passing)
   - `src/lib/sync/sync-manager.test.ts` (36/36 passing)
-  - `src/test/editor-orchestration.integration.test.ts` (15/15 passing)
+  - `src/test/editor-orchestration.integration.test.ts` (16/16 passing)
   - `src/hooks/use-sync.test.ts` (14/14 passing)
   - `src/test/editor-recovery-reload.test.ts` (5/5 passing)
   - `src/test/editor-atomic-commit.test.ts` (4/4 passing)
   - `src/lib/sync/reconciliation.test.ts` (10/10 passing)
-  - Full test suite: 35/35 test files, 451/451 tests passing.
+  - `src/test/ai-preview-decision.test.ts` (10/10 passing)
+  - `src/test/ai-server-atomic-commit.test.ts` (11/11 passing)
+  - `src/test/markdown-exporters.test.ts` (6/6 passing)
+  - Full test suite: 36/36 test files, 469/469 tests passing (100% success rate).
 

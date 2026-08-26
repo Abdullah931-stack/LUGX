@@ -73,16 +73,16 @@ export function generateId(): string {
 }
 
 /**
- * Debounce function
+ * Debounce function with cancel capability
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function debounce<T extends (...args: any[]) => any>(
     func: T,
     wait: number
-): (...args: Parameters<T>) => void {
+): ((...args: Parameters<T>) => void) & { cancel: () => void } {
     let timeout: NodeJS.Timeout | null = null;
 
-    return (...args: Parameters<T>) => {
+    const debounced = (...args: Parameters<T>) => {
         if (timeout) {
             clearTimeout(timeout);
         }
@@ -90,6 +90,15 @@ export function debounce<T extends (...args: any[]) => any>(
             func(...args);
         }, wait);
     };
+
+    debounced.cancel = () => {
+        if (timeout) {
+            clearTimeout(timeout);
+            timeout = null;
+        }
+    };
+
+    return debounced;
 }
 
 /**

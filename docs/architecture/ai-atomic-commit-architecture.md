@@ -18,9 +18,11 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
    - The committing user must own both the target file and the AI reservation record.
    - The reservation record's `fileId` must match the target `fileId`.
 
-3. **Optimistic Version, ETag Preconditions & TOCTOU Hardening**:
-   - Optimistic concurrency control is enforced both at the initial validation check and atomically inside the update statement (`WHERE version = expectedVersion`).
-   - If a concurrent write occurs between validation and transaction commit, the update yields zero rows, rolling back the transaction and triggering an explicit `412 conflict` response.
+3. **Optimistic Version, ETag Preconditions & Self-Session Healing**:
+   - Optimistic concurrency control is enforced both at the initial validation check and atomically inside the update statement (`WHERE version = baseVersion`).
+   - **Self-Session Healing (v1.14.0)**: If `currentFile.version !== expectedVersion` (due to an in-flight background auto-save before AI launch), but the server's `currentFile.content` matches the baseline `originalContent` from which the AI stream originated, the server safely adopts the current version (`baseVersion = fileCurrentVersion`) and increments atomically, preventing false 412 conflicts.
+   - **Normalized ETag Verification**: ETag comparisons normalize quotation marks and weak prefixes (`W/`) to eliminate false serialization mismatches.
+   - If a true concurrent write from another session occurs, the update yields zero rows, rolling back the transaction and triggering an explicit `412 conflict` response.
    - Conflict responses return minimal metadata (`version`, `etag`, `updatedAt`) without leaking full document payloads across the network.
 
 4. **Connection Pool Bounds & Timeout Protection**:
@@ -29,14 +31,15 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
 5. **Idempotency via `operationId`**:
    - If a commit is retried after a network partition where the reservation was already marked `committed`, the endpoint idempotently returns the current committed version/ETag instead of applying redundant version increments or throwing unhandled errors.
 
-6. **Server-First Commit Invariant in Editor**:
-   - The client editor maintains ephemeral preview buffers during generation.
-   - Stream completion does NOT commit: the sanitized output is parked in `preview_ready` until an explicit user decision (v1.6.0 Explicit Decision Model).
-   - On user **Accept** (`commitPreview`), local document modifications are applied as a single history step via `EditorAdapter.replaceRange` **only after** server commit confirms success.
+6. **Server-First Commit & Markdown Source of Truth**:
+   - The client editor maintains ephemeral preview buffers during generation using pure Markdown.
+   - Stream completion does NOT commit: the validated Markdown output is parked in `preview_ready` until an explicit user decision.
+   - On user **Accept** (`commitPreview`), the client queries the dynamically tracked range (`editor.getGhostRange()`), executes server commit on raw Markdown (`commitAIFileOperation`), and applies a single atomic replacement via `EditorAdapter.replaceRange`.
    - In case of network failure or 412 conflict, the ephemeral preview is dismantled and the document remains in its pristine state.
    - On user **Reject** or **Retry**, no document mutation occurs at all; the quota reservation is settled as consumed per the Explicit Settlement Policy ([`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D).
 
-7. **Autosave & Sync Isolation**:
+7. **Autosave Debounce Cancellation & Sync Isolation**:
+   - Starting an AI operation immediately cancels any pending background auto-save timers (`debouncedAutoSave.cancel()`) to prevent version collisions.
    - Background autosave and cross-tab sync broadcasts are suppressed while `aiStream.isLoading` / `aiStream.isCommitting` is active **or while the session rests in `preview_ready` awaiting the user's decision**, and resume only after the editor generation and file version are updated with the server's response.
 
 ---

@@ -15,8 +15,8 @@ export function stripMarkdownSyntax(text: string): string {
 
     let cleanText = text;
 
-    // Remove code blocks (```...```) - must be done first
-    cleanText = cleanText.replace(/```[\s\S]*?```/g, '');
+    // Strip code block fences (```...```) while preserving inner code text
+    cleanText = cleanText.replace(/```[^\n]*\n?([\s\S]*?)\n?```/g, '$1');
 
     // Remove inline code (`...`)
     cleanText = cleanText.replace(/`([^`]+)`/g, '$1');

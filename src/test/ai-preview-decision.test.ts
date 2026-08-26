@@ -82,6 +82,23 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
 
+        if (typeof Range.prototype.getClientRects !== 'function') {
+            Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+        }
+        if (typeof Range.prototype.getBoundingClientRect !== 'function') {
+            Range.prototype.getBoundingClientRect = () => ({
+                top: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
+                width: 0,
+                height: 0,
+                x: 0,
+                y: 0,
+                toJSON: () => ({}),
+            });
+        }
+
         capturedCallbacks = {} as ConsumeCallbacks;
         mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
             capturedCallbacks = options;
@@ -205,4 +222,152 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
         expect(editor.getHTML()).toBe(snapshotBefore);
         expect(result.current.status).toBe('aborted');
     });
+
+    describe('Markdown EditorAdapter & Dynamic Ghost Range Shifting', () => {
+        it('should dynamically map ghost range forward when user edits document during stream and commit accurately', async () => {
+            const { EditorState } = await import('@codemirror/state');
+            const { EditorView } = await import('@codemirror/view');
+            const { createEditorAdapter } = await import('@/components/editor/markdown/editor-adapter');
+            const { createMarkdownExtensions } = await import('@/components/editor/markdown/markdown-extensions');
+
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+
+            const initialText = 'Line 1: Prefix text.\nLine 2: TARGET_TO_IMPROVE.\nLine 3: Suffix text.';
+            const state = EditorState.create({
+                doc: initialText,
+                extensions: createMarkdownExtensions({ mode: 'live' }),
+            });
+            const view = new EditorView({ state, parent: container });
+            const adapter = createEditorAdapter(view);
+
+            // Select "TARGET_TO_IMPROVE"
+            const targetStart = initialText.indexOf('TARGET_TO_IMPROVE');
+            const targetEnd = targetStart + 'TARGET_TO_IMPROVE'.length;
+            adapter.setSelection(targetStart, targetEnd);
+
+            const { result } = renderAIStream();
+
+            // Start stream
+            await act(async () => {
+                await result.current.startStream({
+                    editor: adapter as any,
+                    operation: 'improve',
+                    fileId: 'file-cm-1',
+                    expectedVersion: 1,
+                    originalEtag: 'etag-v1',
+                    editorGeneration: 1,
+                });
+            });
+
+            await waitFor(() => expect(result.current.status).toBe('preview_ready'));
+
+            // Ghost is currently active at [targetStart, targetEnd]
+            const ghostRangeBefore = adapter.getGhostRange?.();
+            expect(ghostRangeBefore).toEqual({ from: targetStart, to: targetEnd });
+
+            // SIMULATE CONCURRENT USER EDIT: User types 20 characters at the very beginning of the document
+            const prefixAddition = 'EXTRA_PREFIX_CHARS!!';
+            view.dispatch({
+                changes: { from: 0, to: 0, insert: prefixAddition },
+            });
+
+            // Dynamic Shifting: StateField must have automatically shifted ghost range forward!
+            const ghostRangeAfter = adapter.getGhostRange?.();
+            expect(ghostRangeAfter).toEqual({
+                from: targetStart + prefixAddition.length,
+                to: targetEnd + prefixAddition.length,
+            });
+
+            mockCommitAIFileOperation.mockResolvedValueOnce({
+                success: true,
+                status: 'committed',
+                version: 2,
+                etag: 'etag-v2',
+                updatedAt: new Date().toISOString(),
+            });
+
+            // Accept / Commit preview
+            await act(async () => {
+                await result.current.commitPreview();
+            });
+
+            expect(result.current.status).toBe('committed');
+            expect(mockCommitAIFileOperation).toHaveBeenCalledTimes(1);
+
+            // Verify that replacement happened at the dynamically shifted position without corruption
+            const currentDoc = adapter.getValue();
+            expect(currentDoc).toContain(prefixAddition);
+            expect(currentDoc).toContain('Better text');
+            expect(currentDoc).not.toContain('TARGET_TO_IMPROVE');
+
+            view.destroy();
+            container.remove();
+        });
+
+        it('should render unified inline widget with interactive buttons and trigger actions on click', async () => {
+            const { EditorState } = await import('@codemirror/state');
+            const { EditorView } = await import('@codemirror/view');
+            const { createEditorAdapter } = await import('@/components/editor/markdown/editor-adapter');
+            const { createMarkdownExtensions } = await import('@/components/editor/markdown/markdown-extensions');
+
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+
+            const state = EditorState.create({
+                doc: 'Original text to translate',
+                extensions: createMarkdownExtensions({ mode: 'live' }),
+            });
+            const view = new EditorView({ state, parent: container });
+            const adapter = createEditorAdapter(view);
+
+            const { result } = renderAIStream();
+
+            await act(async () => {
+                await result.current.startStream({
+                    editor: adapter as any,
+                    operation: 'translate',
+                    fileId: 'file-widget-1',
+                    expectedVersion: 1,
+                    originalEtag: 'etag-1',
+                    editorGeneration: 1,
+                });
+            });
+
+            await waitFor(() => expect(result.current.status).toBe('preview_ready'));
+
+            // Verify widget DOM exists inside editor
+            const widgetElement = container.querySelector('.cm-ai-ghost-widget');
+            expect(widgetElement).not.toBeNull();
+            expect(widgetElement?.textContent).toContain('معاينة الذكاء الاصطناعي (translate)');
+
+            // Find interactive buttons
+            const buttons = widgetElement?.querySelectorAll('button');
+            expect(buttons?.length).toBe(3);
+
+            const applyBtn = Array.from(buttons || []).find((b) => b.textContent?.includes('تطبيق التعديل'));
+            expect(applyBtn).toBeDefined();
+
+            mockCommitAIFileOperation.mockResolvedValueOnce({
+                success: true,
+                status: 'committed',
+                version: 2,
+                etag: 'etag-v2',
+                updatedAt: new Date().toISOString(),
+            });
+
+            // Click Apply button directly in DOM
+            await act(async () => {
+                applyBtn?.click();
+            });
+
+            await waitFor(() => expect(result.current.status).toBe('committed'));
+            expect(mockCommitAIFileOperation).toHaveBeenCalledTimes(1);
+
+            view.destroy();
+            container.remove();
+        });
+    });
 });
+
+

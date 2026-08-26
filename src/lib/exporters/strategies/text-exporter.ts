@@ -6,11 +6,11 @@
 import type { IExporter, ExportResult } from '../types';
 import { ExportError } from '../types';
 import { validateContent, createSafeFilename } from '../utils/validator';
-import { htmlToPlainText, stripMarkdownSyntax } from '../utils/markdown-stripper';
+import { stripMarkdownSyntax } from '../utils/markdown-stripper';
 
 /**
  * Text Exporter
- * Strips all Markdown formatting to produce clean plain text
+ * Strips all Markdown formatting directly to produce clean plain text
  */
 export class TextExporter implements IExporter {
     async export(content: string, filename: string): Promise<ExportResult> {
@@ -18,11 +18,8 @@ export class TextExporter implements IExporter {
             // Validate inputs
             validateContent(content);
 
-            // Convert HTML to plain text first
-            let plainText = htmlToPlainText(content);
-
-            // Strip all Markdown syntax to get clean text
-            const cleanText = stripMarkdownSyntax(plainText);
+            // Strip all Markdown syntax directly from raw Markdown content
+            const cleanText = stripMarkdownSyntax(content);
 
             // Create safe filename
             const safeFilename = createSafeFilename(filename, 'txt');
@@ -54,3 +51,4 @@ export class TextExporter implements IExporter {
         }
     }
 }
+

@@ -2,6 +2,33 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.14.0] - 2026-08-27 (Markdown Migration Phase 5: Markdown AI Streaming, Direct Exporters & Unified Inline Preview)
+
+### Added - Unified Inline Interactive Streaming Widget & CodeMirror 6 StateField
+- **Unified Inline Interactive Preview Card (`CMStreamingGhostWidget` in `src/lib/extensions/streaming-ghost-extension.ts`):** Redesigned the inline ghost widget into a cohesive, high-performance Dark Glassmorphism interactive card (`bg-zinc-900/95 border-emerald-500/40`) positioned at the exact document mutation offset.
+- **Embedded Decision Controls:** Embedded interactive action buttons directly inside the inline card header: `Stop Generation` during active streaming, and the 3 decision buttons (`Accept / Apply`, `Reject`, `Retry`) upon stream completion (`preview_ready`).
+- **Layout Thrashing Elimination (`updateDOM` at 60fps):** Implemented `updateDOM(dom)` on `CMStreamingGhostWidget` to update text and action states in-place, eliminating DOM destruction/recreation overhead during rapid token streaming.
+- **Dynamic Position & Range Tracking (`codeMirrorStreamingGhostField`):** StateField utilizing `tr.changes.mapPos(from, 1)` and `mapPos(to, -1)` to dynamically shift the preview replacement coordinates when concurrent edits occur elsewhere in the document, preventing `RangeError` and offset drift.
+- **Optimistic Concurrency Lock Self-Healing (`src/server/actions/ai-commit.ts`):** Added self-session healing to `commitAIFileOperation`. If `currentFile.version !== expectedVersion` but `currentFile.content` matches the baseline `originalContent`, the server adopts the current version without triggering spurious 412 conflicts. Added ETag normalization to strip quotation differences.
+- **AutoSave Cancellation on AI Launch (`src/hooks/use-editor-orchestrator.ts`):** Added `.cancel()` method to `debounce` in `src/lib/utils.ts` and invoked `debouncedAutoSave.cancel()` on AI start to prevent background save race conditions.
+- **Live Version Reading at Commit (`src/hooks/use-ai-stream.ts`):** Supported `getLatestVersion` and `getLatestETag` getters in `useAIStream` to query live orchestrator versions at commit time.
+
+### Changed - Streaming Pipeline & Exporters
+- **Eliminated Top Static Preview Panel (`src/app/workspace/editor/[fileId]/page.tsx`):** Permanently removed the redundant top fixed `<AIStreamPreview />` panel to eliminate UI duplication and focus distraction.
+- **Pure Markdown AI Streaming Model (`src/lib/ai/stream-session.ts` & `src/lib/parsers/stream-markdown.ts`):** Converted session FSM and validator to operate on `originalMarkdown` and `resultMarkdown`. Added `validateStreamMarkdownOutput`.
+- **Pure Markdown Exporters (`src/lib/exporters/`):**
+  - `MarkdownExporter`: Generates `.md` Blobs directly from raw Markdown text without intermediate HTML parsing, guaranteeing 100% fidelity for tables, code blocks, blockquotes, and Arabic RTL text.
+  - `TextExporter`: Strips Markdown syntax directly from source while preserving all code block contents and text structures.
+  - `sanitizeFilename`: Strips control characters `\x00-\x1F\x7F` and enforces a 200-character ceiling.
+- **Comprehensive Test Suites:** Added `src/test/markdown-exporters.test.ts` (6 tests) and updated `src/test/ai-preview-decision.test.ts` and `src/test/ai-server-atomic-commit.test.ts` (469 total tests passing 100%).
+
+## [1.13.0] - 2026-08-26 (Markdown Migration Phase 4: Markdown Sync, Diff3 Syntax Integrity & 3-Way Conflict Resolution)
+
+### Added - Markdown-Native Diff3 Engine & Conflict Handling
+- **Pure Markdown 3-Way Merge (`src/lib/sync/reconciliation.ts` & `conflict-resolver.ts`):** Migrated 3-way conflict resolution engine to operate natively on Markdown text via line-based Diff3 algorithms, eliminating HTML serialization artifacts.
+- **Markdown Structural Boundary Preservation:** Diff3 syntax integrity guards preserve Markdown list numbering, table rows, and fenced code block delimiters during merges.
+- **Reconciliation Policy Matrix:** Standardized cold-start and background reconciliation policies (`bootstrap_server`, `apply`, `adopt_metadata`, `keep_local`) on raw Markdown baseline snapshots.
+
 ## [1.12.0] - 2026-08-26 (Markdown Migration Phase 3: Content Model, Storage & Internal Import Transformation)
 
 ### Added - Universal Markdown Normalization & ETag Determinism

@@ -69,19 +69,21 @@ stateDiagram-v2
     conflict --> idle: Reset
 ```
 
-### 3.0 Explicit Decision Model (v1.6.0)
+### 3.0 Explicit Decision Model & Unified Inline Widget (v1.14.0)
 
-Stream completion (`onDone`) does **not** commit anything. The sanitized result is parked
-in `pendingPreviewRef` while the session rests in `preview_ready`, exposing three explicit
-user actions surfaced as buttons in `AIStreamPreview`:
+Stream completion (`onDone`) does **not** commit anything. The validated Markdown output is parked
+in `pendingPreviewRef` while the session rests in `preview_ready`. All decision controls are unified
+and embedded directly inside the inline `CMStreamingGhostWidget` at the document mutation coordinates:
 
 - **Accept (`commitPreview`)** — `preview_ready -> committing`: server-first atomic commit
-  (`commitAIFileOperation`) followed by one atomic Editor transaction replacing selection `[from, to]` via `EditorAdapter.replaceRange`.
+  (`commitAIFileOperation`) followed by one atomic Editor transaction replacing the dynamically tracked range `[from, to]` via `EditorAdapter.replaceRange`.
 - **Reject (`rejectPreview`)** — `preview_ready -> aborted`: ephemeral preview dismantled, document untouched,
   reservation settled as consumed (never refunded).
 - **Retry (`retryPreview`)** — old session settled exactly like a rejection, then a brand-new
   `startStream` runs with identical inputs (fresh quota reservation).
+- **Stop Generation (`stopStream`)** — `streaming -> aborted`: user halts in-flight streaming directly from the inline card.
 
+The legacy top fixed preview panel has been completely eliminated in favor of this single, cohesive inline interactive card.
 Quota rule of thumb: **system failures refund; user decisions settle-as-consumed.**
 See [`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D for the full settlement matrix.
 
@@ -113,23 +115,27 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 - **Risk**: Upstream proxy or malformed source streaming megabytes of text without a newline (`\n`), causing unbounded `lineBuffer` expansion and browser Heap Out-Of-Memory (OOM).
 - **Protection**: `stream-handler.ts` enforces `MAX_LINE_BUFFER_CHARS = 256 * 1024` (256KB). If buffer length exceeds ceiling without `\n`, it terminates the stream with `stream_buffer_overflow` and releases reader locks.
 
-### 4.2 Dynamic Selection Range Mapping & Locking
-- **Risk**: User typing during streaming causing position drift between original selection bounds and actual document coordinates at commit time.
-- **Protection**: `use-ai-stream.ts` locks target `from`/`to` coordinates and suspends user mutations during active generation. User typing automatically aborts generation or is scoped via `EditorAdapter`, preventing destructive overwrite of shifted content.
+### 4.2 Dynamic Selection Range Mapping (`codeMirrorStreamingGhostField`)
+- **Risk**: User typing elsewhere in the document during streaming causing position drift between original selection bounds and actual document coordinates at commit time.
+- **Protection**: `codeMirrorStreamingGhostField` uses `tr.changes.mapPos(from, 1)` and `mapPos(to, -1)` to dynamically shift the ghost preview decoration and queryable range in CodeMirror 6, guaranteeing zero coordinate drift and preventing `RangeError`.
 
-### 4.3 Payload Validation & Size Ceiling (`MAX_INPUT_CHARS`)
+### 4.3 High-Frequency Streaming Performance (`updateDOM` at 60fps)
+- **Risk**: High-speed token stream (50+ tokens/sec) causing DOM destruction and recreation on every chunk, leading to layout thrashing and stutter.
+- **Protection**: `CMStreamingGhostWidget` implements `updateDOM(dom)` to update the live preview text node and action states in-place, achieving 60fps render stability.
+
+### 4.4 Payload Validation & Size Ceiling (`MAX_INPUT_CHARS`)
 - **Risk**: Massive payloads or non-string inputs causing high CPU regex evaluation during word counting and quota reservation.
 - **Protection**: `route.ts` validates payload types (`typeof text === 'string'`) and enforces `MAX_INPUT_CHARS = 100_000` returning clean `400 Bad Request`.
 
-### 4.4 Non-Abortable Committing State Guard
+### 4.5 Non-Abortable Committing State Guard
 - **Risk**: User clicking Cancel while `commitAIFileOperation` is in-flight on the server database, leading to server-commit success but client-side rollback (causing version desynchronization and HTTP 412 conflicts).
 - **Protection**: `stopStream()` strictly locks and suppresses cancellations once the session enters `committing` state.
 
-### 4.5 DOM XSS Immunity in Ghost Extension
+### 4.6 DOM XSS Immunity in Ghost Extension
 - **Risk**: Dynamic operation names interpolated into `innerHTML` leading to DOM injection.
-- **Protection**: `StreamingGhostExtension` builds widget header nodes exclusively via `document.createElement` and `textContent`.
+- **Protection**: `StreamingGhostExtension` builds widget header nodes and buttons exclusively via DOM APIs (`document.createElement`, `textContent`) and sanitized SVG nodes with strict event isolation (`ignoreEvent: () => true`).
 
-### 4.6 Single Terminal Callback Guarantee
+### 4.7 Single Terminal Callback Guarantee
 - **Risk**: Concurrent abort and reader cancellation exceptions causing `onError` or `onComplete` to fire multiple times.
 - **Protection**: `stream-handler.ts` employs `isTerminalCallbackEmitted` ensuring strictly one terminal callback invocation per session.
 

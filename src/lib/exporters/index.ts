@@ -35,7 +35,7 @@ export class ExporterFactory {
  * Main export function - Facade for the export system
  * This is the primary API that client code should use
  * 
- * @param content - Content to export (HTML from TipTap editor)
+ * @param content - Content to export (Raw Markdown from Markdown Editor)
  * @param filename - Desired filename (without extension)
  * @param format - Export format (md or txt)
  * @returns Promise with export result including blob

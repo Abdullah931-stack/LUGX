@@ -4,7 +4,7 @@ import { db, schema } from "@/lib/db";
 import { txDb } from "@/lib/db/transactional";
 import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull } from "drizzle-orm";
-import { generateETagSync } from "@/lib/sync/etag-generator";
+import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { revalidatePath } from "next/cache";
 import { refundAIReservation as refundAIReservationOp } from "@/server/actions/ai-ops";
 
@@ -14,6 +14,7 @@ export interface CommitAIFileOperationParams {
     expectedVersion: number;
     expectedETag?: string | null;
     resultContent: string;
+    originalContent?: string;
 }
 
 export type CommitAIFileOperationResult =
@@ -135,36 +136,52 @@ export async function commitAIFileOperation(
             return { success: false, status: "error", error: "File not found or deleted" };
         }
 
+        const normalizeETag = (t?: string | null) => (t ? t.replace(/^W\//, "").replace(/"/g, "") : null);
         const fileCurrentVersion = currentFile.version ?? 0;
+        let baseVersion = expectedVersion;
+
+        const isContentUnchanged =
+            params.originalContent !== undefined &&
+            normalizeMarkdownSource(currentFile.content) === normalizeMarkdownSource(params.originalContent);
+
         if (fileCurrentVersion !== expectedVersion) {
-            return {
-                success: false,
-                status: "conflict",
-                error: "Conflict: this file was modified by another session. Please reload and try again.",
-                serverVersion: {
-                    version: currentFile.version,
-                    etag: currentFile.etag,
-                    updatedAt: currentFile.updatedAt.toISOString(),
-                },
-            };
+            // Self-Session Healing: if server content matches original baseline, adopt current version safely
+            if (isContentUnchanged) {
+                baseVersion = fileCurrentVersion;
+            } else {
+                return {
+                    success: false,
+                    status: "conflict",
+                    error: "Conflict: this file was modified by another session. Please reload and try again.",
+                    serverVersion: {
+                        version: currentFile.version,
+                        etag: currentFile.etag,
+                        updatedAt: currentFile.updatedAt.toISOString(),
+                    },
+                };
+            }
         }
 
-        // ETag verification
-        if (expectedETag && currentFile.etag && expectedETag !== currentFile.etag) {
-            return {
-                success: false,
-                status: "conflict",
-                error: "Conflict: ETag mismatch detected.",
-                serverVersion: {
-                    version: currentFile.version,
-                    etag: currentFile.etag,
-                    updatedAt: currentFile.updatedAt.toISOString(),
-                },
-            };
+        // ETag verification with normalization
+        if (expectedETag && currentFile.etag) {
+            const normExpected = normalizeETag(expectedETag);
+            const normCurrent = normalizeETag(currentFile.etag);
+            if (normExpected && normCurrent && normExpected !== normCurrent && !isContentUnchanged) {
+                return {
+                    success: false,
+                    status: "conflict",
+                    error: "Conflict: ETag mismatch detected.",
+                    serverVersion: {
+                        version: currentFile.version,
+                        etag: currentFile.etag,
+                        updatedAt: currentFile.updatedAt.toISOString(),
+                    },
+                };
+            }
         }
 
         const now = new Date();
-        const newVersion = fileCurrentVersion + 1;
+        const newVersion = baseVersion + 1;
         const newEtag = generateETagSync({ id: fileId, content: resultContent, updatedAt: now });
 
         // Enforce transactional safety in production
@@ -191,7 +208,7 @@ export async function commitAIFileOperation(
                         and(
                             eq(schema.files.id, fileId),
                             eq(schema.files.userId, user.id),
-                            eq(schema.files.version, expectedVersion),
+                            eq(schema.files.version, baseVersion),
                             isNull(schema.files.deletedAt)
                         )
                     )
@@ -223,7 +240,7 @@ export async function commitAIFileOperation(
                 return { conflict: false, file: f };
             });
 
-            if (txResult.conflict) {
+            if (txResult?.conflict) {
                 const refreshed = await db.query.files.findFirst({
                     where: and(eq(schema.files.id, fileId), eq(schema.files.userId, user.id)),
                 });

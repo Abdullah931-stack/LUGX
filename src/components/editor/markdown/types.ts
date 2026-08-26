@@ -67,6 +67,24 @@ export interface EditorAdapter {
     getMode(): EditorMode;
     /** Toggle rendering mode */
     setMode(mode: EditorMode): void;
+    /** Start streaming ghost preview at range [from, to] */
+    startStreamingGhost?(options: {
+        from: number;
+        to: number;
+        text?: string;
+        operation?: string;
+        isStreaming?: boolean;
+        onApply?: () => void;
+        onReject?: () => void;
+        onRetry?: () => void;
+        onStop?: () => void;
+    }): void;
+    /** Update streaming ghost text and state in real-time */
+    updateStreamingGhost?(text: string, isStreaming?: boolean): void;
+    /** Clear and dismantle streaming ghost preview */
+    clearStreamingGhost?(): void;
+    /** Get dynamically tracked streaming ghost range [from, to] */
+    getGhostRange?(): { from: number; to: number } | null;
     /** Destroy underlying editor instance */
     destroy(): void;
 }

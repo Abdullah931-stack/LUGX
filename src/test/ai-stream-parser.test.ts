@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { consumeAIStream } from '@/lib/ai/stream-handler';
-import { formatStreamOutputToHTML, sanitizePreviewChunk } from '@/lib/parsers/stream-markdown';
+import {
+    formatStreamOutputToHTML,
+    sanitizePreviewChunk,
+    validateStreamMarkdownOutput,
+} from '@/lib/parsers/stream-markdown';
 
 describe('AI Stream Parser & Sanitizer (Phase 7 / Gate G8)', () => {
     describe('Stream Markdown Sanitizer', () => {
@@ -27,6 +31,19 @@ describe('AI Stream Parser & Sanitizer (Phase 7 / Gate G8)', () => {
             const result = formatStreamOutputToHTML('   \n\n\t   ');
             expect(result.isEmpty).toBe(true);
             expect(result.html).toBe('');
+        });
+
+        it('should validate pure markdown stream outputs without HTML serialization', () => {
+            const md = '# Title\n\n- Item 1\n- Item 2\n\n```js\nconsole.log(42);\n```';
+            const validResult = validateStreamMarkdownOutput(md);
+            expect(validResult.isValid).toBe(true);
+            expect(validResult.isEmpty).toBe(false);
+            expect(validResult.markdown).toBe(md);
+
+            const emptyResult = validateStreamMarkdownOutput('   \n\t  ');
+            expect(emptyResult.isValid).toBe(false);
+            expect(emptyResult.isEmpty).toBe(true);
+            expect(emptyResult.markdown).toBe('');
         });
     });
 

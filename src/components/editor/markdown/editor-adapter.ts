@@ -4,6 +4,12 @@ import { undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
 import { syntaxTree } from "@codemirror/language";
 import { EditorAdapter, EditorMode, EditorSelection } from "./types";
 import { livePreviewPlugin, modeCompartment, readOnlyCompartment } from "./markdown-extensions";
+import {
+    startGhostEffect,
+    updateGhostEffect,
+    clearGhostEffect,
+    codeMirrorStreamingGhostField,
+} from "@/lib/extensions/streaming-ghost-extension";
 
 /**
  * Word count helper that reliably handles Unicode, Arabic, and mixed text.
@@ -229,6 +235,46 @@ export class CodeMirrorEditorAdapter implements EditorAdapter {
         this.view.dispatch({
             effects: modeCompartment.reconfigure(mode === "live" ? [livePreviewPlugin] : []),
         });
+    }
+
+    startStreamingGhost(options: { from: number; to: number; text?: string; operation?: string }): void {
+        const docLength = this.view.state.doc.length;
+        const safeFrom = Math.max(0, Math.min(options.from, docLength));
+        const safeTo = Math.max(safeFrom, Math.min(options.to, docLength));
+        this.view.dispatch({
+            effects: startGhostEffect.of({
+                from: safeFrom,
+                to: safeTo,
+                text: options.text || "",
+                operation: options.operation,
+                isStreaming: options.isStreaming ?? true,
+                onApply: options.onApply,
+                onReject: options.onReject,
+                onRetry: options.onRetry,
+                onStop: options.onStop,
+            }),
+        });
+    }
+
+    updateStreamingGhost(text: string, isStreaming?: boolean): void {
+        this.view.dispatch({
+            effects: updateGhostEffect.of({ text, isStreaming }),
+        });
+    }
+
+    clearStreamingGhost(): void {
+        this.view.dispatch({
+            effects: clearGhostEffect.of(),
+        });
+    }
+
+    getGhostRange(): { from: number; to: number } | null {
+        const ghostState = this.view.state.field(codeMirrorStreamingGhostField, false);
+        if (!ghostState || !ghostState.active) return null;
+        return {
+            from: ghostState.from,
+            to: ghostState.to,
+        };
     }
 
     destroy(): void {

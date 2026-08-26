@@ -50,7 +50,7 @@ sequenceDiagram
     alt Stream Completed Successfully (Clean EOF)
         Backend-->>StreamHandler: Stream Closed [Done]
         StreamHandler->>Editor: Park output in preview_ready (Doc Untouched)
-        Note over User,Editor: User chooses in AIStreamPreview: Accept / Reject / Retry
+        Note over User,Editor: User chooses in Unified Inline Preview Card: Accept / Reject / Retry
         alt User clicks Accept (commitPreview)
             StreamHandler->>Backend: Atomic commit (commitAIFileOperation)
             StreamHandler->>GhostExt: Teardown Ephemeral Preview
@@ -137,6 +137,6 @@ Document Model:
 3. **`src/components/editor/ai-toolbar.tsx`**:
    - Active streaming state indicator with instant *"Stop Generation"* action.
 4. **`src/app/workspace/editor/[fileId]/page.tsx`**:
-   - Integration point connecting `stream-handler`, `AIStreamPreview`, and atomic transaction commits on $[from, to]$ via `adapter.replaceRange`.
+   - Integration point connecting `stream-handler`, unified inline `CMStreamingGhostWidget` with embedded controls, and atomic transaction commits on $[from, to]$ via `adapter.replaceRange`.
 5. **`src/lib/ai-transaction.test.ts`**:
    - Comprehensive unit and integration test suite asserting auto-save isolation, partial range replacement, single-action undo, and failure recovery.

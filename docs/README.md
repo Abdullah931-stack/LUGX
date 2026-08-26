@@ -57,6 +57,9 @@ docs/
 | [phase-14-supabase-storage-removal-closure.md](./reference/phase-14-supabase-storage-removal-closure.md) | Phase 14 closure: Dead-code elimination of unused Supabase Storage, database schema drop of `storage_path`, test fixtures clean-up |
 | [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Arabic/RTL safe decorations, live preview/source modes |
 | [phase-2-editor-replacement-tooling-closure.md](./reference/phase-2-editor-replacement-tooling-closure.md) | Phase 2 closure: TipTap replacement on editor page, EditorAdapter tooling integration, Multi-Range Search & Replace |
+| [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |
+| [phase-4-sync-diff3-conflict-closure.md](./reference/phase-4-sync-diff3-conflict-closure.md) | Phase 4 closure: Markdown-native Diff3 3-way conflict resolution engine, syntax boundary protection |
+| [phase-5-ai-streaming-export-closure.md](./reference/phase-5-ai-streaming-export-closure.md) | Phase 5 closure: Markdown AI streaming, unified inline interactive preview widget (`CMStreamingGhostWidget`), pure exporters, lock self-healing |
 
 ### Specifications (`specs/`)
 
