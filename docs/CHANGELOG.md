@@ -2,6 +2,22 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.12.0] - 2026-08-26 (Markdown Migration Phase 3: Content Model, Storage & Internal Import Transformation)
+
+### Added - Universal Markdown Normalization & ETag Determinism
+- **Unified Normalization Function (`normalizeMarkdownSource` in `src/lib/sync/etag-generator.ts`):** Canonical normalization converting `\r\n` / `\r` to LF (`\n`), stripping null bytes (`\0`) for PostgreSQL text safety, and applying Unicode NFC normalization before ETag hashing and storage. Prevents spurious 412 Precondition Failed conflicts across operating systems (Windows/macOS/Linux) and Unicode composite encodings.
+- **Deterministic ETag Hashing (`generateETag` / `generateETagSync`):** Integrated `normalizeMarkdownSource` into both asynchronous and synchronous ETag generators to guarantee identical SHA-256 digests across platforms.
+- **Exported `MarkdownSource` Type Definition (`src/lib/sync/idb-types.ts` & `src/lib/sync/index.ts`):** Defined `MarkdownSource` type representing canonical UTF-8 Markdown text across client hooks, IndexedDB layers, operations log, and API payloads.
+- **Dedicated Import Test Suite (`src/server/actions/import-file.test.ts`):** Created 9 automated tests validating pure Markdown extraction for MD, TXT, and PDF files, correct word counting, ETag stability, parent folder checks, 10MB payload size limit rejection, and single-query title collision resolution.
+
+### Changed - Storage & Import Pipeline
+- **Purged HTML Conversion from File Imports (`src/server/actions/import-file.ts`):** Removed `smartConvertToHTML`. MD and TXT imports decode base64 directly to normalized Markdown. PDF text extraction applies linear text extraction policy without artificial HTML conversion.
+- **Collision-Free File Import (`import-file.ts`):** Implemented single-query in-memory title deduplication (`Title (1)`, `Title (2)`) preventing database `23505 unique_violation` exceptions on live partial unique index `idx_files_user_parent_title_live`. Added defense-in-depth base64 payload size validation.
+- **Normalized Server Actions & REST API Updates (`file-ops.ts` & `/api/files/[id]/route.ts`):** `createFile`, `updateFileContent`, and `PUT /api/files/[id]` apply `normalizeMarkdownSource` before optimistic locking checks, ETag generation, and PostgreSQL persistence.
+- **IndexedDB & Sync Layer Normalization (`use-sync.ts` & `use-editor-orchestrator.ts`):** `saveLocal` normalizes document text and operation snapshots in IndexedDB. Removed unused `sanitizeHtml` import from `use-editor-orchestrator.ts`.
+- **Editor Adapter AI Stream Support (`src/hooks/use-ai-stream.ts`):** Added native support for `EditorAdapter` (`getSelection`, `getSelectedText`, `getValue`, `replaceRange`) alongside backward-compatible TipTap fallback.
+- **Integration Test Modernization (`src/test/editor-orchestration.integration.test.ts`):** Updated 13 integration tests to use Markdown `EditorAdapter` mocks and pure Markdown strings.
+
 ## [1.11.0] - 2026-08-26 (Markdown Migration Phase 2: TipTap Replacement & Editor Tooling Integration)
 
 ### Changed - Primary Editor Surface & Tooling Integration

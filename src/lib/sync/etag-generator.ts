@@ -6,6 +6,20 @@
  */
 
 /**
+ * Normalizes Markdown source text to LF line endings and Unicode NFC format.
+ * This ensures deterministic ETag calculation and prevents spurious 412 conflicts
+ * across different operating systems (Windows CRLF vs macOS/Linux LF).
+ */
+export function normalizeMarkdownSource(content: string | null | undefined): string {
+    if (!content) return '';
+    return content
+        .replace(/\0/g, '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .normalize('NFC');
+}
+
+/**
  * Generate a Strong ETag from file content
  * Uses SHA-256 hash, truncated to 32 characters for storage efficiency
  * 
@@ -21,7 +35,8 @@ export async function generateETag(content: {
         ? content.updatedAt.toISOString()
         : new Date(content.updatedAt).toISOString();
 
-    const dataToHash = `${content.id}${content.content || ''}${updatedAtStr}`;
+    const normalizedContent = normalizeMarkdownSource(content.content);
+    const dataToHash = `${content.id}${normalizedContent}${updatedAtStr}`;
 
     // Use Web Crypto API for browser environment
     if (typeof crypto !== 'undefined' && crypto.subtle) {
@@ -53,7 +68,8 @@ export function generateETagSync(content: {
         ? content.updatedAt.toISOString()
         : new Date(content.updatedAt).toISOString();
 
-    const dataToHash = `${content.id}${content.content || ''}${updatedAtStr}`;
+    const normalizedContent = normalizeMarkdownSource(content.content);
+    const dataToHash = `${content.id}${normalizedContent}${updatedAtStr}`;
 
     const hash = crypto
         .createHash('sha256')

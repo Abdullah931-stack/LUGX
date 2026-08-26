@@ -36,6 +36,7 @@ export const files = pgTable("files", {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     title: varchar("title", { length: 500 }).notNull(),
+    /** Normalized UTF-8 Markdown source text (MarkdownSource) */
     content: text("content"),
     parentFolderId: uuid("parent_folder_id").references((): any => files.id, { onDelete: "set null" }), // Self-referencing FK (deferred at schema level; see migration 0003 for ON DELETE behavior and deferrability)
     isFolder: boolean("is_folder").notNull().default(false),

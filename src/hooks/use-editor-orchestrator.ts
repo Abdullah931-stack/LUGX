@@ -16,7 +16,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { getFile, updateFileContent, renameFile, deleteFile } from "@/server/actions/file-ops";
-import { sanitizeHtml } from "@/lib/sanitize-client";
 import { debounce } from "@/lib/utils";
 import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
 import { useAIStream } from "@/hooks/use-ai-stream";

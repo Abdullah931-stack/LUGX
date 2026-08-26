@@ -25,8 +25,8 @@
 
 ## 4. Dynamic Statistics
 **Goal:** Real-time metrics for full text and user selection.
-- **Character Count:** Added utility to count characters (excluding whitespace).
-- **Selection Tracking:** Editor listens to `selectionUpdate` events.
+- **Character Count:** Fast utility to compute characters (Unicode and RTL-safe).
+- **Selection Tracking:** Editor listens to `EditorAdapter` selection changes (`onSelectionChange` / `adapter.getSelection()`).
 - **Dynamic Display:** Stats bar toggles between:
   - **Default:** Total Words | Total Chars
   - **On Selection:** "Selected: [count] words | [count] chars" (highlighted)

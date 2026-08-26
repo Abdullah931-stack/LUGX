@@ -5,8 +5,8 @@
 This document specifies the architecture and implementation of the **Hybrid Streaming & Snapshot Architecture** in the LUGX platform, restoring real-time perceived UI streaming while guaranteeing absolute data integrity, single-action atomic undo, idempotent quota accounting, and optimistic version protection.
 
 ### Primary System Invariant:
-> **No network chunk is ever written directly to the TipTap ProseMirror document tree, the local IndexedDB database, or the remote database.**
-> Streaming tokens update an isolated in-memory ephemeral buffer and view-layer decoration (`StreamingGhostExtension`). The document is committed in exactly one atomic transaction only after stream completion and server version validation.
+> **No network chunk is ever written directly to the active document state, the local IndexedDB database, or the remote database.**
+> Streaming tokens update an isolated in-memory ephemeral buffer and view-layer preview overlay. The document is committed in exactly one atomic transaction only after stream completion and server version validation.
 
 ---
 
@@ -44,9 +44,9 @@ To prevent distributed transaction failure modes, the system decouples commit in
         ├─ [If Version Conflict / 412] ──► Rollback ephemeral state & refund quota
         │
         ▼ [If Success (200 OK)] (Step 2: Local Commit)
-[Apply Single ProseMirror Transaction]
-        ├─ Dismantle Ephemeral Ghost Decoration
-        ├─ setTextSelection(from, to) -> deleteSelection() -> insertContent(safeHtml)
+[Apply Single Atomic Editor Transaction]
+        ├─ Dismantle Ephemeral Preview Overlay
+        ├─ adapter.replaceRange(from, to, previewMarkdown)
         ├─ Push 1 History Stack Entry (Undoable with single Ctrl+Z)
         └─ Sync to local IndexedDB with server ETag
 ```

@@ -40,7 +40,7 @@ docs/
 | [ai-atomic-commit-architecture.md](./architecture/ai-atomic-commit-architecture.md) | Transactional AI commit binding file update + quota settlement + version guard |
 | [editor-sync-orchestration.md](./architecture/editor-sync-orchestration.md) | Unified editor write controller: autosave gates, reconciliation, AI transaction guard |
 | [ai-streaming-protocol.md](./architecture/ai-streaming-protocol.md) | NDJSON wire protocol, session FSM, adversarial hardening |
-| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Middleware auth gating, rate limiter tiers, XSS sanitization, AES-GCM encryption, cron purge |
+| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Middleware auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, AES-GCM encryption, cron purge |
 
 ### Reference (`reference/`)
 

@@ -5,7 +5,7 @@
 Phase 14 completes the removal of unused cloud object storage (`Supabase Storage`) and all associated dead code, test suites, environment references, and database columns from the LUGX architecture.
 
 In the original founding specifications, Supabase Storage (`user-files` bucket) was envisioned for binary PDF and TXT file uploads. In the implemented architecture:
-- **Zero Binary Storage:** PDF/MD/TXT file imports are handled entirely through `src/server/actions/import-file.ts`, extracting plain text, converting to TipTap HTML via `smartConvertToHTML`, and saving directly to the Neon PostgreSQL `files` table.
+- **Zero Binary Storage:** PDF/MD/TXT file imports are handled entirely through `src/server/actions/import-file.ts`, extracting plain text and normalized Markdown, and saving directly to the Neon PostgreSQL `files` table.
 - **Dead Code Elimination:** The module `src/lib/supabase/storage.ts` had zero operational callers in the codebase.
 - **Database Schema Cleanliness:** The unused `storage_path` column in the `files` table was dropped via migration `0007_drop_storage_path.sql`.
 - **Supabase Auth Preservation:** Supabase Authentication, OAuth handling, SSR session cookies (`@supabase/ssr`), and client/server authentication providers (`client.ts`, `server.ts`) remain fully active and untouched.

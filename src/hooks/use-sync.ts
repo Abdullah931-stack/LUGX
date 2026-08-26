@@ -21,6 +21,7 @@ import {
     SyncConflict,
     createOperationsGC,
     OperationsGarbageCollector,
+    normalizeMarkdownSource,
 } from '@/lib/sync';
 
 export interface UseSyncOptions {
@@ -253,13 +254,14 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
         const activeIdb = idbManagerRef.current;
         if (!userId?.trim() || !activeIdb) return;
         const existingFile = await activeIdb.getFile(file.id);
+        const normalizedContent = normalizeMarkdownSource(file.content);
 
         // Preserve or compute baseSnapshot before the file is edited
         let baseSnapshot = file.baseSnapshot || existingFile?.baseSnapshot;
         if (!baseSnapshot && existingFile && !existingFile.isDirty) {
             // First dirty modification on a clean file: record the pristine base snapshot
             baseSnapshot = {
-                content: existingFile.content,
+                content: normalizeMarkdownSource(existingFile.content),
                 etag: existingFile.etag,
                 version: existingFile.version,
                 title: existingFile.title,
@@ -268,7 +270,7 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
         } else if (file.isDirty === false) {
             // Clean file: baseSnapshot matches confirmed state
             baseSnapshot = {
-                content: file.content,
+                content: normalizedContent,
                 etag: file.etag !== undefined ? file.etag : (existingFile?.etag || ''),
                 version: file.version !== undefined ? file.version : (existingFile?.version || 0),
                 title: file.title || existingFile?.title || 'Untitled',
@@ -278,7 +280,7 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
 
         const idbFile: IDBFile = {
             id: file.id,
-            content: file.content,
+            content: normalizedContent,
             title: file.title || existingFile?.title || 'Untitled',
             etag: file.etag !== undefined ? file.etag : (existingFile?.etag || ''),
             version: file.version !== undefined ? file.version : (existingFile?.version || 0),
@@ -304,8 +306,8 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 attempts: 0,
                 operationType: 'update',
                 position: 0,
-                content: file.content,
-                previousContent: baseSnapshot?.content || existingFile?.content || '',
+                content: normalizedContent,
+                previousContent: baseSnapshot?.content || (existingFile ? normalizeMarkdownSource(existingFile.content) : ''),
                 timestamp: Date.now(),
                 synced: false,
                 snapshot: baseSnapshot ? {

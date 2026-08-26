@@ -1,10 +1,12 @@
-# TipTap Editor, Auto-Save & Sync Orchestration Architecture
+# Editor, Auto-Save & Sync Orchestration Architecture
 
 **Phase ID:** Phase 9 / Gate G9
 **Status:** CLOSED · Amended in v1.5.0 with the Local-First Reconciliation policy
 (Section 6a) and the AI streaming programmatic-transaction guard (Section 6b);
-amended again post-Phase-11 with the Hydration Lifecycle, the closed cold-start
-decision matrix and the offline-first contract (Sections 6a2 / 6c)
+amended post-Phase-11 with the Hydration Lifecycle, the closed cold-start
+decision matrix and the offline-first contract (Sections 6a2 / 6c);
+amended in Markdown Migration Phase 2 & 3 with the standalone MarkdownEditor
+and engine-agnostic `EditorAdapter` contract.
 **Authoritative Module:** `src/hooks/use-editor-orchestrator.ts`
 **Consuming Page:** `src/app/workspace/editor/[fileId]/page.tsx`
 
@@ -24,10 +26,10 @@ The orchestrator decomposes page state into 6 isolated, deterministic state slic
 
 | State Slice | Responsibilities & Invariants |
 | :--- | :--- |
-| **1. Document State** | Document content (Raw Markdown) and document title. Protected against silent race overwrites. |
+| **1. Document State** | Document content (`MarkdownSource` - normalized UTF-8 Markdown text) and document title. Protected against silent race overwrites. |
 | **2. Preview State** | Ephemeral AI streaming preview buffer, operation type, active tokens, and finite session status (`idle`, `reserving`, `reserved`, `streaming`, `preview_ready`, `committing`, `committed`, `aborted`, `failed`, `conflict`). |
 | **3. Dirty State** | Boolean flag tracking unsaved local changes, timestamp of last successful save, and active saving indicators. |
-| **4. Server Version** | Authoritative server version number and ETag precondition anchor received from PostgreSQL / Supabase. |
+| **4. Server Version** | Authoritative server version number and ETag precondition anchor received from PostgreSQL. |
 | **5. Conflict State** | Active `SyncConflict` descriptor, modal visibility toggle, resolution strategy payload, and in-flight resolution locks. |
 | **6. Write State** | Mutex controller tracking the active writing channel (`idle`, `saving`, `ai_committing`, `resolving_conflict`, `syncing`, `stopped`). |
 | **7. Hydration State** | Initial-load lifecycle for the mounted file (`hydrating`, `ready`, `fatal`). While not `ready` the editor surface is frozen (`adapter.setEditable(false)`) and every autosave/input gate short-circuits — writing before the load pipeline settles is structurally impossible. |
@@ -78,30 +80,22 @@ const canAutoSave = useCallback((): boolean => {
 
 ---
 
-## 4. Target-Scoped Manual Edit During AI Streaming Policy
+## 4. Manual Edit During AI Streaming Policy
 
-When the user types or alters text while an AI stream is actively generating:
-1. **Target-Scoped Overlap Check:** The orchestrator checks whether the user's cursor / modification intersects with the active AI selection target range `[ghostState.from, ghostState.to]`:
-   - **Edits Outside Target Range (e.g. Other Paragraphs):** Allowed without interruption. ProseMirror's `tr.mapping` automatically maps and shifts the ghost preview coordinates forward/backward, and the AI streaming continues smoothly.
-   - **Edits Inside Target Range:** If the user alters text inside the paragraph/selection being actively generated or modified:
-     1. **Instant Abort:** The orchestrator signals the active `AbortController` in `useAIStream`.
-     2. **Quota Settlement (Explicit Settlement Policy):** Overwriting the AI target range is a *user decision*, so the reservation is settled as consumed via `commitAIReservation` (`stopStream` settles before aborting) — it is NOT refunded. See [`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D.
-     3. **Ghost Dismantled:** TipTap's `StreamingGhostExtension` decoration is immediately removed, leaving the underlying ProseMirror document model pristine.
-     4. **Editor Generation Advance:** `editorGenerationRef` increments, preventing any stale in-flight AI chunks or delayed commit responses from applying to the altered document.
-     5. **Debounced AutoSave:** The user's manual modification proceeds cleanly without silent corrupt merges.
+When the user types or modifies text while an AI stream or generation is active:
+1. **Instant Abort:** The orchestrator detects manual changes via `handleEditorChange` and immediately aborts the active stream via `aiStream.stopStream()`.
+2. **Quota Settlement (Explicit Settlement Policy):** Stopping an active generation is a *user decision*, so the reservation is settled as consumed via `commitAIReservation` (`stopStream` settles before aborting) — it is NOT refunded. See [`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D.
+3. **Editor Generation Advance:** `editorGenerationRef` increments immediately, preventing any stale in-flight AI chunks or delayed commit responses from applying to the altered document.
+4. **Debounced AutoSave:** The user's manual modification proceeds cleanly without silent corrupt merges.
 
 ---
 
 ## 5. Single-Action Atomic Undo (Ctrl+Z)
 
-Local application of committed AI results executes as a single, indivisible ProseMirror transaction:
+Local application of committed AI results executes as a single, indivisible transaction via the editor adapter:
 
 ```typescript
-editor.chain()
-    .setTextSelection({ from: targetFrom, to: targetTo })
-    .deleteSelection()
-    .insertContent(safeHtml)
-    .run();
+adapter.replaceRange(selectionStart, selectionEnd, previewText);
 ```
 
 - **Invariant:** Pressing `Ctrl+Z` reverses the entire AI change back to the pre-operation document snapshot in one history step, rather than undoing individual streamed chunks.

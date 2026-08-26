@@ -29,22 +29,22 @@ Any acceptable architectural solution must rigorously satisfy the following five
 sequenceDiagram
     autonumber
     actor User
-    participant Editor as TipTap / ProseMirror
-    participant StreamHandler as Stream Handler & SSE Client
-    participant GhostExt as Streaming Ghost Plugin
+    participant Editor as Editor (MarkdownEditor / EditorAdapter)
+    participant StreamHandler as Stream Handler & Client
+    participant GhostExt as Preview Overlay
     participant Backend as Next.js API / Gemini Stream
 
     User->>Editor: Select Range [from, to] & Click AI Tool
     Editor->>StreamHandler: Initiate AI Stream Request with Range [from, to]
     StreamHandler->>Editor: Take Document Snapshot & Lock Target Selection
-    StreamHandler->>GhostExt: Create Ephemeral Decoration (Widget at 'from' + Dim/Hide [from, to])
+    StreamHandler->>GhostExt: Create Ephemeral Preview Buffer
     Note over Editor: Surrounding text [0, from) and (to, size] remains 100% normal
     StreamHandler->>Backend: POST /api/ai/stream (with AbortSignal)
     
     loop Real-Time Chunk Ingestion
-        Backend-->>StreamHandler: SSE Chunk Stream
+        Backend-->>StreamHandler: NDJSON Chunk Stream
         StreamHandler->>GhostExt: Update Ephemeral Text Buffer
-        GhostExt->>Editor: Re-render Inline Widget at 'from' (No Doc Node Mutation)
+        GhostExt->>Editor: Re-render Preview Overlay (No Document Mutation)
     end
 
     alt Stream Completed Successfully (Clean EOF)
@@ -53,18 +53,18 @@ sequenceDiagram
         Note over User,Editor: User chooses in AIStreamPreview: Accept / Reject / Retry
         alt User clicks Accept (commitPreview)
             StreamHandler->>Backend: Atomic commit (commitAIFileOperation)
-            StreamHandler->>GhostExt: Teardown Ephemeral Decoration
-            StreamHandler->>Editor: Dispatch Single Atomic Transaction on [from, to]
+            StreamHandler->>GhostExt: Teardown Ephemeral Preview
+            StreamHandler->>Editor: Dispatch Single Atomic Transaction on [from, to] (replaceRange)
             Editor->>Editor: Push 1 Entry to History Stack (Undo Ready)
             Editor-->>User: Render Final Formatted Output
         else User clicks Reject or Retry
             StreamHandler->>Backend: Settle quota as consumed (commitAIReservation)
-            StreamHandler->>GhostExt: Teardown Ephemeral Decoration (Doc Pristine)
+            StreamHandler->>GhostExt: Teardown Ephemeral Preview (Doc Pristine)
         end
     else Stream Error / System Abort / Network Loss
         Backend--xStreamHandler: Socket Error / Abort Event
         StreamHandler->>Backend: Auto-refund reservation (refundAIReservation)
-        StreamHandler->>GhostExt: Immediate Teardown Ephemeral Decoration
+        StreamHandler->>GhostExt: Immediate Teardown Ephemeral Preview
         StreamHandler->>Editor: Restore Target Selection & Unlock Editor
         Editor-->>User: Display Toast Notification (Original Range Restored)
     end
@@ -123,7 +123,7 @@ Document Model:
 | **Rendering Performance** | **High (60 FPS)**: Minimal DOM repaint scoped to decoration widget | **Medium**: Reparsing ProseMirror nodes on each chunk | **Low**: Overhead of maintaining dual editor instances | **Medium**: Branch merge overhead |
 | **Auto-Save Safety** | **Absolute (100%)**: Zero change events dispatched during streaming | **Vulnerable**: Requires dangerous global auto-save suppression flags | **High**: Isolated to offscreen instance | **High**: Isolated to virtual branch |
 | **Undo Stack Determinism** | **Deterministic**: Single atomic ProseMirror step | **Fragile**: Requires internal history filter manipulation | **Deterministic**: Single patch application | **Complex**: Requires multi-layer rollback |
-| **Code Footprint & Maintenance** | **Low**: Single lightweight TipTap extension (~120 LOC) | **High**: Entangled with core editor transaction pipeline | **High**: Synchronization glue code between instances | **Very High**: Heavy CRDT dependencies |
+| **Code Footprint & Maintenance** | **Low**: Single lightweight preview extension / overlay (~120 LOC) | **High**: Entangled with core editor transaction pipeline | **High**: Synchronization glue code between instances | **Very High**: Heavy CRDT dependencies |
 
 ---
 

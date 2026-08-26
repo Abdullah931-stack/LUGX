@@ -58,9 +58,9 @@ The system resolves concurrent multi-device and offline-to-online edit discrepan
   - The file and all pending queue operations are marked as `synced: true, isDirty: false`.
   - The UI modal dialog is suppressed, preventing infinite dialog loops.
 
-### 2.4 Natural Text Conflict Resolution UI (`src/components/sync/conflict-dialog.tsx`)
-- **Prose Extraction:** Strips raw HTML syntax (`<p>`, `<br>`, `<h1>`) using `htmlToPlainText` for side-by-side comparison columns, visual diff blocks (`DiffLine`), and the interactive merge editor.
-- **Bi-directional Parsing:** Allows users to edit in clean natural language, converting plain text paragraphs back to standardized TipTap HTML structure (`convertTextToHTML`) upon authoritative submission.
+### 2.4 Markdown Conflict Resolution UI (`src/components/sync/conflict-dialog.tsx`)
+- **Direct Markdown Comparison:** Displays side-by-side comparison columns, visual diff blocks (`DiffLine`), and the interactive merge editor operating on pure Markdown source text.
+- **Deterministic Submission:** Submits resolved Markdown text directly with `normalizeMarkdownSource` normalization upon authoritative submission.
 
 ### 2.5 Cross-Tab Synchronization Guard (`src/lib/sync/cross-tab-sync.ts`)
 - Uses `BroadcastChannel` to propagate save and conflict resolution events across browser tabs.
@@ -90,7 +90,7 @@ Content-Type: application/json
 If-Match: "server_etag"
 
 {
-  "content": "<p>Resolved Content</p>",
+  "content": "# Resolved Content\n\nAuthoritative merged markdown text.",
   "expectedVersion": 2
 }
 ```

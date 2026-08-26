@@ -3,14 +3,14 @@
  */
 
 // Types
-export type { IDBFile, IDBOperation, IDBSyncMetadata, OperationType, OperationStatus, SyncConflict, SyncQueueItem, IDBSchemaInfo } from './idb-types';
+export type { IDBFile, IDBOperation, IDBSyncMetadata, OperationType, OperationStatus, SyncConflict, SyncQueueItem, IDBSchemaInfo, MarkdownSource } from './idb-types';
 export { IDB_CONFIG, getDatabaseName } from './idb-types';
 
 // IndexedDB
 export { indexedDBManager, IndexedDBManager, createIndexedDBManager } from './indexeddb';
 
-// ETag
-export { generateETag, generateETagSync, isValidETag, compareETags, parseETagHeader, formatETagHeader } from './etag-generator';
+// ETag & Markdown Normalization
+export { generateETag, generateETagSync, isValidETag, compareETags, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from './etag-generator';
 
 // Error Handling
 export { SyncErrorType, syncErrorHandler, SyncErrorHandler, isRetryableError } from './error-handler';

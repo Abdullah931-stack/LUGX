@@ -10,8 +10,7 @@ import { db } from "@/lib/db";
 import { files } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { extractPdfText, isValidPDF } from "@/lib/parsers/pdf-parser";
-import { smartConvertToHTML } from "@/lib/parsers/text-to-html.server";
-import { generateETagSync } from "@/lib/sync/etag-generator";
+import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { randomUUID } from "crypto";
 
 export interface ImportFileResult {
@@ -26,7 +25,12 @@ export interface ImportFileResult {
 }
 
 /**
- * Import a file and extract its text content
+ * Import a file and extract its text content as pure Markdown
+ * 
+ * Layout Loss Policy for PDF:
+ * Extracted PDF text is normalized to linear Markdown paragraphs. Complex page layouts,
+ * columns, headers, footers, and embedded media are not preserved.
+ * 
  * @param fileName - Name of the file
  * @param fileContent - File content as base64 string
  * @param fileType - Type of file (pdf/md/txt)
@@ -42,6 +46,12 @@ export async function importFile(
         const user = await getUser();
         if (!user) {
             return { success: false, error: "User not authenticated" };
+        }
+
+        // Defense-in-depth: Validate Base64 payload size (max 10MB decoded binary ≈ 14MB base64)
+        const MAX_BASE64_LENGTH = 14 * 1024 * 1024;
+        if (!fileContent || typeof fileContent !== 'string' || fileContent.length > MAX_BASE64_LENGTH) {
+            return { success: false, error: "File exceeds maximum size limit (10MB)" };
         }
 
         // Validate parent folder if specified
@@ -76,47 +86,59 @@ export async function importFile(
                 return { success: false, error: "Invalid PDF file" };
             }
 
-            // Extract text only (NO IMAGES)
+            // Extract text only (NO IMAGES, linear layout)
             const pdfResult = await extractPdfText(buffer);
-            textContent = pdfResult.text;
+            textContent = normalizeMarkdownSource(pdfResult.text);
             wordCount = pdfResult.wordCount;
 
             if (!textContent.trim()) {
                 return { success: false, error: "PDF contains no extractable text" };
             }
         } else {
-            // For MD/TXT files, decode from base64 preserving all formatting
-            textContent = Buffer.from(fileContent, 'base64').toString('utf-8');
-
-            // Normalize line endings for consistency
-            textContent = textContent.replace(/\r\n/g, '\n');
-
+            // For MD/TXT files, decode from base64 preserving pure markdown formatting
+            const rawText = Buffer.from(fileContent, 'base64').toString('utf-8');
+            textContent = normalizeMarkdownSource(rawText);
             wordCount = textContent.split(/\s+/).filter(Boolean).length;
         }
 
         // Remove file extension from title and sanitize
         const rawTitle = fileName.replace(/\.(pdf|md|txt)$/i, '');
-        const title = (rawTitle || "Imported Document").trim().slice(0, 500);
+        const baseTitle = (rawTitle || "Imported Document").trim().slice(0, 500);
 
-        // Convert plain text to HTML for TipTap editor compatibility
-        const htmlContent = smartConvertToHTML(textContent, fileType);
+        // Resolve title collisions in destination folder via single query (avoids 23505 unique_violation)
+        const siblings = await db.query.files.findMany({
+            where: and(
+                eq(files.userId, user.id),
+                parentFolderId ? eq(files.parentFolderId, parentFolderId) : isNull(files.parentFolderId),
+                isNull(files.deletedAt)
+            ),
+            columns: { title: true },
+        });
+
+        const existingTitles = new Set(siblings.map((s) => s.title));
+        let title = baseTitle;
+        let counter = 1;
+        while (existingTitles.has(title)) {
+            title = `${baseTitle} (${counter})`.slice(0, 500);
+            counter++;
+        }
 
         const newFileId = randomUUID();
         const now = new Date();
         const etag = generateETagSync({
             id: newFileId,
-            content: htmlContent,
+            content: textContent,
             updatedAt: now,
         });
 
-        // Atomic insert with pre-computed ETag
+        // Atomic insert with pre-computed ETag, pure Markdown content, and collision-free title
         const [newFile] = await db
             .insert(files)
             .values({
                 id: newFileId,
                 userId: user.id,
                 title,
-                content: htmlContent,
+                content: textContent,
                 parentFolderId,
                 isFolder: false,
                 etag,
@@ -131,7 +153,7 @@ export async function importFile(
             data: {
                 id: newFile.id,
                 title: newFile.title,
-                content: htmlContent,
+                content: textContent,
                 wordCount,
             },
         };

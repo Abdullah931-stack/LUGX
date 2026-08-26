@@ -4,10 +4,80 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generateETagSync, compareETags } from './etag-generator';
+import { generateETagSync, compareETags, normalizeMarkdownSource } from './etag-generator';
 
-describe('ETag Generator', () => {
+describe('ETag Generator & Normalization', () => {
+    describe('normalizeMarkdownSource', () => {
+        it('normalizes CRLF to LF', () => {
+            const input = 'Line 1\r\nLine 2\r\nLine 3';
+            expect(normalizeMarkdownSource(input)).toBe('Line 1\nLine 2\nLine 3');
+        });
+
+        it('normalizes lone CR to LF', () => {
+            const input = 'Line 1\rLine 2\rLine 3';
+            expect(normalizeMarkdownSource(input)).toBe('Line 1\nLine 2\nLine 3');
+        });
+
+        it('normalizes Unicode strings to NFC', () => {
+            // "é" in NFD is 'e' + combining acute accent (U+0301)
+            const nfd = 'e\u0301';
+            // "é" in NFC is single code point (U+00E9)
+            const nfc = '\u00E9';
+            expect(nfd).not.toBe(nfc);
+            expect(normalizeMarkdownSource(nfd)).toBe(nfc);
+        });
+
+        it('strips null bytes (\0) to protect PostgreSQL text encoding', () => {
+            const input = 'Safe\0 Markdown\0 text\0 with null bytes';
+            expect(normalizeMarkdownSource(input)).toBe('Safe Markdown text with null bytes');
+        });
+
+        it('handles null, undefined, and empty string safely', () => {
+            expect(normalizeMarkdownSource(null)).toBe('');
+            expect(normalizeMarkdownSource(undefined)).toBe('');
+            expect(normalizeMarkdownSource('')).toBe('');
+        });
+    });
+
     describe('generateETagSync', () => {
+        it('generates identical ETag across CRLF and LF line endings (cross-platform stability)', () => {
+            const fileWindows = {
+                id: 'file-123',
+                content: '# Title\r\nParagraph 1\r\nParagraph 2\r\n',
+                updatedAt: new Date('2024-01-01T00:00:00Z'),
+            };
+
+            const fileUnix = {
+                id: 'file-123',
+                content: '# Title\nParagraph 1\nParagraph 2\n',
+                updatedAt: new Date('2024-01-01T00:00:00Z'),
+            };
+
+            const etagWindows = generateETagSync(fileWindows);
+            const etagUnix = generateETagSync(fileUnix);
+
+            expect(etagWindows).toBe(etagUnix);
+        });
+
+        it('generates identical ETag across Unicode NFD and NFC representations', () => {
+            const fileNFD = {
+                id: 'file-123',
+                content: 'Café: e\u0301',
+                updatedAt: new Date('2024-01-01T00:00:00Z'),
+            };
+
+            const fileNFC = {
+                id: 'file-123',
+                content: 'Café: \u00E9',
+                updatedAt: new Date('2024-01-01T00:00:00Z'),
+            };
+
+            const etagNFD = generateETagSync(fileNFD);
+            const etagNFC = generateETagSync(fileNFC);
+
+            expect(etagNFD).toBe(etagNFC);
+        });
+
         it('should generate consistent ETag for same input', () => {
             const file = {
                 id: 'file-123',

@@ -30,9 +30,9 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
    - If a commit is retried after a network partition where the reservation was already marked `committed`, the endpoint idempotently returns the current committed version/ETag instead of applying redundant version increments or throwing unhandled errors.
 
 6. **Server-First Commit Invariant in Editor**:
-   - The client editor maintains ephemeral preview decorations (`StreamingGhostExtension`) during generation.
+   - The client editor maintains ephemeral preview buffers during generation.
    - Stream completion does NOT commit: the sanitized output is parked in `preview_ready` until an explicit user decision (v1.6.0 Explicit Decision Model).
-   - On user **Accept** (`commitPreview`), local TipTap document modifications are applied as a single history step **only after** server commit confirms success.
+   - On user **Accept** (`commitPreview`), local document modifications are applied as a single history step via `EditorAdapter.replaceRange` **only after** server commit confirms success.
    - In case of network failure or 412 conflict, the ephemeral preview is dismantled and the document remains in its pristine state.
    - On user **Reject** or **Retry**, no document mutation occurs at all; the quota reservation is settled as consumed per the Explicit Settlement Policy ([`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D).
 
@@ -47,16 +47,16 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
 sequenceDiagram
     autonumber
     actor User
-    participant Editor as TipTap Editor
+    participant Editor as Editor (MarkdownEditor / EditorAdapter)
     participant Hook as useAIStream Hook
     participant Server as commitAIFileOperation
     participant DB as Neon Database (txDb)
 
     User->>Editor: Trigger AI Action (e.g. improve/summarize)
     Editor->>Hook: Start stream (Selection: [from, to])
-    Hook->>Editor: Attach StreamingGhost (Zero doc mutation)
+    Hook->>Editor: Attach Ghost / Ephemeral Preview (Zero doc mutation)
     Hook->>Server: consumeAIStream & Quota Reserve
-    Server-->>Hook: Stream tokens -> Ghost decoration update
+    Server-->>Hook: Stream tokens -> Preview buffer update
     Hook->>Server: commitAIFileOperation(fileId, opId, expectedVersion, expectedETag)
     
     rect rgb(240, 248, 255)
@@ -64,14 +64,14 @@ sequenceDiagram
         Server->>DB: Check Ownership, Version & ETag
         alt Precondition Failed (Version / ETag mismatch)
             Server-->>Hook: 412 Conflict (version, etag, updatedAt)
-            Hook->>Editor: Clear Ghost & Rollback Preview
+            Hook->>Editor: Clear Preview & Rollback
         else Precondition Valid
             Server->>DB: BEGIN TRANSACTION
             Server->>DB: UPDATE files SET content, version+1, etag WHERE version = expectedVersion
             Server->>DB: UPDATE aiReservations SET status='committed'
             Server->>DB: COMMIT TRANSACTION
             Server-->>Hook: { success: true, status: 'committed', version, etag }
-            Hook->>Editor: Clear Ghost & Apply Atomic TipTap Transaction (1 History Step)
+            Hook->>Editor: Apply Atomic Editor Transaction (1 History Step)
         end
     end
 ```

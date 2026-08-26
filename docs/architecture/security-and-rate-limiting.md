@@ -73,32 +73,21 @@ Endpoint-level details: [`../reference/SYNC_API.md`](../reference/SYNC_API.md).
 
 ---
 
-## 3. Content Sanitization (XSS Defense in Depth)
+## 3. Content Sanitization & Markdown Normalization (Data Safety & XSS Defense)
 
-TipTap renders document content as HTML, so every HTML entering the system
-(file content, AI output, import payloads) must be sanitized before storage or
-rendering.
+Documents in LUGX are stored and processed as pure UTF-8 Markdown text (`MarkdownSource`). Content integrity and safety are enforced at both the Markdown normalization layer and the HTML sanitization defense-in-depth layer.
 
-### Server chokepoint (`src/lib/sanitize.server.ts`)
-- DOMPurify running against a jsdom window; used by the server action pipeline.
-- Allow-listed tags are exactly the TipTap-default set plus table/div/span tags
-  (`SANITIZE_ALLOWED_TAGS`: `p, br, h1–h6, strong, em, u, s, strike, ul, ol,
-  li, blockquote, code, pre, hr, a, img, table, thead, tbody, tr, th, td,
-  div, span`).
-- Allowed attributes (`SANITIZE_ALLOWED_ATTR`): `href, src, alt, title, class,
-  id, target, rel`.
-- `style` attributes are **deliberately excluded** — inline styles can smuggle
-  `javascript:` URIs that DOMPurify does not reliably strip; any inline styling
-  from imports is discarded (fail-safe).
+### 3.1 Markdown Source Normalization (`src/lib/sync/etag-generator.ts`)
+- **Universal Normalization (`normalizeMarkdownSource`)**: Canonical normalization converting `\r\n` and `\r` to LF (`\n`), applying Unicode NFC normalization, and stripping null bytes (`\0`) to guarantee PostgreSQL text encoding safety and deterministic cross-platform ETag generation.
 
-### Browser path (`src/lib/sanitize-client.ts`)
-Same sanitization semantics using the native browser DOM (no jsdom in the client
-bundle). Package exports map `@/lib/sanitize` to the correct implementation per
-environment.
+### 3.2 Server Sanitization Chokepoint (`src/lib/sanitize.server.ts`)
+- DOMPurify running against a jsdom window; used by AI preview formatting, live preview rendering, and exporter pipelines.
+- Allow-listed tags (`SANITIZE_ALLOWED_TAGS`): `p, br, h1–h6, strong, em, u, s, strike, ul, ol, li, blockquote, code, pre, hr, a, img, table, thead, tbody, tr, th, td, div, span`.
+- Allowed attributes (`SANITIZE_ALLOWED_ATTR`): `href, src, alt, title, class, id, target, rel`.
+- `style` attributes are **deliberately excluded** — inline styles can smuggle `javascript:` URIs that DOMPurify does not reliably strip; any inline styling from imports/previews is discarded (fail-safe).
 
-Related hardening: `escapeHtml()` in the plain-text converters
-(`src/lib/parsers/text-to-html.ts`) and DOM-safe widget construction in
-[`ai-streaming-protocol.md`](./ai-streaming-protocol.md) §4.5.
+### 3.3 Browser Path (`src/lib/sanitize-client.ts`)
+Same sanitization semantics using the native browser DOM (no jsdom in the client bundle). Package exports map `@/lib/sanitize` to the correct implementation per environment.
 
 ---
 

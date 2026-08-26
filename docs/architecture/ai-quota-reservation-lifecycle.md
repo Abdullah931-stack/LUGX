@@ -75,16 +75,16 @@ flowchart TD
 
 ## 4. User Editor Data Protection & Stream Integrity
 
-### A. Non-Destructive Ghost Decoration Layer
-- Streaming text chunks are rendered into TipTap via a visual ghost decoration layer (`StreamingGhostExtension`) without mutating the actual ProseMirror document nodes until final commit.
+### A. Non-Destructive Ephemeral Preview Layer
+- Streaming text chunks are rendered into the editor via an ephemeral preview buffer and overlay layer without mutating the actual document source until final commit.
 
 ### B. Concurrent User Edit Protection (AUD-02)
 - If the user types new content into the editor while an AI stream is running, the document's `editorGeneration` increments.
 - When the stream ends:
   - `assertSessionIntegrity` detects the generation mismatch.
-  - The system dismantles the ghost layer (`clearStreamingGhost()`).
+  - The system dismantles the ephemeral preview overlay.
   - **Quota settlement:** the abort is a *user decision*, so the reservation is settled as consumed under the Explicit Settlement Policy (§4-D) — it is NOT refunded.
-  - **Critical Rule:** The system **NEVER** executes `editor.setContent(session.originalHtml)`. All manual edits written by the user are preserved 100% without data loss.
+  - **Critical Rule:** The system **NEVER** silently resets user edits. All manual edits written by the user are preserved 100% without data loss.
 
 ### C. Server-Side Disconnect Safety Net
 - In `/api/ai/stream/route.ts`, if the client tab closes or socket drops (`req.signal.aborted` or `ReadableStream.cancel()`), the server still triggers `refundAIReservation(operationId, 'stream_cancelled_by_client')` as a safety net so no quota remains locked from orphaned sessions.
@@ -100,6 +100,12 @@ Quota refunds are reserved for **system failures**. Any outcome driven by a **us
 | Client exception during pipeline | System error | **Refund** |
 | HARD page reload mid-generation (cleanup never ran) | Lost baseline | **Refund** (`refundAIReservation(op, 'reload_recovery')` on next mount, after `getAIReservationStatus`) |
 | HARD page reload with a completed undecided preview | Undecided generation | **Settle as consumed** (`commitAIReservation`, idempotent) — preview itself is never applied |
+| User rejects the completed preview (`rejectPreview`) | User decision | **Settle as consumed** |
+| User re-runs the operation (`retryPreview`) — old session | User decision | **Settle as consumed** (new session reserves fresh quota) |
+| User stops a running generation (`stopStream`) | User decision | **Settle as consumed** before abort |
+| Teardown while output awaits decision (unmount in `preview_ready`) | Undecided user teardown | **Settle as consumed** |
+
+Rationale: the provider call completed (or partially completed) for every settled case above — the tokens were spent regardless of what the user chooses to do with the output. Refunding would allow unlimited free regeneration by reject/retry cycles.
 
 ### E. Reload Recovery & Operation Query (Phase 11 amendment)
 
@@ -110,12 +116,6 @@ on the next mount: the client queries `getAIReservationStatus(operationId)` (rea
 session-scoped server action in `src/server/actions/ai-ops.ts`; cross-user ids collapse
 to `not_found`) and settles per the matrix above. The abandoned preview output is never
 applied to the document and never treated as committed.
-| User rejects the completed preview (`rejectPreview`) | User decision | **Settle as consumed** |
-| User re-runs the operation (`retryPreview`) — old session | User decision | **Settle as consumed** (new session reserves fresh quota) |
-| User stops a running generation (`stopStream`) | User decision | **Settle as consumed** before abort |
-| Teardown while output awaits decision (unmount in `preview_ready`) | Undecided user teardown | **Settle as consumed** |
-
-Rationale: the provider call completed (or partially completed) for every settled case above — the tokens were spent regardless of what the user chooses to do with the output. Refunding would allow unlimited free regeneration by reject/retry cycles.
 
 ---
 

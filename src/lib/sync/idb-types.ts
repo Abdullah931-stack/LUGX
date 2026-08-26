@@ -6,13 +6,18 @@
  */
 
 /**
+ * Authoritative source text format across editor, sync layer, and backend
+ */
+export type MarkdownSource = string;
+
+/**
  * Represents a file stored in IndexedDB for offline access
  */
 export interface IDBFile {
     /** Unique file identifier (matches server-side UUID) */
     id: string;
-    /** File content (HTML from TipTap editor) */
-    content: string;
+    /** File content (Normalized Markdown text) */
+    content: MarkdownSource;
     /** ETag for change detection (SHA-256 hash, first 32 chars) */
     etag: string;
     /** Last modification timestamp (local) */
@@ -31,7 +36,7 @@ export interface IDBFile {
     isFolder: boolean;
     /** Pristine base snapshot before local uncommitted edits were made */
     baseSnapshot?: {
-        content: string;
+        content: MarkdownSource;
         etag: string;
         version: number;
         title?: string;
@@ -83,17 +88,17 @@ export interface IDBOperation {
     operationType: OperationType;
     /** Position in content where operation occurred */
     position: number;
-    /** Content involved in the operation */
-    content: string;
+    /** Content involved in the operation (MarkdownSource) */
+    content: MarkdownSource;
     /** Timestamp when operation was performed */
     timestamp: number;
     /** Whether operation has been synced to server */
     synced: boolean;
     /** Previous content (for undo/conflict resolution) */
-    previousContent?: string;
+    previousContent?: MarkdownSource;
     /** Pre-operation snapshot for safe rollback on failure */
     snapshot?: {
-        content: string;
+        content: MarkdownSource;
         etag: string;
         version: number;
     };
@@ -119,7 +124,7 @@ export interface IDBSyncMetadata {
  * State snapshot of a file version involved in a conflict
  */
 export interface ConflictFileState {
-    content: string;
+    content: MarkdownSource;
     etag: string;
     lastModified: number;
     version: number;

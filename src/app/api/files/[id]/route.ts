@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, schema } from '@/lib/db';
 import { getUser } from '@/lib/supabase/server';
 import { eq, and, isNull } from 'drizzle-orm';
-import { generateETagSync, parseETagHeader, formatETagHeader } from '@/lib/sync/etag-generator';
+import { generateETagSync, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from '@/lib/sync/etag-generator';
 import { fileApiRateLimiter, addRateLimitHeaders, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 interface RouteParams {
@@ -147,7 +147,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         const now = new Date();
         const currentVersion = currentFile.version || 0;
         const newVersion = currentVersion + 1;
-        const newContent = content !== undefined ? content : currentFile.content;
+        const newContent = content !== undefined ? normalizeMarkdownSource(content) : currentFile.content;
         const newTitle = title !== undefined ? title.trim().slice(0, 500) : currentFile.title;
         const newEtag = generateETagSync({ id: fileId, content: newContent || '', updatedAt: now });
 

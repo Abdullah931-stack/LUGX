@@ -164,9 +164,9 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             transitionSession(session, 'aborted');
             setStatus('aborted');
 
-            if (editorRef.current && !editorRef.current.isDestroyed) {
+            if (editorRef.current && !(editorRef.current as any).isDestroyed) {
                 runAsProgrammaticTransaction(() => {
-                    editorRef.current?.commands.clearStreamingGhost();
+                    (editorRef.current as any)?.commands?.clearStreamingGhost?.();
                 });
             }
 
@@ -234,8 +234,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             setStatus('aborted');
 
             // Dismantle ghost preview in editor
-            if (editorRef.current && !editorRef.current.isDestroyed) {
-                editorRef.current.commands.clearStreamingGhost();
+            if (editorRef.current && !(editorRef.current as any).isDestroyed) {
+                (editorRef.current as any).commands?.clearStreamingGhost?.();
             }
         } catch (err) {
             console.error('[useAIStream] Error stopping stream:', err);
@@ -273,14 +273,25 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         setIsConflict(false);
         setPreviewText('');
 
-        const { from, to } = editor.state.selection;
+        const selection = typeof (editor as any).getSelection === 'function'
+            ? (editor as any).getSelection()
+            : ((editor as any).state?.selection || { from: 0, to: 0 });
+        const from = selection.from ?? 0;
+        const to = selection.to ?? 0;
         const hasSelection = from !== to;
+        const docSize = typeof (editor as any).getCharCount === 'function'
+            ? (editor as any).getCharCount()
+            : ((editor as any).state?.doc?.content?.size || (editor as any).getText?.().length || 0);
         const selectionStart = hasSelection ? from : 0;
-        const selectionEnd = hasSelection ? to : editor.state.doc.content.size;
+        const selectionEnd = hasSelection ? to : docSize;
 
         const textToProcess = hasSelection
-            ? editor.state.doc.textBetween(from, to)
-            : editor.getText();
+            ? (typeof (editor as any).getSelectedText === 'function'
+                ? (editor as any).getSelectedText()
+                : ((editor as any).state?.doc?.textBetween(from, to) || ''))
+            : (typeof (editor as any).getValue === 'function'
+                ? (editor as any).getValue()
+                : ((editor as any).getText?.() || ''));
 
         if (!textToProcess.trim()) {
             setError('Please enter some text first');
@@ -291,12 +302,16 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         const operationId = `op_${crypto.randomUUID()}`;
         const abortController = new AbortController();
 
+        const originalContent = typeof (editor as any).getValue === 'function'
+            ? (editor as any).getValue()
+            : ((editor as any).getHTML?.() || '');
+
         const session = createStreamSession({
             sessionId,
             operationId,
             fileId,
             operation,
-            originalHtml: editor.getHTML(),
+            originalHtml: originalContent,
             originalText: textToProcess,
             selection: { from: selectionStart, to: selectionEnd },
             expectedVersion,
@@ -315,7 +330,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         options.onStreamStart?.();
 
         // Start ghost decoration layer in TipTap (zero doc node mutation)
-        editor.commands.startStreamingGhost({
+        (editor as any).commands?.startStreamingGhost?.({
             from: selectionStart,
             to: selectionEnd,
             text: '',
@@ -346,8 +361,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     previewBuffer.append(sessionId, latestChunk);
                     setPreviewText(accumulated);
 
-                    if (editor && !editor.isDestroyed) {
-                        editor.commands.updateStreamingGhost(accumulated);
+                    if (editor && !(editor as any).isDestroyed) {
+                        (editor as any).commands?.updateStreamingGhost?.(accumulated);
                     }
                 },
                 onComplete: async (finalRawText) => {
@@ -399,8 +414,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 onError: (err) => {
                     if (activeSessionRef.current?.sessionId !== sessionId) return;
 
-                    if (editor && !editor.isDestroyed) {
-                        editor.commands.clearStreamingGhost();
+                    if (editor && !(editor as any).isDestroyed) {
+                        (editor as any).commands?.clearStreamingGhost?.();
                     }
 
                     if (err.name === 'AbortError') {
@@ -425,12 +440,14 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const detailMessage = err instanceof Error ? err.message : "An unexpected error occurred";
             console.error('[useAIStream] Exception during execution:', err);
             if (activeSessionRef.current?.sessionId === sessionId) {
-                if (editor && !editor.isDestroyed) {
+                if (editor && !(editor as any).isDestroyed) {
                     runAsProgrammaticTransaction(() => {
-                        editor.commands.clearStreamingGhost();
+                        (editor as any).commands?.clearStreamingGhost?.();
                         // USER DATA PROTECTION (AUD-02): Never overwrite user's manual edits
-                        if (editorGeneration === session.editorGeneration && session.originalHtml && editor.getHTML() !== session.originalHtml) {
-                            editor.chain().setContent(session.originalHtml).run();
+                        if (editorGeneration === session.editorGeneration && session.originalHtml && typeof (editor as any).getHTML === 'function' && (editor as any).getHTML() !== session.originalHtml) {
+                            if (typeof (editor as any).chain === 'function') {
+                                (editor as any).chain().setContent(session.originalHtml).run();
+                            }
                         }
                     });
                 }
@@ -516,26 +533,30 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 throw new Error(errMessage);
             }
 
-            // STEP 2: Local Atomic TipTap Commit (1 Transaction in History)
-            if (editor && !editor.isDestroyed) {
-                // ADV-04 Fix: Retrieve dynamic, mapped selection coordinates from ProseMirror plugin state
-                const ghostState = streamingGhostPluginKey.getState(editor.state);
-                const docSize = editor.state.doc.content.size;
-                const targetFrom = ghostState?.active
-                    ? Math.max(0, Math.min(ghostState.from, docSize))
-                    : Math.max(0, Math.min(selectionStart, docSize));
-                const targetTo = ghostState?.active
-                    ? Math.max(targetFrom, Math.min(ghostState.to, docSize))
-                    : Math.max(targetFrom, Math.min(selectionEnd, docSize));
-
+            // STEP 2: Local Atomic Commit (1 Transaction in History)
+            if (editor && !(editor as any).isDestroyed) {
                 runAsProgrammaticTransaction(() => {
-                    editor.commands.clearStreamingGhost();
+                    if (typeof (editor as any).replaceRange === 'function') {
+                        // Markdown EditorAdapter
+                        (editor as any).replaceRange(selectionStart, selectionEnd, previewText);
+                    } else if (typeof (editor as any).chain === 'function') {
+                        // TipTap Editor
+                        const ghostState = streamingGhostPluginKey.getState((editor as any).state);
+                        const docSize = (editor as any).state?.doc?.content?.size || 0;
+                        const targetFrom = ghostState?.active
+                            ? Math.max(0, Math.min(ghostState.from, docSize))
+                            : Math.max(0, Math.min(selectionStart, docSize));
+                        const targetTo = ghostState?.active
+                            ? Math.max(targetFrom, Math.min(ghostState.to, docSize))
+                            : Math.max(targetFrom, Math.min(selectionEnd, docSize));
 
-                    editor.chain()
-                        .setTextSelection({ from: targetFrom, to: targetTo })
-                        .deleteSelection()
-                        .insertContent(safeHtml)
-                        .run();
+                        (editor as any).commands?.clearStreamingGhost?.();
+                        (editor as any).chain()
+                            .setTextSelection({ from: targetFrom, to: targetTo })
+                            .deleteSelection()
+                            .insertContent(safeHtml)
+                            .run();
+                    }
                 });
             }
 
@@ -555,9 +576,9 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const detailMessage = err instanceof Error ? err.message : 'Preview commit failed';
             console.error('[useAIStream] Preview commit error:', err);
 
-            if (editor && !editor.isDestroyed) {
+            if (editor && !(editor as any).isDestroyed) {
                 runAsProgrammaticTransaction(() => {
-                    editor.commands.clearStreamingGhost();
+                    (editor as any).commands?.clearStreamingGhost?.();
                 });
             }
 

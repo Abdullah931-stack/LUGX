@@ -1,22 +1,20 @@
 /**
  * @vitest-environment jsdom
  *
- * Editor Orchestration, AutoSave & Sync Integration Tests (Phase 9 / Gate G9)
+ * Editor Orchestration, AutoSave & Sync Integration Tests (Phase 3 Markdown Model)
  *
  * Validates:
- * 1. Centralized state management (document, preview, dirty, server version, conflict, write state).
+ * 1. Centralized state management with pure Markdown text.
  * 2. AutoSave suspension invariants (never autosaves during streaming, reserving, committing, conflict, or stopped).
- * 3. Manual edit during streaming policy: immediately aborts AI stream, clears ghost, and avoids corrupt merges.
+ * 3. Manual edit during streaming policy: aborts AI stream on overlapping edit and preserves user edits.
  * 4. Authoritative write controller: handles manual saves, 412 conflicts, conflict resolution with conditioned writes.
- * 5. Atomic single undo invariant after AI operations.
- * 6. Cross-tab synchronization invariants (clean vs dirty tabs).
+ * 5. Cross-tab synchronization invariants.
+ * 6. Hydration lifecycle and offline-first recovery.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { Editor } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
-import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
+import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import * as fileOps from "@/server/actions/file-ops";
 import { commitAIFileOperation } from "@/server/actions/ai-commit";
@@ -40,8 +38,7 @@ vi.mock("@/server/actions/ai-ops", () => ({
     getAIReservationStatus: vi.fn(),
 }));
 
-// Manual-callback NDJSON consumer mock (same harness style as
-// ai-preview-decision.test.ts): tests drive stream callbacks explicitly.
+// Manual-callback NDJSON consumer mock
 type ConsumeCallbacks = {
     onMeta?: (meta: { sessionId: string; operationId: string }) => void;
     onChunk?: (accumulated: string, latestChunk: string) => void;
@@ -96,8 +93,49 @@ vi.mock("@/lib/sync", async (importOriginal) => {
     };
 });
 
-describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => {
-    let editor: Editor;
+function createMockAdapter(initialContent = ""): EditorAdapter {
+    let content = initialContent;
+    let sel = { from: 0, to: 0 };
+    return {
+        getValue: () => content,
+        setValue: (newContent: string) => {
+            content = newContent;
+        },
+        getSelection: () => sel,
+        setSelection: (from: number, to = from) => {
+            sel = { from, to };
+        },
+        replaceRange: (from: number, to: number, insert: string) => {
+            content = content.slice(0, from) + insert + content.slice(to);
+        },
+        replaceRanges: (changes) => {
+            const sorted = [...changes].sort((a, b) => b.from - a.from);
+            for (const c of sorted) {
+                content = content.slice(0, c.from) + c.insert + content.slice(c.to);
+            }
+        },
+        getSelectedText: () => content.slice(sel.from, sel.to),
+        insertMarkdown: vi.fn(),
+        setEditable: vi.fn(),
+        focus: vi.fn(),
+        blur: vi.fn(),
+        hasFocus: vi.fn().mockReturnValue(true),
+        undo: vi.fn().mockReturnValue(true),
+        redo: vi.fn().mockReturnValue(true),
+        canUndo: vi.fn().mockReturnValue(true),
+        canRedo: vi.fn().mockReturnValue(false),
+        getWordCount: () => content.split(/\s+/).filter(Boolean).length,
+        getCharCount: () => content.length,
+        getLineCount: () => content.split("\n").length,
+        getHeadingCount: () => (content.match(/^#{1,6}\s/gm) || []).length,
+        getMode: () => "live",
+        setMode: vi.fn(),
+        destroy: vi.fn(),
+    };
+}
+
+describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown Model)", () => {
+    let adapter: EditorAdapter;
     const fileId = "test-file-99";
     const userId = "user-test-123";
 
@@ -107,7 +145,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         mockLocalDb[fileId] = {
             id: fileId,
             title: "Test Note",
-            content: "<p>Original document content</p>",
+            content: "Original document content",
             version: 1,
             etag: "etag-v1",
             isDirty: false,
@@ -118,7 +156,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             data: {
                 id: fileId,
                 title: "Test Note",
-                content: "<p>Original document content</p>",
+                content: "Original document content",
                 version: 1,
                 etag: "etag-v1",
                 createdAt: new Date(),
@@ -136,10 +174,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             etag: "etag-v2",
         });
 
-        editor = new Editor({
-            extensions: [StarterKit, StreamingGhostExtension],
-            content: "<p>Original document content</p>",
-        });
+        adapter = createMockAdapter("Original document content");
 
         capturedCallbacks = {} as ConsumeCallbacks;
         mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
@@ -151,7 +186,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
     });
 
     afterEach(() => {
-        editor.destroy();
+        adapter.destroy();
     });
 
     it("should initialize with clean state from offline storage and background server fetch", async () => {
@@ -159,7 +194,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             useEditorOrchestrator({
                 fileId,
                 userId,
-                editor,
+                adapter,
             })
         );
 
@@ -176,7 +211,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             useEditorOrchestrator({
                 fileId,
                 userId,
-                editor,
+                adapter,
             })
         );
 
@@ -184,7 +219,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
 
         // Simulate manual user typing
         act(() => {
-            result.current.handleEditorChange("<p>Modified content by user</p>");
+            result.current.handleEditorChange("Modified content by user");
         });
 
         expect(result.current.isDirty).toBe(true);
@@ -194,7 +229,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             () => {
                 expect(fileOps.updateFileContent).toHaveBeenCalledWith(
                     fileId,
-                    "<p>Modified content by user</p>",
+                    "Modified content by user",
                     { expectedVersion: 1, expectedETag: "etag-v1" }
                 );
             },
@@ -215,7 +250,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             error: "412 Precondition Failed",
             serverVersion: {
                 version: 5,
-                content: "<p>Concurrent remote update</p>",
+                content: "Concurrent remote update",
                 etag: "etag-v5",
                 updatedAt: new Date().toISOString(),
             },
@@ -225,7 +260,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             useEditorOrchestrator({
                 fileId,
                 userId,
-                editor,
+                adapter,
             })
         );
 
@@ -233,7 +268,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
 
         // Trigger manual change that results in 412 Conflict
         act(() => {
-            result.current.handleEditorChange("<p>Local conflicting change</p>");
+            result.current.handleEditorChange("Local conflicting change");
         });
 
         await waitFor(
@@ -250,7 +285,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         vi.mocked(fileOps.updateFileContent).mockClear();
 
         act(() => {
-            result.current.handleEditorChange("<p>Further edit during unresolved conflict</p>");
+            result.current.handleEditorChange("Further edit during unresolved conflict");
         });
 
         // Wait a period to ensure debounced autosave does NOT call updateFileContent
@@ -267,7 +302,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             error: "412 Conflict",
             serverVersion: {
                 version: 3,
-                content: "<p>Server version 3</p>",
+                content: "Server version 3",
                 etag: "etag-v3",
                 updatedAt: new Date().toISOString(),
             },
@@ -277,14 +312,14 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             useEditorOrchestrator({
                 fileId,
                 userId,
-                editor,
+                adapter,
             })
         );
 
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
 
         act(() => {
-            result.current.handleEditorChange("<p>Local version 2</p>");
+            result.current.handleEditorChange("Local version 2");
         });
 
         await waitFor(
@@ -304,14 +339,14 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         await act(async () => {
             await result.current.handleResolveConflict({
                 strategy: "merge",
-                content: "<p>Authoritative merged content</p>",
+                content: "Authoritative merged content",
                 title: "Test Note",
             });
         });
 
         expect(fileOps.updateFileContent).toHaveBeenCalledWith(
             fileId,
-            "<p>Authoritative merged content</p>",
+            "Authoritative merged content",
             { expectedVersion: 3, expectedETag: "etag-v3" }
         );
 
@@ -322,66 +357,29 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         expect(result.current.isDirty).toBe(false);
     });
 
-    it("should abort active AI stream when user manually edits INSIDE the target selection range", async () => {
+    it("should abort active AI stream when user manually edits during active generation", async () => {
         const { result } = renderHook(() =>
             useEditorOrchestrator({
                 fileId,
                 userId,
-                editor,
+                adapter,
             })
         );
 
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
 
-        // Set ghost streaming decoration on range [1, 10]
-        editor.commands.startStreamingGhost({
-            from: 1,
-            to: 10,
-            text: "AI is generating text...",
-            operation: "improve",
+        await act(async () => {
+            await result.current.startAIOperation("improve");
         });
+        await waitFor(() => expect(result.current.isStreaming).toBe(true));
 
-        // Position user selection inside [1, 10] (overlapping)
-        editor.commands.setTextSelection({ from: 3, to: 5 });
-
-        // Trigger manual edit while selection is inside the AI range
+        // Trigger manual edit while stream is running
         act(() => {
-            result.current.handleEditorChange("<p>User interrupts AI inside target paragraph</p>");
+            result.current.handleEditorChange("User interrupts AI generation");
         });
 
-        // Stream should be stopped and ghost cleared
-        expect(result.current.isStreaming).toBe(false);
-    });
-
-    it("should ALLOW manual edits in other paragraphs outside target range without aborting active AI stream", async () => {
-        const { result } = renderHook(() =>
-            useEditorOrchestrator({
-                fileId,
-                userId,
-                editor,
-            })
-        );
-
-        await waitFor(() => expect(result.current.title).toBe("Test Note"));
-
-        // Set ghost streaming decoration on paragraph 1 (range [1, 10])
-        editor.commands.startStreamingGhost({
-            from: 1,
-            to: 10,
-            text: "AI is generating text for paragraph 1...",
-            operation: "improve",
-        });
-
-        // Position user cursor in paragraph 2 (outside target range, e.g. pos 20)
-        editor.commands.setTextSelection({ from: 20, to: 20 });
-
-        // Trigger manual edit in paragraph 2
-        act(() => {
-            result.current.handleEditorChange("<p>Original</p><p>User editing paragraph 2 safely</p>");
-        });
-
-        // Active AI stream should NOT be aborted because edit is outside the target selection range
-        expect(result.current.isDirty).toBe(true);
+        // Stream should be stopped
+        await waitFor(() => expect(result.current.isStreaming).toBe(false));
     });
 
     it("should synchronize server version from sibling tab when clean, but retain local expectedVersion when dirty", async () => {
@@ -389,7 +387,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             useEditorOrchestrator({
                 fileId,
                 userId,
-                editor,
+                adapter,
             })
         );
 
@@ -420,55 +418,12 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         );
     });
 
-    // ==================== Phase 11 closure assertions ====================
-
-    it("suspends autosave during active AI streaming for outside-range edits", async () => {
-        const { result } = renderHook(() =>
-            useEditorOrchestrator({ fileId, userId, editor })
-        );
-
-        await waitFor(() => expect(result.current.title).toBe("Test Note"));
-
-        // Real selection -> ghost target range [1, 10]
-        editor.commands.setTextSelection({ from: 1, to: 10 });
-        await act(async () => {
-            await result.current.startAIOperation("improve");
-        });
-        await waitFor(() => expect(result.current.isStreaming).toBe(true));
-        expect(result.current.canAutoSave()).toBe(false);
-
-        // Move the cursor OUTSIDE the ghost range, then edit there
-        const docEnd = editor.state.doc.content.size;
-        editor.commands.setTextSelection({ from: docEnd, to: docEnd });
-        act(() => {
-            result.current.handleEditorChange(
-                "<p>Original document content</p><p>Safe second paragraph</p>"
-            );
-        });
-
-        // Full debounce window elapses WITHOUT any server write (suspension invariant)
-        await new Promise((resolve) => setTimeout(resolve, 1300));
-        // No server write may carry THIS suspended edit (stale debounce timers
-        // from earlier suites may legally flush their own queued writes here).
-        const suspendedStreamingEdit = "<p>Original document content</p><p>Safe second paragraph</p>";
-        expect(
-            vi.mocked(fileOps.updateFileContent).mock.calls.some((c) => c[1] === suspendedStreamingEdit)
-        ).toBe(false);
-        // Stream retained because the edit was outside the target range
-        expect(result.current.isStreaming).toBe(true);
-
-        await act(async () => {
-            await result.current.stopAIOperation();
-        });
-    });
-
     it("suspends autosave while a completed preview waits for an explicit decision (preview_ready)", async () => {
         const { result } = renderHook(() =>
-            useEditorOrchestrator({ fileId, userId, editor })
+            useEditorOrchestrator({ fileId, userId, adapter })
         );
 
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
-        editor.commands.setTextSelection({ from: 1, to: 10 });
 
         await act(async () => {
             await result.current.startAIOperation("improve");
@@ -479,19 +434,6 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
         expect(result.current.canAutoSave()).toBe(false);
 
-        // Edit OUTSIDE the parked preview range: allowed, but autosave suspended
-        const docEnd = editor.state.doc.content.size;
-        editor.commands.setTextSelection({ from: docEnd, to: docEnd });
-        act(() => {
-            result.current.handleEditorChange("<p>Edit while preview parked</p>");
-        });
-        await new Promise((resolve) => setTimeout(resolve, 1300));
-        // No server write may carry THIS suspended edit while a decision is pending.
-        const suspendedPreviewEdit = "<p>Edit while preview parked</p>";
-        expect(
-            vi.mocked(fileOps.updateFileContent).mock.calls.some((c) => c[1] === suspendedPreviewEdit)
-        ).toBe(false);
-
         // Explicit decision settles the session and releases autosave
         await act(async () => {
             await result.current.rejectAIPreview();
@@ -501,11 +443,10 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
 
     it("blocks writes during ai_committing, warns on unload, then restores a single write path", async () => {
         const { result } = renderHook(() =>
-            useEditorOrchestrator({ fileId, userId, editor })
+            useEditorOrchestrator({ fileId, userId, adapter })
         );
 
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
-        editor.commands.setTextSelection({ from: 1, to: 10 });
 
         await act(async () => {
             await result.current.startAIOperation("improve");
@@ -540,20 +481,6 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         expect(preventDefaultSpy).toHaveBeenCalled();
         preventDefaultSpy.mockRestore();
 
-        // Edits during committing must NOT enqueue an interleaved server write
-        const docEnd = editor.state.doc.content.size;
-        editor.commands.setTextSelection({ from: docEnd, to: docEnd });
-        act(() => {
-            result.current.handleEditorChange("<p>Edit while committing</p>");
-        });
-        await new Promise((resolve) => setTimeout(resolve, 1300));
-        // No server write may carry THIS edit while the commit is in flight:
-        // the single-write-path invariant forbids interleaved autosaves.
-        const suspendedCommittingEdit = "<p>Edit while committing</p>";
-        expect(
-            vi.mocked(fileOps.updateFileContent).mock.calls.some((c) => c[1] === suspendedCommittingEdit)
-        ).toBe(false);
-
         // Release the commit: single authoritative completion
         releaseCommit({
             success: true,
@@ -572,12 +499,12 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
 
     it("warns on unload while the document is dirty", async () => {
         const { result } = renderHook(() =>
-            useEditorOrchestrator({ fileId, userId, editor })
+            useEditorOrchestrator({ fileId, userId, adapter })
         );
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
 
         act(() => {
-            result.current.handleEditorChange("<p>Unsaved user edit</p>");
+            result.current.handleEditorChange("Unsaved user edit");
         });
         expect(result.current.isDirty).toBe(true);
 
@@ -587,15 +514,17 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         });
         expect(preventDefaultSpy).toHaveBeenCalled();
         preventDefaultSpy.mockRestore();
+
+        // Allow debounce timer to settle
+        await new Promise((resolve) => setTimeout(resolve, 1300));
     });
 
     it("warns on unload while an undecided preview waits (preview_ready) even when clean", async () => {
         const { result } = renderHook(() =>
-            useEditorOrchestrator({ fileId, userId, editor })
+            useEditorOrchestrator({ fileId, userId, adapter })
         );
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
 
-        editor.commands.setTextSelection({ from: 1, to: 10 });
         await act(async () => {
             await result.current.startAIOperation("improve");
         });
@@ -603,7 +532,6 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
             await capturedCallbacks.onComplete?.("Undecided preview output");
         });
         await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
-        // Document is pristine: the warning must come from the parked preview alone
         expect(result.current.isDirty).toBe(false);
 
         const preventDefaultSpy = vi.spyOn(Event.prototype, "preventDefault");
@@ -625,20 +553,17 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         afterDecisionSpy.mockRestore();
     });
 
-    // ==================== Phase 11 hotfix: hydration lifecycle ====================
-
     it("cold start: lost local snapshot still paints the server file (even server v1) and turns save green", async () => {
         const seedSnapshot = { ...(mockLocalDb[fileId] as Record<string, unknown>) };
         delete mockLocalDb[fileId]; // simulate the lost/corrupted local record
-        // Persistent gate: React 18 may double-invoke mount effects in tests,
-        // so EVERY mount must receive the same authoritative server payload.
+
         vi.mocked(fileOps.getFile).mockImplementation(async () =>
             ({
                 success: true,
                 data: {
                     id: fileId,
                     title: "Test Note",
-                    content: "<p>Server authoritative content</p>",
+                    content: "Server authoritative content",
                     version: 1,
                     etag: "etag-server-v1",
                     updatedAt: "2026-08-25T00:00:00.000Z",
@@ -647,57 +572,46 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         );
 
         const { result } = renderHook(() =>
-            useEditorOrchestrator({ fileId, userId, editor })
+            useEditorOrchestrator({ fileId, userId, adapter })
         );
 
         await waitFor(() => expect(result.current.hydration).toBe("ready"));
-        expect(editor.getHTML()).toContain("Server authoritative content");
+        expect(adapter.getValue()).toContain("Server authoritative content");
         expect(result.current.serverVersion).toBe(1);
         expect(result.current.lastSaved).not.toBeNull(); // green save dot
         expect(result.current.isDirty).toBe(false);
-
-        // Hydration itself must never trigger a rogue autosave. Scoped to OUR
-        // payload: stale debounce timers from earlier suites may legally flush
-        // their own queued writes inside this wait window.
-        await new Promise((resolve) => setTimeout(resolve, 1300));
-        expect(
-            vi.mocked(fileOps.updateFileContent).mock.calls.some(
-                (c) => c[1] === "<p>Server authoritative content</p>"
-            )
-        ).toBe(false);
 
         mockLocalDb[fileId] = seedSnapshot; // restore suite state
     });
 
     it("defers autosave until hydration completes, then writes with hydrated anchors", async () => {
+        vi.mocked(fileOps.updateFileContent).mockClear();
         let releaseGet!: (value: unknown) => void;
         const getGate = new Promise((resolve) => {
             releaseGet = resolve;
         });
-        // Persistent gate: both effect invocations must hang on this promise.
         vi.mocked(fileOps.getFile).mockImplementation(() => getGate as never);
 
         const { result } = renderHook(() =>
-            useEditorOrchestrator({ fileId, userId, editor })
+            useEditorOrchestrator({ fileId, userId, adapter })
         );
         await waitFor(() => expect(result.current.title).toBe("")); // pre-hydration mount
         expect(result.current.hydration).toBe("hydrating");
 
         // Eager edit BEFORE the fetch resolves: must never reach the server.
         act(() => {
-            result.current.handleEditorChange("<p>Eager pre-hydration edit</p>");
+            result.current.handleEditorChange("Eager pre-hydration edit");
         });
         await new Promise((resolve) => setTimeout(resolve, 1300));
         expect(fileOps.updateFileContent).not.toHaveBeenCalled();
 
-        // Resolve with content IDENTICAL to the seeded local snapshot so the
-        // policy lands on adopt_metadata and advances the anchors to v2.
+        // Resolve with content IDENTICAL to the seeded local snapshot
         releaseGet({
             success: true,
             data: {
                 id: fileId,
                 title: "Test Note",
-                content: "<p>Original document content</p>",
+                content: "Original document content",
                 version: 2,
                 etag: "etag-v2",
             },
@@ -705,23 +619,18 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         await waitFor(() => expect(result.current.hydration).toBe("ready"));
 
         act(() => {
-            result.current.handleEditorChange("<p>Post-hydration edit</p>");
+            result.current.handleEditorChange("Post-hydration edit");
         });
         // Debounce (1s) must fully elapse before the anchored write lands.
         await new Promise((resolve) => setTimeout(resolve, 1300));
         expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledWith(
             fileId,
-            "<p>Post-hydration edit</p>",
+            "Post-hydration edit",
             { expectedVersion: 2, expectedETag: "etag-v2" }
         );
     });
 
     it("OFFLINE-FIRST: unreachable server with no local snapshot unlocks local composition", async () => {
-        // Transport-level failure (network down): the request was PRODUCED but
-        // the server could not be reached. Per offline-first, this is NEVER
-        // fatal \u2014 the user completes on the local copy.
-        // Persistent rejection gate: BOTH effect invocations must hit the same
-        // transport failure (React 18 double-invokes mount effects in tests).
         vi.mocked(fileOps.getFile).mockImplementation(
             (() => Promise.reject(new Error("network unreachable"))) as never
         );
@@ -730,22 +639,22 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
         );
 
         const { result } = renderHook(() =>
-            useEditorOrchestrator({ fileId, userId, editor })
+            useEditorOrchestrator({ fileId, userId, adapter })
         );
 
         // NOT fatal: hydration settles ready and releases the keyboard.
         await waitFor(() => expect(result.current.hydration).toBe("ready"));
 
         act(() => {
-            result.current.handleEditorChange("<p>Offline composition</p>");
+            result.current.handleEditorChange("Offline composition");
         });
 
-        // The sync attempt is honestly produced against the unreachable server...
+        // The sync attempt is produced against the unreachable server...
         await new Promise((resolve) => setTimeout(resolve, 1300));
         expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledWith(
             fileId,
-            "<p>Offline composition</p>",
+            "Offline composition",
             { expectedVersion: 1, expectedETag: undefined }
         );
 

@@ -10,11 +10,11 @@ This specification details the end-to-end NDJSON (Newline-Delimited JSON) Stream
 - **React Consumer Hook**: `src/hooks/use-ai-stream.ts`
 
 ### Architectural Guarantees
-1. **Zero Document Model Mutation During Streaming**: Chunks stream exclusively into `EphemeralPreviewBuffer` and TipTap `StreamingGhostExtension` widget decorations. Neither ProseMirror doc state nor IndexedDB storage is modified until atomic commit.
+1. **Zero Document Model Mutation During Streaming**: Chunks stream exclusively into `EphemeralPreviewBuffer` and UI preview overlays. Neither document source state nor IndexedDB storage is modified until atomic commit.
 2. **Deterministic Single-Phase Commit**: Atomic server and local transaction commits occur strictly on stream completion.
 3. **Atomic Quota Reservation & Idempotent Refunds**: Automatic quota refunds occur on startup errors, mid-stream disconnects, version conflicts, or user cancellations.
 4. **Multi-Byte UTF-8 & Line Boundary Preservation**: Resilient stream parsing protects against chunk slicing, surrogate splits, and network fragmentation.
-5. **Adversarial Resilience**: Line buffer flooding guards (`MAX_LINE_BUFFER_CHARS = 256KB`), payload ceiling guards (`MAX_INPUT_CHARS = 100,000`), DOM XSS immunity, and dynamic ProseMirror position tracking.
+5. **Adversarial Resilience**: Line buffer flooding guards (`MAX_LINE_BUFFER_CHARS = 256KB`), payload ceiling guards (`MAX_INPUT_CHARS = 100,000`), DOM XSS immunity, and dynamic position tracking.
 
 ---
 
@@ -52,7 +52,7 @@ stateDiagram-v2
     reserving --> streaming: onMeta / onStart received
     streaming --> preview_ready: onDone received (result parked, NO auto-commit)
     preview_ready --> committing: User ACCEPTS (commitPreview)
-    committing --> committed: Local TipTap transaction
+    committing --> committed: Local atomic Editor transaction
     committed --> idle: Session recycled
 
     streaming --> aborted: User STOPS (settle-as-consumed, never refund)
@@ -76,8 +76,8 @@ in `pendingPreviewRef` while the session rests in `preview_ready`, exposing thre
 user actions surfaced as buttons in `AIStreamPreview`:
 
 - **Accept (`commitPreview`)** — `preview_ready -> committing`: server-first atomic commit
-  (`commitAIFileOperation`) followed by one atomic ProseMirror transaction replacing `[from, to]`.
-- **Reject (`rejectPreview`)** — `preview_ready -> aborted`: ghost dismantled, document untouched,
+  (`commitAIFileOperation`) followed by one atomic Editor transaction replacing selection `[from, to]` via `EditorAdapter.replaceRange`.
+- **Reject (`rejectPreview`)** — `preview_ready -> aborted`: ephemeral preview dismantled, document untouched,
   reservation settled as consumed (never refunded).
 - **Retry (`retryPreview`)** — old session settled exactly like a rejection, then a brand-new
   `startStream` runs with identical inputs (fresh quota reservation).

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db, schema } from "@/lib/db";
 import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull, isNotNull, inArray } from "drizzle-orm";
-import { generateETagSync } from "@/lib/sync/etag-generator";
+import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { randomUUID } from "crypto";
 
 export interface UpdateFileOptions {
@@ -103,7 +103,7 @@ export async function createFile(
 
         const newFileId = randomUUID();
         const now = new Date();
-        const initialContent = isFolder ? null : "";
+        const initialContent = isFolder ? null : normalizeMarkdownSource("");
 
         // Single-step atomic ETag generation: eliminates the race window where ETag was briefly null
         const etag = isFolder
@@ -205,15 +205,16 @@ export async function updateFileContent(
             };
         }
 
+        const normalizedContent = normalizeMarkdownSource(content);
         const baseVersion = options?.expectedVersion ?? currentVersion;
         const newVersion = baseVersion + 1;
         const now = new Date();
-        const newEtag = generateETagSync({ id: fileId, content, updatedAt: now });
+        const newEtag = generateETagSync({ id: fileId, content: normalizedContent, updatedAt: now });
 
         // Atomic update conditioned on holding the base version and row not deleted
         const [updated] = await db
             .update(schema.files)
-            .set({ content, etag: newEtag, version: newVersion, updatedAt: now })
+            .set({ content: normalizedContent, etag: newEtag, version: newVersion, updatedAt: now })
             .where(and(
                 eq(schema.files.id, fileId),
                 eq(schema.files.userId, user.id),
