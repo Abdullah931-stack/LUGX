@@ -2,6 +2,15 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.10.0] - 2026-08-26 (Phase 14: Supabase Storage Removal & Database Schema Cleanup)
+
+### Removed - Dead Code Elimination & Schema Cleanup
+
+- **Removed `src/lib/supabase/storage.ts`:** Permanently removed the unused Supabase Storage client wrapper (`uploadFile`, `deleteFile`, `getFileUrl`, `downloadFile`, `assertSafeStoragePath`). All file imports (PDF/MD/TXT) continue to extract text directly into Neon PostgreSQL via `importFile` without storing raw binary files in cloud storage.
+- **Dropped `storage_path` Database Column (`src/lib/db/migrations/0007_drop_storage_path.sql` & `src/lib/db/schema.ts`):** Removed the legacy `storagePath` column from Drizzle ORM schema and added an SQL migration to drop `storage_path` from the PostgreSQL `files` table.
+- **Test Suite Clean-up:** Purged obsolete storage path traversal tests from `src/test/cross-user-ownership.test.ts` and removed `storagePath: null` field mock fixtures across `editor-orchestration.integration.test.ts`, `file-ops.softdelete.test.ts`, `file-ops.lostupdate.test.ts`, and `route.putguard.test.ts`.
+- **Environment & Architecture Documentation Sync:** Updated `.env.example` to reflect Supabase usage solely for Authentication (`@supabase/ssr` / `@supabase/supabase-js`), and synchronized architectural references across `security-and-rate-limiting.md` and `file-ownership-and-versioning.md`.
+
 ## [1.9.0] - 2026-08-26 (Phase 13: Stripe Webhook, Durable Idempotency & Subscriptions Hardening)
 
 ### Added - Durable Event Ledger & Database Migration (`subscription_events`)

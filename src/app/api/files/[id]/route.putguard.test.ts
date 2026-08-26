@@ -107,7 +107,7 @@ describe("PUT /api/files/[id] version guard (F1)", () => {
         const fileId = randomUUID();
         await testDb.insert(schema.files).values({
             id: fileId, userId: TEST_USER_ID, title: "f1-plain.md", content: "v0",
-            isFolder: false, parentFolderId: null, storagePath: null, etag: null,
+            isFolder: false, parentFolderId: null, etag: null,
             version: 1, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
         });
 
@@ -124,7 +124,7 @@ describe("PUT /api/files/[id] version guard (F1)", () => {
         const fileId = randomUUID();
         await testDb.insert(schema.files).values({
             id: fileId, userId: TEST_USER_ID, title: "f1-race.md", content: "v0",
-            isFolder: false, parentFolderId: null, storagePath: null, etag: null,
+            isFolder: false, parentFolderId: null, etag: null,
             version: 3, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
         });
 
@@ -151,7 +151,7 @@ describe("PUT /api/files/[id] version guard (F1)", () => {
         const fileId = randomUUID();
         await testDb.insert(schema.files).values({
             id: fileId, userId: TEST_USER_ID, title: "f1-stale.md", content: "v0",
-            isFolder: false, parentFolderId: null, storagePath: null, etag: null,
+            isFolder: false, parentFolderId: null, etag: null,
             version: 5, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
         });
 

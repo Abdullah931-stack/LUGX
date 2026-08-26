@@ -126,7 +126,6 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 9)", () => 
                 userId,
                 parentFolderId: null,
                 isFolder: false,
-                storagePath: null,
                 deletedAt: null,
             },
         });

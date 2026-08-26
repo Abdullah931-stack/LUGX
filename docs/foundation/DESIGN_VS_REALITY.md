@@ -28,7 +28,7 @@
 
 | Founding design | Implemented reality | Verification |
 | :--- | :--- | :--- |
-| File pipeline via Supabase Storage buckets isolated per user | File content lives in the Neon `files` table; `src/lib/supabase/storage.ts` survives as **dead code** (zero importers) | `git grep "supabase/storage" src/` → no hits |
+| File pipeline via Supabase Storage buckets isolated per user | Removed entirely in Phase 14: file content lives exclusively in the Neon PostgreSQL `files` table (HTML/text extracted via `importFile`); `src/lib/supabase/storage.ts` deleted and `storage_path` column dropped | `src/lib/supabase/` contains only `client.ts`/`server.ts` (Auth); zero storage code in `src/` |
 | Payment channels: PayPal + credit cards + Apple Pay + Google Pay | Stripe Checkout exclusively (`src/lib/stripe/`, `src/app/api/stripe/*`) | `src/lib/stripe/index.ts` |
 | Live updates via polling every 5–10 seconds | Superseded by the offline-first sync engine above | `src/lib/sync/sync-manager.ts` |
 | Route groups `(auth)` / `(dashboard)` / `(workspace)` | Flat routes: `/login`, `/auth/callback`, `/dashboard`, `/workspace`, `/workspace/editor/[fileId]`, `/account` | `src/app/` tree |

@@ -39,7 +39,6 @@ export const files = pgTable("files", {
     content: text("content"),
     parentFolderId: uuid("parent_folder_id").references((): any => files.id, { onDelete: "set null" }), // Self-referencing FK (deferred at schema level; see migration 0003 for ON DELETE behavior and deferrability)
     isFolder: boolean("is_folder").notNull().default(false),
-    storagePath: text("storage_path"), // Supabase Storage path for original files
     // Sync-related fields
     etag: varchar("etag", { length: 64 }), // SHA-256 hash for change detection
     version: integer("version").default(1), // Monotonically increasing version

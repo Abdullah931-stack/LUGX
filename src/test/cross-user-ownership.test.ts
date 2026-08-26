@@ -8,7 +8,6 @@
  * 3. Cross-User Mutation Immunity: User A cannot mutate, move, copy, restore, or commit into User B's resources.
  * 4. AI Stream and Reservation Protection: Foreign fileId in stream route yields 404, foreign operationId yields not_found.
  * 5. High-Concurrency OAuth Sync: Parallel syncUserToDatabase calls execute atomically via UPSERT without race conditions.
- * 6. Storage Path Tenant Isolation: assertSafeStoragePath enforces userId prefix and prevents path traversal attacks.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
@@ -31,7 +30,6 @@ import { importFile } from "@/server/actions/import-file";
 import { commitAIFileOperation } from "@/server/actions/ai-commit";
 import { getAIReservationStatus } from "@/server/actions/ai-ops";
 import { syncUserToDatabase } from "@/server/actions/auth-actions";
-import { assertSafeStoragePath } from "@/lib/supabase/storage";
 import { POST as aiStreamPOST } from "@/app/api/ai/stream/route";
 import { NextRequest } from "next/server";
 
@@ -388,34 +386,6 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
 
             // Cleanup
             await testDb.delete(schema.users).where(eq(schema.users.id, newUserId));
-        });
-    });
-
-    describe("Storage Path Tenant Isolation & Path Traversal Guards", () => {
-        it("allows safe paths beginning with userId prefix", () => {
-            const safePath = assertSafeStoragePath("user-123", "user-123/document.pdf");
-            expect(safePath).toBe("user-123/document.pdf");
-
-            const nestedSafe = assertSafeStoragePath("user-123", "user-123/nested/file_name.md");
-            expect(nestedSafe).toBe("user-123/nested/file_name.md");
-        });
-
-        it("throws isolation error when path targets another user's prefix", () => {
-            expect(() => assertSafeStoragePath("user-123", "other-user-456/document.pdf")).toThrow(
-                "Storage path isolation violation"
-            );
-        });
-
-        it("throws error when directory traversal (..) or leading slash is attempted", () => {
-            expect(() => assertSafeStoragePath("user-123", "user-123/../other-user/file.pdf")).toThrow(
-                "directory traversal"
-            );
-            expect(() => assertSafeStoragePath("user-123", "/user-123/file.pdf")).toThrow(
-                "leading slash"
-            );
-            expect(() => assertSafeStoragePath("user-123", "user-123/..\\secret.key")).toThrow(
-                "directory traversal"
-            );
         });
     });
 

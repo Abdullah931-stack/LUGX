@@ -40,7 +40,6 @@ const fileOf = (title: string, parent: string | null = null) => ({
     content: "<p>content</p>",
     isFolder: false,
     parentFolderId: parent,
-    storagePath: null,
     etag: null,
     version: 0,
     createdAt: new Date(),
