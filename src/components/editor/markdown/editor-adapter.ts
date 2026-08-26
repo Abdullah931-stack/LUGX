@@ -1,8 +1,9 @@
 import { EditorView } from "@codemirror/view";
+import { EditorState } from "@codemirror/state";
 import { undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
 import { syntaxTree } from "@codemirror/language";
 import { EditorAdapter, EditorMode, EditorSelection } from "./types";
-import { livePreviewPlugin, modeCompartment } from "./markdown-extensions";
+import { livePreviewPlugin, modeCompartment, readOnlyCompartment } from "./markdown-extensions";
 
 /**
  * Word count helper that reliably handles Unicode, Arabic, and mixed text.
@@ -73,6 +74,88 @@ export class CodeMirrorEditorAdapter implements EditorAdapter {
         this.view.dispatch({
             changes: { from: safeFrom, to: safeTo, insert },
             userEvent: "input",
+        });
+    }
+
+    replaceRanges(changes: { from: number; to: number; insert: string }[]): void {
+        if (!changes || changes.length === 0) return;
+        const docLength = this.view.state.doc.length;
+        const sorted = changes
+            .map((c) => ({
+                from: Math.max(0, Math.min(c.from, docLength)),
+                to: Math.max(0, Math.min(c.to, docLength)),
+                insert: c.insert,
+            }))
+            .sort((a, b) => a.from - b.from);
+
+        // Defensive non-overlapping filter
+        const validChanges: { from: number; to: number; insert: string }[] = [];
+        let lastTo = -1;
+        for (const c of sorted) {
+            if (c.from >= lastTo) {
+                validChanges.push(c);
+                lastTo = c.to;
+            }
+        }
+
+        if (validChanges.length === 0) return;
+
+        this.view.dispatch({
+            changes: validChanges,
+            userEvent: "input",
+        });
+    }
+
+    getSelectedText(): string {
+        const { from, to } = this.getSelection();
+        if (from === to) return "";
+        return this.view.state.sliceDoc(from, to);
+    }
+
+    insertMarkdown(prefix: string, suffix: string = "", placeholder: string = ""): void {
+        const { from, to } = this.getSelection();
+        const isBlockPrefix =
+            (prefix.startsWith("#") ||
+                prefix.startsWith("- ") ||
+                prefix.startsWith("1. ") ||
+                prefix.startsWith("> ")) &&
+            suffix === "";
+
+        // Handle block-level formatting at line start
+        if (isBlockPrefix) {
+            const line = this.view.state.doc.lineAt(from);
+            const lineText = line.text;
+            if (!lineText.startsWith(prefix)) {
+                this.view.dispatch({
+                    changes: { from: line.from, to: line.from, insert: prefix },
+                    userEvent: "input",
+                    scrollIntoView: true,
+                });
+            }
+            this.view.focus();
+            return;
+        }
+
+        const hasSelection = from !== to;
+        const selectedText = hasSelection ? this.view.state.sliceDoc(from, to) : "";
+        const textToWrap = hasSelection ? selectedText : placeholder;
+        const replacement = `${prefix}${textToWrap}${suffix}`;
+
+        const newFrom = hasSelection ? from : from + prefix.length;
+        const newTo = hasSelection ? from + replacement.length : newFrom + placeholder.length;
+
+        this.view.dispatch({
+            changes: { from, to, insert: replacement },
+            selection: { anchor: newFrom, head: newTo },
+            userEvent: "input",
+            scrollIntoView: true,
+        });
+        this.view.focus();
+    }
+
+    setEditable(editable: boolean): void {
+        this.view.dispatch({
+            effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(!editable)),
         });
     }
 

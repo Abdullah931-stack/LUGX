@@ -51,7 +51,7 @@
 | Component | Responsibility |
 |-----------|----------------|
 | `useEditorOrchestrator` | Centralized state controller & single authoritative write gateway (Phase 9) |
-| `Editor Page` | Main user interface and TipTap editor surface |
+| `Editor Page` | Main user interface and Standalone Markdown Editor surface (CodeMirror 6 / EditorAdapter) |
 | `useSync Hook` | Scoped React synchronization integration |
 | `ConflictDialog` | Conflict resolution interactive UI |
 | `SyncIndicator` | Visual synchronization status indicator |

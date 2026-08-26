@@ -3,7 +3,7 @@
 /**
  * useEditorOrchestrator
  *
- * Centralized State & Write Controller for TipTap Editor (Phase 9 / Gate G9)
+ * Centralized State & Write Controller for Standalone Markdown Editor (Phase 2)
  *
  * Enforces:
  * 1. Single authoritative write path (manual save, AI commit, conflict resolution, sync replay).
@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Editor } from "@tiptap/react";
+import { EditorAdapter } from "@/components/editor/markdown/types";
 import { getFile, updateFileContent, renameFile, deleteFile } from "@/server/actions/file-ops";
 import { sanitizeHtml } from "@/lib/sanitize-client";
 import { debounce } from "@/lib/utils";
@@ -29,7 +29,6 @@ import {
     type LocalBaseline,
 } from "@/lib/sync/reconciliation";
 import { AIStreamStatus } from "@/lib/ai/stream-session";
-import { streamingGhostPluginKey } from "@/lib/extensions/streaming-ghost-extension";
 import { EDITOR_AUTOSAVE_DEBOUNCE_MS } from "@/config/editor.config";
 
 export type WriteStateType =
@@ -43,7 +42,10 @@ export type WriteStateType =
 export interface UseEditorOrchestratorOptions {
     fileId: string;
     userId: string | null;
-    editor: Editor | null;
+    /** EditorAdapter instance for standalone Markdown editor */
+    editor?: EditorAdapter | null;
+    /** Alias for editor */
+    adapter?: EditorAdapter | null;
     onNavigate?: (path: string) => void;
 }
 
@@ -104,8 +106,13 @@ export function useEditorOrchestrator({
     fileId,
     userId,
     editor,
+    adapter,
     onNavigate,
 }: UseEditorOrchestratorOptions): UseEditorOrchestratorReturn {
+    const currentAdapter = adapter || editor || null;
+    const adapterRef = useRef<EditorAdapter | null>(currentAdapter);
+    adapterRef.current = currentAdapter;
+
     // --- 1. Document State ---
     const [title, setTitle] = useState<string>("");
 
@@ -221,10 +228,10 @@ export function useEditorOrchestrator({
             setLastSaved(new Date());
             setIsDirty(false);
 
-            if (syncHook.isInitialized && editor) {
+            if (syncHook.isInitialized && adapterRef.current) {
                 syncHook.saveLocal({
                     id: fileId,
-                    content: editor.getHTML(),
+                    content: adapterRef.current.getValue(),
                     title,
                     version,
                     etag: etag || "",
@@ -276,7 +283,7 @@ export function useEditorOrchestrator({
      * - committing
      * - conflict (active unresolved conflict)
      * - stopped (sync stopped)
-     * - programmatic updates (setContent from server / DB / conflict resolution)
+     * - programmatic updates (setValue from server / DB / conflict resolution)
      */
     const canAutoSave = useCallback((): boolean => {
         if (isProgrammaticUpdateRef.current) return false;
@@ -472,14 +479,10 @@ export function useEditorOrchestrator({
     );
 
     /**
-     * Manual Edit Policy (Phase 9):
+     * Manual Edit Policy (Phase 2):
      * If user performs manual edit:
-     * - If AI stream is active and user edits INSIDE the target selection/processing range:
-     *   1. Immediately abort AI stream to prevent corrupt merges.
-     *   2. Clear streaming ghost preview in TipTap.
-     *   3. Advance editor generation.
-     * - If user edits outside the active processing range (e.g. another paragraph):
-     *   Keep AI stream running smoothly; ProseMirror position mapping automatically shifts the target range.
+     * - If AI stream is active: abort stream immediately to prevent race conditions.
+     * - Advance editor generation.
      * - Record dirty state and schedule debounced save.
      */
     const handleEditorChange = useCallback(
@@ -488,27 +491,10 @@ export function useEditorOrchestrator({
             // Sync-before-write: drop input events until hydration completed.
             if (!hydratedRef.current) return;
 
-            // Target-scoped manual edit guard
             if (aiStream.isLoading || aiStream.isStreaming || aiStream.status === "reserved" || aiStream.status === "preview_ready") {
-                const ghostState = editor ? streamingGhostPluginKey.getState(editor.state) : null;
-                const isWholeDoc = !ghostState?.active || (ghostState.from === 0 && (ghostState.to >= (editor?.state.doc.content.size || 0) || ghostState.to === 0));
-
-                let isOverlapping = true;
-                if (editor && ghostState?.active && !isWholeDoc) {
-                    const { from: userFrom, to: userTo } = editor.state.selection;
-                    isOverlapping = userFrom <= ghostState.to && userTo >= ghostState.from;
-                }
-
-                if (isOverlapping) {
-                    console.warn("[Orchestrator] User manual edit overlapped with active AI processing selection. Aborting AI generation.");
-                    aiStream.stopStream();
-                    if (editor && !editor.isDestroyed) {
-                        editor.commands.clearStreamingGhost();
-                    }
-                    editorGenerationRef.current += 1;
-                } else {
-                    console.log("[Orchestrator] User edited outside the AI processing range. Retaining active stream with mapped coordinates.");
-                }
+                console.warn("[Orchestrator] User manual edit occurred while AI generation is active. Aborting AI generation.");
+                aiStream.stopStream();
+                editorGenerationRef.current += 1;
             } else {
                 editorGenerationRef.current += 1;
             }
@@ -516,20 +502,11 @@ export function useEditorOrchestrator({
             setIsDirty(true);
             debouncedAutoSaveRef.current(newContent);
         },
-        [aiStream, editor]
+        [aiStream]
     );
 
     // Initial Load - Offline-First with Background Server Sync
-    //
-    // RUNTIME FIX: this pipeline previously re-executed on every render because the
-    // inline `onNavigate` arrow produced an unstable dependency identity. Each cycle
-    // performed a fresh getFile() and force-applied server content via setContent(),
-    // visibly wiping in-progress typing until the next sync restored it. The pipeline
-    // now runs exactly once per mounted fileId, and remote application is governed by
-    // the deterministic Local-First reconciliation policy instead of a blind content
-    // comparison.
     useEffect(() => {
-        // SINGLE-FLIGHT hydration pipeline (sync-before-write).
         let cancelled = false;
 
         async function loadInitialFile() {
@@ -540,12 +517,11 @@ export function useEditorOrchestrator({
             hydratedRef.current = false;
             loadFailureRef.current = false;
             setHydration("hydrating");
-            if (editor && !editor.isDestroyed) editor.setEditable(false);
+            if (adapterRef.current) {
+                adapterRef.current.setEditable(false);
+            }
 
-            // Identity-stable handles: never depend on per-render identities.
             const sh = syncHookRef.current;
-
-            // The REAL captured baseline (null on cold start - never fabricated).
             let localBaseline: LocalBaseline | null = null;
 
             try {
@@ -556,7 +532,7 @@ export function useEditorOrchestrator({
                         localBaseline = {
                             version: localFile.version || 1,
                             etag: localFile.etag || null,
-                            content: sanitizeHtml(localFile.content || ""),
+                            content: localFile.content || "",
                         };
                         setTitle(localFile.title);
                         fileVersionRef.current = localFile.version || 1;
@@ -567,7 +543,7 @@ export function useEditorOrchestrator({
 
                         isProgrammaticUpdateRef.current = true;
                         try {
-                            editor?.commands.setContent(sanitizeHtml(localFile.content || ""));
+                            adapterRef.current?.setValue(localFile.content || "");
                         } finally {
                             isProgrammaticUpdateRef.current = false;
                         }
@@ -581,7 +557,6 @@ export function useEditorOrchestrator({
                 if (!(result.success && result.data)) {
                     const localNow = await sh?.loadLocal(fileId);
                     if (!localNow && !isDirtyRef.current) {
-                        // Server ANSWERED missing AND nothing local/eager.
                         loadFailureRef.current = true;
                     }
                     if (!localNow && onNavigate) {
@@ -592,7 +567,7 @@ export function useEditorOrchestrator({
                     setTitle(data.title);
                     const remoteVersion = data.version ?? 1;
                     const remoteEtag = data.etag ?? null;
-                    const safeContent = sanitizeHtml(data.content || "");
+                    const safeContent = data.content || "";
 
                     const decision = classifyRemoteUpdate({
                         localBaseline,
@@ -612,7 +587,7 @@ export function useEditorOrchestrator({
                         editorGenerationRef.current += 1;
                         isProgrammaticUpdateRef.current = true;
                         try {
-                            editor?.commands.setContent(safeContent);
+                            adapterRef.current?.setValue(safeContent);
                         } finally {
                             isProgrammaticUpdateRef.current = false;
                         }
@@ -632,8 +607,6 @@ export function useEditorOrchestrator({
 
                     switch (decision.action) {
                         case "bootstrap_server": {
-                            // COLD START (clean editor): the server document is
-                            // the only truth - paint + persist clean ancestor.
                             adoptAnchors();
                             paintServer();
                             markServerPersisted(data.updatedAt);
@@ -643,7 +616,7 @@ export function useEditorOrchestrator({
                         }
                         case "apply": {
                             adoptAnchors();
-                            if (editor?.getHTML() !== safeContent) paintServer();
+                            if (adapterRef.current?.getValue() !== safeContent) paintServer();
                             markServerPersisted(data.updatedAt);
                             await persistClean();
                             break;
@@ -655,7 +628,6 @@ export function useEditorOrchestrator({
                             break;
                         }
                         case "adopt_metadata_keep_edits": {
-                            // COLD START with eager in-flight edits: anchors ONLY.
                             adoptAnchors();
                             console.warn(
                                 "[Orchestrator] Cold-start eager edits: adopted remote metadata anchors only; user text kept dirty."
@@ -684,23 +656,17 @@ export function useEditorOrchestrator({
                     setError(
                         "تعذّر تحميل الملف من الخادم ولا توجد نسخة محلية. تحقق من الاتصال ثم أعد المحاولة."
                     );
-                    // Stay frozen: an empty unanchored surface must not take input.
                     hydratedRef.current = false;
                     return;
                 }
 
-                // UNCONDITIONAL release (single-flight): even if an unmount or a
-                // newer render superseded this closure, hydration succeeded.
                 hydratedRef.current = true;
                 setHydration("ready");
-                if (editor && !editor.isDestroyed) editor.setEditable(true);
+                if (adapterRef.current) adapterRef.current.setEditable(true);
             }
         }
 
-        // SINGLE-FLIGHT trigger: identity-stable. syncHook/onNavigate are read
-        // through refs inside the pipeline, so fresh per-render objects can no
-        // longer re-arm this effect and fork competing getFile server-actions.
-        if (!fileId || !editor) return;
+        if (!fileId || !currentAdapter) return;
         if (loadedFileIdRef.current === fileId || pipelineRef.current) return;
         const run = loadInitialFile();
         pipelineRef.current = run.finally(() => {
@@ -710,9 +676,8 @@ export function useEditorOrchestrator({
         return () => {
             cancelled = true;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- single-flight keyed on file identity
-    }, [fileId, editor]);
-
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [fileId, currentAdapter]);
 
     // Cross-tab synchronization listener
     useEffect(() => {
@@ -744,8 +709,6 @@ export function useEditorOrchestrator({
     // Navigation & Unload Guard
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-            // An undecided completed preview also blocks navigation: abandoning
-            // it silently consumes quota (Explicit Settlement Policy).
             if (isDirty || aiStream.isCommitting || isSaving || aiStream.status === "preview_ready") {
                 e.preventDefault();
                 e.returnValue = "لديك تعديلات غير محفوظة، هل أنت متأكد من مغادرة الصفحة؟";
@@ -762,10 +725,10 @@ export function useEditorOrchestrator({
     // AI Operation Trigger
     const startAIOperation = useCallback(
         async (operation: AIOperationType) => {
-            if (!editor) return;
+            if (!adapterRef.current) return;
 
             await aiStream.startStream({
-                editor,
+                editor: adapterRef.current as any,
                 operation,
                 fileId,
                 expectedVersion: fileVersionRef.current,
@@ -773,7 +736,7 @@ export function useEditorOrchestrator({
                 editorGeneration: editorGenerationRef.current,
             });
         },
-        [editor, aiStream, fileId]
+        [aiStream, fileId]
     );
 
     // Conflict Resolution Handler
@@ -796,7 +759,6 @@ export function useEditorOrchestrator({
                     return;
                 }
 
-                // Authoritative write conditioned on server's latest version
                 const targetExpectedVersion = activeConflict.serverVersion.version;
                 const targetExpectedETag = activeConflict.serverVersion.etag || undefined;
 
@@ -812,10 +774,9 @@ export function useEditorOrchestrator({
                     setServerEtag(saveRes.etag || null);
                     editorGenerationRef.current += 1;
 
-                    const safeHtml = sanitizeHtml(resolution.content);
                     isProgrammaticUpdateRef.current = true;
                     try {
-                        editor?.commands.setContent(safeHtml);
+                        adapterRef.current?.setValue(resolution.content);
                     } finally {
                         isProgrammaticUpdateRef.current = false;
                     }
@@ -828,7 +789,7 @@ export function useEditorOrchestrator({
                     if (syncHook.isInitialized) {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content: safeHtml,
+                            content: resolution.content,
                             title: resolution.title || title,
                             version: saveRes.version,
                             etag: saveRes.etag || fileEtagRef.current || "",
@@ -882,7 +843,7 @@ export function useEditorOrchestrator({
                 isResolvingConflictRef.current = false;
             }
         },
-        [activeConflict, fileId, title, editor, syncHook, onNavigate]
+        [activeConflict, fileId, title, syncHook, onNavigate]
     );
 
     // Title Change

@@ -134,12 +134,12 @@ useEffect(() => {
 
 ## Status
 
-**Version**: 1.2 (Fixed Debounce)  
+**Version**: 2.0 (Markdown Engine & Multi-Range Transaction Migration)  
 **Status**: ✅ Production Ready  
-**Last Updated**: 2026-01-27 23:36
+**Last Updated**: 2026-08-26
 
-### Recent Fix (v1.2)
-- Fixed debounce to **reset timer with each keystroke**
-- Previous version created new debounce instead of resetting
-- Now uses manual `setTimeout` with proper cleanup
-- Removed unused `debounce` import from utils
+### Recent Updates (v2.0)
+- Migrated from ProseMirror/TipTap to `EditorAdapter` operating on UTF-16 CodeMirror 6 document offsets.
+- Implemented atomic `replaceAll` via `adapter.replaceRanges()` Multi-Range Transactions, preserving single-step undo and eliminating offset drift.
+- Search index advancement guarded with `searchQuery.length` to prevent overlapping range errors.
+- Synchronous replace execution with immediate match re-indexing.

@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useEditor, EditorContent, type Editor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Placeholder from "@tiptap/extension-placeholder";
+import {
+    MarkdownEditor,
+    type EditorAdapter,
+    type EditorMode,
+    type EditorSelection,
+} from "@/components/editor/markdown";
 import { getRemainingQuota } from "@/server/actions/ai-ops";
-import { AutoDirectionExtension } from "@/lib/extensions/direction-extension";
-import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
 import { SearchReplace } from "@/components/editor/search-replace";
 import { countWords, detectTextDirection, countCharacters } from "@/lib/utils";
@@ -28,34 +29,13 @@ export default function EditorPage() {
     const [showToPrompt, setShowToPrompt] = useState(false);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [selectedText, setSelectedText] = useState("");
+    const [editorMode, setEditorMode] = useState<EditorMode>("live");
+    const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
 
-    // Initialize TipTap Editor Instance
-    const editor = useEditor({
-        extensions: [
-            StarterKit,
-            Placeholder.configure({
-                placeholder: "Start writing...",
-                emptyEditorClass: "is-editor-empty",
-            }),
-            AutoDirectionExtension,
-            StreamingGhostExtension,
-        ],
-        content: "",
-        immediatelyRender: false,
-        editorProps: {
-            attributes: {
-                class: "tiptap-editor outline-none min-h-[70vh] text-zinc-300 p-6",
-            },
-        },
-    });
-
-    // Stabilized navigation callback: a fresh arrow per render previously leaked into
-    // the orchestrator's initial-load effect dependencies and re-triggered a full
-    // server fetch + setContent cycle on every render (visible as text vanishing
-    // mid-typing while background sync ran).
+    // Stabilized navigation callback
     const handleNavigate = useCallback((path: string) => router.push(path), [router]);
 
-    // Centralized Editor Orchestrator (Phase 9 / Gate G9)
+    // Centralized Editor Orchestrator
     const {
         title,
         hydration,
@@ -90,23 +70,9 @@ export default function EditorPage() {
     } = useEditorOrchestrator({
         fileId,
         userId,
-        editor,
+        editor: adapter,
         onNavigate: handleNavigate,
     });
-
-    // Bind TipTap update stream to Orchestrator with manual edit detection
-    useEffect(() => {
-        if (editor) {
-            const onUpdate = ({ editor: currentEditor }: { editor: Editor }) => {
-                handleEditorChange(currentEditor.getHTML());
-            };
-            editor.on("update", onUpdate);
-
-            return () => {
-                editor.off("update", onUpdate);
-            };
-        }
-    }, [editor, handleEditorChange]);
 
     // Fetch authenticated user ID
     useEffect(() => {
@@ -139,23 +105,6 @@ export default function EditorPage() {
         checkQuota();
     }, []);
 
-    // Track text selection for dynamic stats
-    useEffect(() => {
-        if (editor) {
-            const handleSelectionUpdate = () => {
-                const { from, to } = editor.state.selection;
-                const text = editor.state.doc.textBetween(from, to, " ");
-                setSelectedText(text);
-            };
-
-            editor.on("selectionUpdate", handleSelectionUpdate);
-
-            return () => {
-                editor.off("selectionUpdate", handleSelectionUpdate);
-            };
-        }
-    }, [editor]);
-
     // Keyboard shortcuts (Ctrl+F for search, Escape for stopping AI generation)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -174,26 +123,56 @@ export default function EditorPage() {
         };
     }, [isAIActive, stopAIOperation]);
 
-    // Copy to clipboard
-    const handleCopy = useCallback(() => {
-        if (editor) {
-            navigator.clipboard.writeText(editor.getText());
+    // Copy raw Markdown to clipboard with safe fallback
+    const handleCopy = useCallback(async () => {
+        if (!adapter) return;
+        try {
+            await navigator.clipboard.writeText(adapter.getValue());
+        } catch (copyErr) {
+            console.warn("[Editor] Clipboard writeText failed, attempting fallback:", copyErr);
+            try {
+                const textArea = document.createElement("textarea");
+                textArea.value = adapter.getValue();
+                textArea.style.position = "fixed";
+                textArea.style.opacity = "0";
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand("copy");
+                document.body.removeChild(textArea);
+            } catch (fallbackErr) {
+                console.error("[Editor] Fallback copy failed:", fallbackErr);
+            }
         }
-    }, [editor]);
+    }, [adapter]);
 
     // Toggle search and replace dialog
     const handleSearch = useCallback(() => {
         setIsSearchOpen((prev) => !prev);
     }, []);
 
+    // Formatting handler
+    const handleFormat = useCallback(
+        (prefix: string, suffix: string = "", placeholder: string = "") => {
+            if (adapter) {
+                adapter.insertMarkdown(prefix, suffix, placeholder);
+            }
+        },
+        [adapter]
+    );
+
+    // Toggle between Live Preview and Raw Source mode
+    const handleToggleMode = useCallback(() => {
+        setEditorMode((prev) => (prev === "live" ? "source" : "live"));
+    }, []);
+
     // Export document in multiple formats (MD, TXT)
     const handleExport = useCallback(
         async (format: "md" | "txt" = "txt") => {
-            if (!editor) return;
+            if (!adapter) return;
 
             try {
                 const { exportContent, downloadBlob } = await import("@/lib/exporters");
-                const content = editor.getHTML();
+                const content = adapter.getValue();
                 const result = await exportContent(content, title || "document", format);
 
                 if (result.success && result.blob && result.filename) {
@@ -206,40 +185,51 @@ export default function EditorPage() {
                 console.error("Export error:", err);
             }
         },
-        [editor, title, setError]
+        [adapter, title, setError]
     );
 
-    // Text stats computation
-    const textToAnalyze = selectedText || editor?.getText() || "";
+    // Dynamic stats computation from raw Markdown
     const isSelection = selectedText.length > 0;
-    const wordCount = countWords(textToAnalyze);
-    const charCount = countCharacters(textToAnalyze);
+    const textToAnalyze = isSelection ? selectedText : adapter?.getValue() || "";
+    const wordCount = isSelection
+        ? countWords(selectedText)
+        : adapter
+        ? adapter.getWordCount()
+        : 0;
+    const charCount = isSelection
+        ? countCharacters(selectedText)
+        : adapter
+        ? adapter.getCharCount()
+        : 0;
     const textDir = detectTextDirection(textToAnalyze);
 
     return (
         <div className="h-full flex flex-col bg-zinc-950">
-            {/* AI Toolbar - Fixed position */}
+            {/* Toolbar - Fixed position */}
             <AIToolbar
                 onCorrect={() => startAIOperation("correct")}
                 onImprove={() => startAIOperation("improve")}
                 onSummarize={() => startAIOperation("summarize")}
                 onTranslate={() => startAIOperation("translate")}
                 onToPrompt={() => startAIOperation("toPrompt")}
-                onUndo={() => editor?.commands.undo()}
-                onRedo={() => editor?.commands.redo()}
+                onUndo={() => adapter?.undo()}
+                onRedo={() => adapter?.redo()}
                 onExport={handleExport}
                 onCopy={handleCopy}
                 onSearch={handleSearch}
                 onStop={stopAIOperation}
-                canUndo={editor?.can().undo() || false}
-                canRedo={editor?.can().redo() || false}
+                onFormat={handleFormat}
+                mode={editorMode}
+                onToggleMode={handleToggleMode}
+                canUndo={adapter?.canUndo() || false}
+                canRedo={adapter?.canRedo() || false}
                 isLoading={isAIActive}
                 showToPrompt={showToPrompt}
             />
 
             {/* Search and Replace Dialog */}
             <SearchReplace
-                editor={editor}
+                adapter={adapter}
                 isOpen={isSearchOpen}
                 onClose={() => setIsSearchOpen(false)}
             />
@@ -253,7 +243,7 @@ export default function EditorPage() {
                 onCancel={stopAIOperation}
             />
 
-            {/* AI Ephemeral Live Preview Panel (Active when streaming or text available) */}
+            {/* AI Ephemeral Live Preview Panel */}
             {previewText && (
                 <AIStreamPreview
                     text={previewText}
@@ -309,7 +299,7 @@ export default function EditorPage() {
 
             {/* Editor - Scrollable container */}
             <div className="flex-1 overflow-auto custom-scrollbar relative">
-                {hydration === "hydrating" && !editor?.getText() && (
+                {hydration === "hydrating" && !adapter?.getValue() && (
                     <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-xs z-10 flex flex-col items-center justify-center gap-3">
                         <Loader2 className="w-7 h-7 animate-spin text-indigo-400" />
                         <span className="text-xs text-zinc-400 font-medium">جاري تحميل ومزامنة المستند...</span>
@@ -330,7 +320,21 @@ export default function EditorPage() {
                         </button>
                     </div>
                 ) : (
-                    <EditorContent editor={editor} className="max-w-4xl mx-auto" />
+                    <div className="max-w-4xl mx-auto p-4 md:p-6">
+                        <MarkdownEditor
+                            onAdapterReady={setAdapter}
+                            onChange={handleEditorChange}
+                            onSelectionChange={(_sel: EditorSelection) => {
+                                if (adapter) {
+                                    setSelectedText(adapter.getSelectedText());
+                                }
+                            }}
+                            mode={editorMode}
+                            onModeChange={setEditorMode}
+                            placeholder="ابدأ الكتابة بصيغة Markdown..."
+                            className="min-h-[70vh] text-zinc-300"
+                        />
+                    </div>
                 )}
             </div>
 

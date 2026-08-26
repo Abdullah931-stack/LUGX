@@ -2,6 +2,16 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.11.0] - 2026-08-26 (Markdown Migration Phase 2: TipTap Replacement & Editor Tooling Integration)
+
+### Changed - Primary Editor Surface & Tooling Integration
+
+- **Replaced TipTap with Standalone MarkdownEditor (`src/app/workspace/editor/[fileId]/page.tsx`):** Purged `@tiptap/react`, `StarterKit`, `Placeholder`, `AutoDirectionExtension`, and `StreamingGhostExtension` from the workspace editor page. Substituted with `MarkdownEditor` and engine-agnostic `EditorAdapter`.
+- **Pure Markdown Event Loop & Stats:** Replaced `editor.getHTML()` and `editor.on("update")` with synchronous `onChange(markdownText)` and raw Markdown text stats computation (Unicode/RTL-safe word and character counting).
+- **Multi-Range Transaction Search & Replace (`src/components/editor/search-replace.tsx`):** Upgraded `SearchReplace` to operate on exact UTF-16 document offsets from `adapter.getValue()`. Replaced destructive string-rebuilding `replaceAll` with atomic `adapter.replaceRanges()` Multi-Range Transactions in CodeMirror 6, preserving the undo tree and preventing offset drift.
+- **Markdown-Native Toolbar Formatting (`src/components/editor/ai-toolbar.tsx`):** Added native Markdown formatting operations (Headings, Bold, Italic, Inline Code, Lists, Blockquotes, Links) with intelligent cursor placement when selections are empty, plus a Live Preview vs Raw Source mode switcher.
+- **Orchestrator Adapter Support (`src/hooks/use-editor-orchestrator.ts`):** Upgraded `useEditorOrchestrator` to interface with `EditorAdapter`, securing programmatic writes with `isProgrammaticUpdateRef` and dynamic editability toggles (`setEditable`).
+
 ## [1.10.0] - 2026-08-26 (Phase 14: Supabase Storage Removal & Database Schema Cleanup)
 
 ### Removed - Dead Code Elimination & Schema Cleanup

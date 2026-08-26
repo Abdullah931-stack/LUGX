@@ -33,6 +33,14 @@ export interface EditorAdapter {
     setSelection(from: number, to?: number): void;
     /** Replace text in the specified range [from, to] */
     replaceRange(from: number, to: number, insert: string): void;
+    /** Replace multiple text ranges in a single atomic transaction (Multi-Range Transaction) */
+    replaceRanges(changes: { from: number; to: number; insert: string }[]): void;
+    /** Get currently selected raw text */
+    getSelectedText(): string;
+    /** Insert or wrap markdown syntax around selection or at cursor */
+    insertMarkdown(prefix: string, suffix?: string, placeholder?: string): void;
+    /** Set read-only / editable state */
+    setEditable(editable: boolean): void;
     /** Focus the editor */
     focus(): void;
     /** Blur the editor */

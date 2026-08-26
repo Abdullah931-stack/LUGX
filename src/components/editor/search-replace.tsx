@@ -1,19 +1,24 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Editor } from "@tiptap/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { X, ChevronUp, ChevronDown, Replace } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { EditorAdapter } from "@/components/editor/markdown/types";
 
 interface SearchReplaceProps {
-    editor: Editor | null;
+    /** Target EditorAdapter instance */
+    adapter?: EditorAdapter | null;
+    /** Backward compatibility alias for adapter */
+    editor?: EditorAdapter | null;
     isOpen: boolean;
     onClose: () => void;
 }
 
-export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
+export function SearchReplace({ adapter, editor, isOpen, onClose }: SearchReplaceProps) {
+    const currentAdapter = adapter || editor;
+
     const [searchQuery, setSearchQuery] = useState("");
     const [replaceQuery, setReplaceQuery] = useState("");
     const [matches, setMatches] = useState<{ index: number; from: number; to: number }[]>([]);
@@ -23,16 +28,16 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
     const searchInputRef = useRef<HTMLInputElement>(null);
     const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Find all matches in the editor content
+    // Find all matches in the editor Markdown content using exact UTF-16 offsets
     const findMatches = useCallback(() => {
-        if (!editor || !searchQuery) {
+        if (!currentAdapter || !searchQuery) {
             setMatches([]);
             setCurrentMatchIndex(0);
             return;
         }
 
         try {
-            const content = editor.getText();
+            const content = currentAdapter.getValue();
             const searchText = caseSensitive ? searchQuery : searchQuery.toLowerCase();
             const contentToSearch = caseSensitive ? content : content.toLowerCase();
 
@@ -51,7 +56,7 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                     to: index + searchQuery.length,
                 });
 
-                position = index + 1;
+                position = index + Math.max(1, searchQuery.length);
             }
 
             setMatches(foundMatches);
@@ -62,22 +67,25 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                 highlightMatch(foundMatches[0]);
             }
         } catch (error) {
-            console.error("Search error:", error);
+            console.error("[SearchReplace] Search error:", error);
             setMatches([]);
         }
-    }, [editor, searchQuery, caseSensitive]);
+    }, [currentAdapter, searchQuery, caseSensitive]);
 
-    // Highlight specific match
-    const highlightMatch = useCallback((match: { from: number; to: number }) => {
-        if (!editor) return;
+    // Highlight specific match using exact document offsets
+    const highlightMatch = useCallback(
+        (match: { from: number; to: number }) => {
+            if (!currentAdapter) return;
 
-        try {
-            editor.commands.setTextSelection({ from: match.from + 1, to: match.to + 1 });
-            editor.commands.focus();
-        } catch (error) {
-            console.error("Highlight error:", error);
-        }
-    }, [editor]);
+            try {
+                currentAdapter.setSelection(match.from, match.to);
+                currentAdapter.focus();
+            } catch (error) {
+                console.error("[SearchReplace] Highlight error:", error);
+            }
+        },
+        [currentAdapter]
+    );
 
     // Navigate to next match
     const goToNextMatch = useCallback(() => {
@@ -99,64 +107,50 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
 
     // Replace current match
     const replaceCurrentMatch = useCallback(() => {
-        if (!editor || matches.length === 0 || !replaceQuery) return;
+        if (!currentAdapter || matches.length === 0 || !replaceQuery) return;
 
         try {
             const currentMatch = matches[currentMatchIndex];
             const { from, to } = currentMatch;
 
-            // Replace the text
-            editor.chain()
-                .focus()
-                .setTextSelection({ from: from + 1, to: to + 1 })
-                .insertContent(replaceQuery)
-                .run();
+            // Replace single range synchronously
+            currentAdapter.replaceRange(from, to, replaceQuery);
+            currentAdapter.focus();
 
-            // Refresh matches after replacement
-            setTimeout(() => {
-                findMatches();
-            }, 100);
+            // Refresh matches synchronously without setTimeout race condition
+            findMatches();
         } catch (error) {
-            console.error("Replace error:", error);
+            console.error("[SearchReplace] Replace error:", error);
         }
-    }, [editor, matches, currentMatchIndex, replaceQuery, findMatches]);
+    }, [currentAdapter, matches, currentMatchIndex, replaceQuery, findMatches]);
 
-    // Replace all matches
+    // Safe Multi-Range Transaction: Replace all matches in one atomic undoable step
     const replaceAllMatches = useCallback(() => {
-        if (!editor || matches.length === 0 || !replaceQuery) return;
+        if (!currentAdapter || matches.length === 0 || !replaceQuery) return;
 
         try {
-            const content = editor.getText();
-            const searchText = caseSensitive ? searchQuery : searchQuery.toLowerCase();
-            const contentToReplace = caseSensitive ? content : content.toLowerCase();
+            const changes = matches.map((m) => ({
+                from: m.from,
+                to: m.to,
+                insert: replaceQuery,
+            }));
 
-            // Replace all occurrences
-            let newContent = "";
-            let lastIndex = 0;
+            // Multi-Range Transaction in CodeMirror
+            currentAdapter.replaceRanges(changes);
+            currentAdapter.focus();
 
-            matches.forEach((match) => {
-                newContent += content.substring(lastIndex, match.from);
-                newContent += replaceQuery;
-                lastIndex = match.to;
-            });
-            newContent += content.substring(lastIndex);
-
-            // Set new content
-            editor.commands.setContent(newContent);
-
-            // Clear matches
+            // Clear matches state
             setMatches([]);
             setCurrentMatchIndex(0);
             setSearchQuery("");
             setReplaceQuery("");
         } catch (error) {
-            console.error("Replace all error:", error);
+            console.error("[SearchReplace] Replace all error:", error);
         }
-    }, [editor, matches, searchQuery, replaceQuery, caseSensitive]);
+    }, [currentAdapter, matches, replaceQuery]);
 
-    // Debounced search effect (triggers after 2 seconds of stopping typing)
+    // Debounced search effect
     useEffect(() => {
-        // Clear previous timeout
         if (searchTimeoutRef.current) {
             clearTimeout(searchTimeoutRef.current);
             searchTimeoutRef.current = null;
@@ -169,19 +163,16 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
             return;
         }
 
-        // If explicitly triggered (Enter pressed), search immediately
         if (shouldSearch) {
             findMatches();
             setShouldSearch(false);
             return;
         }
 
-        // Set new timeout - search after 2 seconds of no typing
         searchTimeoutRef.current = setTimeout(() => {
             findMatches();
-        }, 2000);
+        }, 300);
 
-        // Cleanup function
         return () => {
             if (searchTimeoutRef.current) {
                 clearTimeout(searchTimeoutRef.current);
@@ -195,32 +186,25 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
         if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
             e.preventDefault();
             if (matches.length > 0) {
-                // If matches exist, go to next
                 goToNextMatch();
             } else {
-                // If no matches yet, trigger search immediately
                 setShouldSearch(true);
             }
         }
     };
 
-    // Keyboard shortcuts
+    // Keyboard shortcuts (Ctrl+F, Enter, Shift+Enter, Ctrl+Enter, Esc)
     useEffect(() => {
         if (!isOpen) return;
 
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Shift + Enter: Previous match
             if (e.key === "Enter" && e.shiftKey) {
                 e.preventDefault();
                 goToPreviousMatch();
-            }
-            // Ctrl + Enter: Replace current
-            else if (e.key === "Enter" && e.ctrlKey) {
+            } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 replaceCurrentMatch();
-            }
-            // Escape: Close
-            else if (e.key === "Escape") {
+            } else if (e.key === "Escape") {
                 e.preventDefault();
                 onClose();
             }
@@ -240,10 +224,10 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                     <Input
                         ref={searchInputRef}
                         type="text"
-                        placeholder="Find... (Press Enter or wait 2s)"
+                        placeholder="بحث في المستند (Enter للتنقل)..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        onKeyPress={handleSearchKeyPress}
+                        onKeyDown={handleSearchKeyPress}
                         className="h-8 text-sm bg-zinc-900/50 border-zinc-700 focus:border-indigo-500"
                         autoFocus
                     />
@@ -262,7 +246,7 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                             size="icon-sm"
                             onClick={goToPreviousMatch}
                             disabled={matches.length === 0}
-                            title="Previous match (Shift+Enter)"
+                            title="المطابقة السابقة (Shift+Enter)"
                         >
                             <ChevronUp className="w-4 h-4" />
                         </Button>
@@ -271,7 +255,7 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                             size="icon-sm"
                             onClick={goToNextMatch}
                             disabled={matches.length === 0}
-                            title="Next match (Enter)"
+                            title="المطابقة التالية (Enter)"
                         >
                             <ChevronDown className="w-4 h-4" />
                         </Button>
@@ -282,7 +266,7 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                 <div className="flex-1 flex items-center gap-2">
                     <Input
                         type="text"
-                        placeholder="Replace with..."
+                        placeholder="استبدال بـ..."
                         value={replaceQuery}
                         onChange={(e) => setReplaceQuery(e.target.value)}
                         className="h-8 text-sm bg-zinc-900/50 border-zinc-700 focus:border-indigo-500"
@@ -296,10 +280,10 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                             onClick={replaceCurrentMatch}
                             disabled={matches.length === 0 || !replaceQuery}
                             className="h-8 text-xs"
-                            title="Replace (Ctrl+Enter)"
+                            title="استبدال الحالي (Ctrl+Enter)"
                         >
                             <Replace className="w-3 h-3 mr-1" />
-                            Replace
+                            استبدال
                         </Button>
                         <Button
                             variant="ghost"
@@ -307,9 +291,9 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                             onClick={replaceAllMatches}
                             disabled={matches.length === 0 || !replaceQuery}
                             className="h-8 text-xs"
-                            title="Replace all"
+                            title="استبدال الكل (Multi-Range Transaction)"
                         >
-                            All
+                            الكل
                         </Button>
                     </div>
                 </div>
@@ -321,9 +305,9 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                     onClick={() => setCaseSensitive(!caseSensitive)}
                     className={cn(
                         "h-8 w-8 font-mono text-xs",
-                        caseSensitive && "border-indigo-500/50"
+                        caseSensitive && "border-indigo-500/50 bg-indigo-500/10 text-indigo-300"
                     )}
-                    title="Case sensitive"
+                    title="مطابقة حالة الأحرف (Case sensitive)"
                 >
                     Aa
                 </Button>
@@ -334,7 +318,7 @@ export function SearchReplace({ editor, isOpen, onClose }: SearchReplaceProps) {
                     size="icon-sm"
                     onClick={onClose}
                     className="h-8 w-8"
-                    title="Close (Esc)"
+                    title="إغلاق (Esc)"
                 >
                     <X className="w-4 h-4" />
                 </Button>

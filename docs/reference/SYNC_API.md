@@ -280,6 +280,6 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
    - Title (`title`) and Move (`parentFolderId`) metadata are merged independently.
    - Delete conflicts (remote delete vs local edit) produce `delete_conflict` requiring explicit "Restore" or "Delete" selection.
 3. **Single Authoritative Write:** After user resolution (Local, Server, 3-Way Merge, or Restore), exactly one write request is dispatched to the server containing `expectedVersion: serverVersion.version`.
-4. **Verified State Transition:** Editor state (TipTap) and IndexedDB cache are only transitioned to clean (`isDirty: false`) after receiving 200 OK confirmation from the server.
+4. **Verified State Transition:** Editor state (MarkdownEditor / EditorAdapter) and IndexedDB cache are only transitioned to clean (`isDirty: false`) after receiving 200 OK confirmation from the server.
 5. **Autosave Lockout:** Autosave is strictly inhibited whenever an unresolved conflict is active.
 

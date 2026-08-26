@@ -24,13 +24,13 @@ The orchestrator decomposes page state into 6 isolated, deterministic state slic
 
 | State Slice | Responsibilities & Invariants |
 | :--- | :--- |
-| **1. Document State** | Document content (HTML) and document title. Protected against silent race overwrites. |
+| **1. Document State** | Document content (Raw Markdown) and document title. Protected against silent race overwrites. |
 | **2. Preview State** | Ephemeral AI streaming preview buffer, operation type, active tokens, and finite session status (`idle`, `reserving`, `reserved`, `streaming`, `preview_ready`, `committing`, `committed`, `aborted`, `failed`, `conflict`). |
 | **3. Dirty State** | Boolean flag tracking unsaved local changes, timestamp of last successful save, and active saving indicators. |
 | **4. Server Version** | Authoritative server version number and ETag precondition anchor received from PostgreSQL / Supabase. |
 | **5. Conflict State** | Active `SyncConflict` descriptor, modal visibility toggle, resolution strategy payload, and in-flight resolution locks. |
 | **6. Write State** | Mutex controller tracking the active writing channel (`idle`, `saving`, `ai_committing`, `resolving_conflict`, `syncing`, `stopped`). |
-| **7. Hydration State** | Initial-load lifecycle for the mounted file (`hydrating`, `ready`, `fatal`). While not `ready` the TipTap surface is frozen (`setEditable(false)`) and every autosave/input gate short-circuits — writing before the load pipeline settles is structurally impossible. |
+| **7. Hydration State** | Initial-load lifecycle for the mounted file (`hydrating`, `ready`, `fatal`). While not `ready` the editor surface is frozen (`adapter.setEditable(false)`) and every autosave/input gate short-circuits — writing before the load pipeline settles is structurally impossible. |
 
 ---
 
@@ -47,7 +47,7 @@ flowchart TD
     Gate -->|"Active Conflict Unresolved"| Suspend
     Gate -->|"Resolving Conflict Active"| Suspend
     Gate -->|"Sync Manager Stopped"| Suspend
-    Gate -->|"Programmatic Update (setContent)"| Suspend
+    Gate -->|"Programmatic Update (setValue)"| Suspend
     Gate -->|"Hydration Not Complete (hydrating / fatal)"| Suspend
     Gate -->|"All Guards Passed (Hydrated & Idle)"| Debounce["Queue 1000ms Debounced Server Write"]
 ```
@@ -159,7 +159,7 @@ role.
 3. **ETag change is mandatory for advancement.** A version bump without an ETag mutation is
    treated as non-newer to guard against metadata-only churn.
 4. **Programmatic containment.** Every `apply` writes through `isProgrammaticUpdateRef`,
-   so TipTap's `update` event never misclassifies the reconciliation write as a manual edit
+   so the editor's `onChange` event never misclassifies the reconciliation write as a manual edit
    (no spurious autosave, no spurious generation bump).
 5. **Single-flight per file identity.** The initial load pipeline is keyed on file identity
    via `loadedFileIdRef` with unmount cancellation guards (`cancelled = true`), ensuring
@@ -171,7 +171,7 @@ role.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant E as Editor (TipTap)
+    participant E as Editor (MarkdownEditor / EditorAdapter)
     participant O as Orchestrator
     participant R as classifyRemoteUpdate
     participant S as Server API
@@ -183,7 +183,7 @@ sequenceDiagram
     O->>R: classify(baseline ?? null, isDirty, remoteState)
     alt baseline = null AND clean (cold start)
         R-->>O: no_local_baseline_clean
-        O->>E: setContent(sanitizedRemote) [bootstrap_server]
+        O->>E: setValue(sanitizedRemote) [bootstrap_server]
         O->>I: saveLocal(isDirty: false) [clean ancestor persisted]
         Note over O: markServerPersisted -> save dot GREEN
     else baseline = null AND eager edits (cold start)
@@ -191,7 +191,7 @@ sequenceDiagram
         Note over O: adopt anchors ONLY; eager text kept dirty
     else action = apply (clean + verified-newer)
         R-->>O: fast_forward_clean
-        O->>E: setContent(sanitizedRemote) [programmatic guard]
+        O->>E: setValue(sanitizedRemote) [programmatic guard]
         O->>I: saveLocal(isDirty: false)
         Note over O: anchors advanced; markServerPersisted
     else action = adopt_metadata (identical payload)
@@ -215,12 +215,12 @@ sequenceDiagram
 ## 6b. AI Streaming Programmatic Transaction Guard (v1.5.0 Amendment)
 
 Every document mutation performed by `useAIStream` — the atomic AI commit transaction, the
-conflict rollback (`setContent(originalHtml)`), and the exception rollback — is routed
+conflict rollback (`setValue(originalMarkdown)`), and the exception rollback — is routed
 through the new `UseAIStreamOptions.onProgrammaticTransaction` hook. The orchestrator
-raises `isProgrammaticUpdateRef` around it, so TipTap's `update` event can no longer
+raises `isProgrammaticUpdateRef` around it, so the editor's update event can no longer
 classify these writes as manual edits.
 
-**Defect closed:** previously the post-commit ProseMirror transaction fired
+**Defect closed:** previously the post-commit transaction fired
 `handleEditorChange`, marking the freshly committed document dirty and scheduling a
 redundant debounced server write with a racing `expectedVersion` immediately after a
 successful AI commit.
@@ -242,8 +242,8 @@ stateDiagram-v2
 
 Invariants:
 
-1. **Sync-before-write is structural.** The TipTap surface starts frozen
-   (`editor.setEditable(false)`) and is released only on `ready`. Input events are
+1. **Sync-before-write is structural.** The editor surface starts frozen
+   (`adapter.setEditable(false)`) and is released only on `ready`. Input events are
    additionally dropped in `handleEditorChange`, and `executeServerWrite` defers while
    `hydrating` — three layers, one source of truth (`hydration`).
 2. **Transport failure is NEVER fatal.** If `getFile` cannot be reached, the pipeline still
