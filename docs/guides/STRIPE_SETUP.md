@@ -105,7 +105,12 @@ STRIPE_ULTRA_PRICE_ID=price_live_XXXXXXXX
 5. **Set up production webhook**:
    - Go to https://dashboard.stripe.com/webhooks
    - Add endpoint: `https://yourdomain.com/api/stripe/webhook`
-   - Select events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`
+   - Select events:
+     - `checkout.session.completed`
+     - `customer.subscription.updated`
+     - `customer.subscription.deleted`
+     - `customer.subscription.trial_will_end`
+     - `invoice.payment_failed`
    - Copy webhook signing secret and update `STRIPE_WEBHOOK_SECRET`
 
 ## Troubleshooting

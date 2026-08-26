@@ -43,10 +43,10 @@ BEGIN
     --    which a user can legitimately have before any subscription, are not
     --    constrained).
     BEGIN
-        CREATE UNIQUE INDEX idx_subscriptions_stripe_id_unique
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_stripe_id_unique
             ON subscriptions (stripe_subscription_id)
             WHERE stripe_subscription_id IS NOT NULL;
     EXCEPTION
-        WHEN duplicate_object THEN NULL;
+        WHEN duplicate_object OR duplicate_table THEN NULL;
     END;
 END $$;

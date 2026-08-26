@@ -1,31 +1,51 @@
 /**
- * API Route: Stripe Webhook Handler
+ * API Route: Stripe Webhook Handler (Canonical Handler)
  * 
  * POST /api/stripe/webhook
  * 
- * Handles Stripe webhook events for subscription management.
- * IMPORTANT: This endpoint must be registered in Stripe Dashboard.
+ * Handles Stripe webhook events for subscription lifecycle management.
+ * 
+ * ARCHITECTURAL INVARIANTS (Phase 13):
+ * 1. Canonical Handler: /api/stripe/webhook is the authoritative handler;
+ *    /api/webhooks/stripe is a transparent re-export alias with zero parallel logic.
+ * 2. Durable Idempotency: Webhook deduplication is enforced by the database
+ *    (`subscription_events` table). In-memory `processedEventIds` serves as a fast-path cache.
+ *    Replays after server restart or across distributed workers are safely deduplicated.
+ * 3. Atomic ACID Transitions: User tier update, subscription upsert, and durable event
+ *    ledger recording execute within a single atomic database transaction (`executeSubscriptionTransition`).
+ * 4. Terminal State Protection: Subscriptions in terminal `canceled` state ignore stale
+ *    out-of-order `customer.subscription.updated` events without requiring fragile clock math.
+ * 5. Correct Period Calculation: Subscription billing periods (`currentPeriodStart` and
+ *    `currentPeriodEnd`) are extracted from `SubscriptionItem` (`current_period_start/end`)
+ *    or the associated `Invoice` line items (`period.start/end`). Duplicating `start_date`
+ *    into both start and end fields is strictly prevented (`end > start` guaranteed).
+ * 6. Zero-Allocation Cache Eviction: In-memory set eviction is performed via direct Set iteration.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { headers } from 'next/headers';
-import { constructWebhookEvent } from '@/lib/stripe';
-import { updateUserTier, upsertSubscription } from '@/server/actions/subscription-actions';
+import {
+    updateUserTier,
+    upsertSubscription,
+    getUserSubscription,
+    isSubscriptionEventProcessed,
+    recordSubscriptionEvent,
+    executeSubscriptionTransition,
+} from '@/server/actions/subscription-actions';
 import type { TierName } from '@/config/tiers.config';
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
 
 /**
- * In-memory dedupe set for processed webhook event IDs.
- * In production, persist this in Redis (with TTL ~24h) so multiple Vercel
- * function instances share the same idempotency state.
+ * In-memory fast-path dedupe set for processed webhook event IDs.
+ * Note: Database `subscription_events` table is the authoritative durable ledger.
  */
 const processedEventIds = new Set<string>();
 
 /**
  * Test-only helper that empties the in-memory dedupe set between test runs.
  * Named with a leading underscore so no production caller can mistake it for
- * runtime API — it exists solely so regression tests can isolate each case.
+ * runtime API — it exists solely so regression tests can simulate server restarts.
  * @internal
  */
 export function __resetProcessedEventIds() {
@@ -39,89 +59,199 @@ export function __resetProcessedEventIds() {
  */
 const MAX_TIMESTAMP_AGE_SECONDS = 300; // 5 minutes
 
+export interface HandlerResult {
+    success: boolean;
+    userId?: string;
+    subscriptionId?: string;
+    error?: string;
+}
+
 /**
- * Process checkout session completed event
+ * Extracts and normalizes billing period dates for subscriptions.
+ * In Stripe SDK v20, period dates are anchored on SubscriptionItem (item.current_period_start/end)
+ * or the associated Invoice (invoice.lines.data[0].period).
+ *
+ * Guarantees:
+ * 1. currentPeriodStart !== currentPeriodEnd
+ * 2. currentPeriodEnd > currentPeriodStart
  */
-async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+function extractPeriod(options: {
+    itemStart?: number | null;
+    itemEnd?: number | null;
+    invoicePeriod?: { start?: number | null; end?: number | null } | null;
+    fallbackAnchorSeconds?: number | null;
+}): { currentPeriodStart: Date; currentPeriodEnd: Date } {
+    let startMs: number | null = null;
+    let endMs: number | null = null;
+
+    if (
+        typeof options.itemStart === 'number' &&
+        typeof options.itemEnd === 'number' &&
+        options.itemEnd > options.itemStart
+    ) {
+        startMs = options.itemStart * 1000;
+        endMs = options.itemEnd * 1000;
+    } else if (
+        typeof options.invoicePeriod?.start === 'number' &&
+        typeof options.invoicePeriod?.end === 'number' &&
+        options.invoicePeriod.end > options.invoicePeriod.start
+    ) {
+        startMs = options.invoicePeriod.start * 1000;
+        endMs = options.invoicePeriod.end * 1000;
+    }
+
+    if (startMs === null || endMs === null) {
+        const anchor = options.fallbackAnchorSeconds
+            ? options.fallbackAnchorSeconds * 1000
+            : Date.now();
+        startMs = anchor;
+        // Default 30-day billing cycle if period boundaries are absent from payload
+        endMs = anchor + 30 * 24 * 60 * 60 * 1000;
+    }
+
+    // Invariant check: end date must strictly exceed start date
+    if (endMs <= startMs) {
+        endMs = startMs + 30 * 24 * 60 * 60 * 1000;
+    }
+
+    return {
+        currentPeriodStart: new Date(startMs),
+        currentPeriodEnd: new Date(endMs),
+    };
+}
+
+/**
+ * Process checkout session completed event atomically
+ */
+async function handleCheckoutSessionCompleted(
+    session: Stripe.Checkout.Session,
+    eventId: string
+): Promise<HandlerResult> {
     try {
         const userId = session.metadata?.userId;
         const tier = session.metadata?.tier as TierName;
+        const subscriptionId = session.subscription as string | undefined;
 
-        // ENGINEERING UPGRADE (W2): a completed checkout session is only
-        // considered a real purchase when payment actually succeeded. The
-        // old code trusted the event alone; a manually-failed payment with
-        // a completed session (e.g. test-tooling or a race with
-        // invoice.payment_failed) could have granted a paid tier. Payment
-        // status is now checked explicitly, and any non-`paid` result is a
-        // hard no-op (fail-closed — Stripe will re-deliver the event if
-        // this was a transient failure).
+        // Fail-closed check: completed checkout session must have payment_status === 'paid'
         if (session.payment_status !== 'paid') {
-            console.log(`[WEBHOOK] Checkout session ${session.id} completed but payment status is '${session.payment_status}' — no tier change (fail-closed)`);
-            return;
+            console.log(
+                `[WEBHOOK] Checkout session ${session.id} completed but payment status is '${session.payment_status}' — no tier change (fail-closed)`
+            );
+            return { success: true, userId, subscriptionId };
         }
 
         if (!userId || !tier) {
-            console.error('[WEBHOOK] Missing metadata in checkout session:', session.id, 'metadata:', JSON.stringify(session.metadata));
-            return;
+            console.error(
+                '[WEBHOOK] Missing metadata in checkout session:',
+                session.id,
+                'metadata:',
+                JSON.stringify(session.metadata)
+            );
+            return { success: false, error: 'Missing metadata' };
         }
 
-        // Update user tier
-        const tierResult = await updateUserTier(userId, tier);
-
-        if (!tierResult.success) {
-            throw new Error(`Failed to update user tier: ${tierResult.error}`);
-        }
-
-        console.log(`[WEBHOOK] Tier updated for user ${userId} to ${tier}`);
-
-        // Get subscription details
-        const subscriptionId = session.subscription as string;
+        let itemStart: number | undefined;
+        let itemEnd: number | undefined;
+        let invoicePeriod: { start?: number; end?: number } | undefined;
 
         if (subscriptionId) {
-            // Upsert the subscription record here as well — checkout events
-            // carry the final subscription id, so the row exists even if no
-            // customer.subscription.updated event arrives.
-            const upsertResult = await upsertSubscription(userId, {
-                stripeSubscriptionId: subscriptionId,
-                tier,
-                status: 'active',
-                currentPeriodStart: new Date(),
-                currentPeriodEnd: new Date(),
-                cancelAtPeriodEnd: false,
-            });
-            if (!upsertResult.success) {
-                throw new Error(`Failed to upsert subscription from checkout: ${upsertResult.error}`);
+            try {
+                const sub = await stripe.subscriptions.retrieve(subscriptionId, {
+                    expand: ['latest_invoice'],
+                });
+                const firstItem = sub.items?.data?.[0];
+                itemStart = firstItem?.current_period_start;
+                itemEnd = firstItem?.current_period_end;
+                if (sub.latest_invoice && typeof sub.latest_invoice === 'object') {
+                    invoicePeriod = (sub.latest_invoice as Stripe.Invoice).lines?.data?.[0]?.period;
+                }
+            } catch (err) {
+                console.warn(
+                    '[WEBHOOK] Could not expand subscription details for checkout session',
+                    session.id,
+                    err
+                );
             }
-            console.log(`[WEBHOOK] Subscription ${subscriptionId} recorded for user ${userId}`);
-        } else {
-            console.warn('[WEBHOOK] No subscription ID in checkout session', session.id);
         }
+
+        const { currentPeriodStart, currentPeriodEnd } = extractPeriod({
+            itemStart,
+            itemEnd,
+            invoicePeriod,
+            fallbackAnchorSeconds: session.created,
+        });
+
+        // Atomic Transaction: User Tier + Subscription Upsert + Durable Event
+        return await executeSubscriptionTransition(async (tx) => {
+            const tierResult = await updateUserTier(userId, tier, tx);
+            if (!tierResult.success) {
+                throw new Error(`Failed to update user tier: ${tierResult.error}`);
+            }
+
+            if (subscriptionId) {
+                const upsertResult = await upsertSubscription(
+                    userId,
+                    {
+                        stripeSubscriptionId: subscriptionId,
+                        tier,
+                        status: 'active',
+                        currentPeriodStart,
+                        currentPeriodEnd,
+                        cancelAtPeriodEnd: false,
+                    },
+                    tx
+                );
+
+                if (!upsertResult.success) {
+                    throw new Error(
+                        `Failed to upsert subscription from checkout: ${upsertResult.error}`
+                    );
+                }
+            }
+
+            await recordSubscriptionEvent(
+                {
+                    eventId,
+                    eventType: 'checkout.session.completed',
+                    userId,
+                    stripeSubscriptionId: subscriptionId || null,
+                    status: 'processed',
+                },
+                tx
+            );
+
+            console.log(
+                `[WEBHOOK] Checkout processed atomically for user ${userId}, tier: ${tier}, sub: ${subscriptionId}`
+            );
+            return { success: true, userId, subscriptionId };
+        });
     } catch (error) {
-        console.error('[WEBHOOK] Error in handleCheckoutSessionCompleted:', error);
+        console.error('Error in handleCheckoutSessionCompleted:', error);
+        return { success: false, error: String(error) };
     }
 }
 
 /**
- * Process subscription updated event
+ * Process subscription updated event atomically with terminal state protection
  */
-async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
+async function handleSubscriptionUpdated(
+    subscription: Stripe.Subscription,
+    eventId: string
+): Promise<HandlerResult> {
     try {
         const userId = subscription.metadata?.userId;
         const tier = subscription.metadata?.tier as TierName;
 
         if (!userId || !tier) {
             console.error('Missing metadata in subscription:', subscription.id);
-            return;
+            return { success: false, subscriptionId: subscription.id, error: 'Missing metadata' };
         }
 
-        // ENGINEERING UPGRADE (W2): explicit mapping of every real Stripe
-        // lifecycle status, FAIL-CLOSED on anything unknown. The old code
-        // fell through to `status = 'active'` on an unrecognized status —
-        // silently granting paid-tier standing on payment failures. Now any
-        // unmapped status throws, aborting the upsert without modifying the
-        // row, so the worst case is "no update" (which Stripe will retry),
-        // never "wrong status".
-        const STATUS_MAP: Record<string, 'active' | 'canceled' | 'past_due' | 'trialing' | 'incomplete' | 'incomplete_expired' | 'unpaid'> = {
+        // Fail-closed mapping: any unrecognized status throws, aborting mutation
+        const STATUS_MAP: Record<
+            string,
+            'active' | 'canceled' | 'past_due' | 'trialing' | 'incomplete' | 'incomplete_expired' | 'unpaid'
+        > = {
             active: 'active',
             canceled: 'canceled',
             past_due: 'past_due',
@@ -129,172 +259,259 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
             incomplete: 'incomplete',
             incomplete_expired: 'incomplete_expired',
             unpaid: 'unpaid',
-            paused: 'canceled', // paused subscriptions generate no invoices
+            paused: 'canceled',
         };
+
         const status = STATUS_MAP[subscription.status];
         if (!status) {
             throw new Error(`Unmapped Stripe subscription status: ${subscription.status}`);
         }
 
-        // Tier policy: only genuine payment success grants a paid tier.
-        // Payment-failure statuses (incomplete, incomplete_expired, unpaid)
-        // and past_due keep/downgrade the user to free — money must arrive
-        // before privileges do.
+        // Privileges follow money: only genuine active/trialing statuses retain a paid tier
         const paidStatuses: ReadonlyArray<string> = ['active', 'trialing'];
         const effectiveTier: TierName = paidStatuses.includes(subscription.status) ? tier : 'free';
 
-        // ENGINEERING UPGRADE (W2): downgrade immediately on payment failure,
-        // not only on cancellation. This closes the window where a user with
-        // a past_due/incomplete subscription keeps paid-tier access.
-        if (effectiveTier !== tier) {
-            const tierResult = await updateUserTier(userId, 'free');
-            if (!tierResult.success) {
-                throw new Error(`Failed to downgrade user tier on payment failure: ${tierResult.error}`);
-            }
+        const firstItem = subscription.items?.data?.[0];
+        let invoicePeriod: { start?: number; end?: number } | undefined;
+        if (subscription.latest_invoice && typeof subscription.latest_invoice === 'object') {
+            invoicePeriod = (subscription.latest_invoice as Stripe.Invoice).lines?.data?.[0]?.period;
         }
 
-        // Upsert subscription record (DB-level UNIQUE constraint on
-        // stripe_subscription_id — migration 0004 — prevents a duplicated
-        // or substituted subscription id from silently overwriting the row).
-        const result = await upsertSubscription(userId, {
-            stripeSubscriptionId: subscription.id,
-            tier: effectiveTier,
-            status,
-            currentPeriodStart: new Date(subscription.start_date * 1000),
-            currentPeriodEnd: new Date(subscription.start_date * 1000),
-            cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+        const { currentPeriodStart, currentPeriodEnd } = extractPeriod({
+            itemStart: firstItem?.current_period_start,
+            itemEnd: firstItem?.current_period_end,
+            invoicePeriod,
+            fallbackAnchorSeconds: subscription.start_date,
         });
 
-        if (!result.success) {
-            throw new Error(`Failed to upsert subscription: ${result.error}`);
-        }
+        // Atomic Transaction: Check Terminal State + Update Tier + Upsert Sub + Record Event
+        return await executeSubscriptionTransition(async (tx) => {
+            const currentSub = await getUserSubscription(userId, tx);
 
-        console.log(`[WEBHOOK] Subscription upserted for user ${userId}, status: ${status}, tier: ${effectiveTier}`);
+            // TERMINAL STATE PROTECTION: If subscription is already canceled in DB,
+            // an incoming out-of-order update event attempting to set it back to active is ignored.
+            if (currentSub?.status === 'canceled' && status === 'active') {
+                console.warn(
+                    `[WEBHOOK] Stale update event ignored: subscription for user ${userId} is already canceled (terminal state protection)`
+                );
+                await recordSubscriptionEvent(
+                    {
+                        eventId,
+                        eventType: 'customer.subscription.updated',
+                        userId,
+                        stripeSubscriptionId: subscription.id,
+                        status: 'ignored_stale',
+                    },
+                    tx
+                );
+                return { success: true, userId, subscriptionId: subscription.id };
+            }
+
+            if (effectiveTier !== tier) {
+                const tierResult = await updateUserTier(userId, 'free', tx);
+                if (!tierResult.success) {
+                    throw new Error(
+                        `Failed to downgrade user tier on payment failure: ${tierResult.error}`
+                    );
+                }
+            } else {
+                const tierResult = await updateUserTier(userId, effectiveTier, tx);
+                if (!tierResult.success) {
+                    throw new Error(`Failed to update user tier: ${tierResult.error}`);
+                }
+            }
+
+            const result = await upsertSubscription(
+                userId,
+                {
+                    stripeSubscriptionId: subscription.id,
+                    tier: effectiveTier,
+                    status,
+                    currentPeriodStart,
+                    currentPeriodEnd,
+                    cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+                },
+                tx
+            );
+
+            if (!result.success) {
+                throw new Error(`Failed to upsert subscription: ${result.error}`);
+            }
+
+            await recordSubscriptionEvent(
+                {
+                    eventId,
+                    eventType: 'customer.subscription.updated',
+                    userId,
+                    stripeSubscriptionId: subscription.id,
+                    status: 'processed',
+                },
+                tx
+            );
+
+            console.log(
+                `[WEBHOOK] Subscription updated atomically for user ${userId}, status: ${status}, tier: ${effectiveTier}`
+            );
+
+            return { success: true, userId, subscriptionId: subscription.id };
+        });
     } catch (error) {
         console.error('Error handling customer.subscription.updated:', error);
+        return { success: false, subscriptionId: subscription.id, error: String(error) };
     }
 }
 
 /**
- * Process subscription deleted event
+ * Process subscription deleted event atomically
  */
-async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
+async function handleSubscriptionDeleted(
+    subscription: Stripe.Subscription,
+    eventId: string
+): Promise<HandlerResult> {
     try {
         const userId = subscription.metadata?.userId;
 
         if (!userId) {
             console.error('Missing userId in subscription metadata:', subscription.id);
-            return;
+            return { success: false, subscriptionId: subscription.id, error: 'Missing userId' };
         }
 
-        // Downgrade user to free tier
-        const tierResult = await updateUserTier(userId, 'free');
-        if (!tierResult.success) {
-            console.error('Failed to downgrade user tier:', tierResult.error);
-            return;
-        }
-
-        // Update subscription record
-        await upsertSubscription(userId, {
-            stripeSubscriptionId: subscription.id,
-            tier: 'free',
-            status: 'canceled',
-            currentPeriodStart: new Date(subscription.start_date * 1000),
-            currentPeriodEnd: new Date(subscription.start_date * 1000),
-            cancelAtPeriodEnd: false,
+        const firstItem = subscription.items?.data?.[0];
+        const { currentPeriodStart, currentPeriodEnd } = extractPeriod({
+            itemStart: firstItem?.current_period_start,
+            itemEnd: firstItem?.current_period_end,
+            fallbackAnchorSeconds: subscription.start_date || subscription.canceled_at,
         });
 
-        console.log(`[WEBHOOK] Subscription canceled for user ${userId}, downgraded to free`);
+        // Atomic Transaction: Downgrade User + Mark Canceled + Record Event
+        return await executeSubscriptionTransition(async (tx) => {
+            const tierResult = await updateUserTier(userId, 'free', tx);
+            if (!tierResult.success) {
+                console.error('Failed to downgrade user tier:', tierResult.error);
+                return {
+                    success: false,
+                    userId,
+                    subscriptionId: subscription.id,
+                    error: tierResult.error,
+                };
+            }
+
+            const upsertResult = await upsertSubscription(
+                userId,
+                {
+                    stripeSubscriptionId: subscription.id,
+                    tier: 'free',
+                    status: 'canceled',
+                    currentPeriodStart,
+                    currentPeriodEnd,
+                    cancelAtPeriodEnd: false,
+                },
+                tx
+            );
+
+            if (!upsertResult.success) {
+                throw new Error(`Failed to cancel subscription: ${upsertResult.error}`);
+            }
+
+            await recordSubscriptionEvent(
+                {
+                    eventId,
+                    eventType: 'customer.subscription.deleted',
+                    userId,
+                    stripeSubscriptionId: subscription.id,
+                    status: 'processed',
+                },
+                tx
+            );
+
+            console.log(`[WEBHOOK] Subscription canceled atomically for user ${userId}`);
+            return { success: true, userId, subscriptionId: subscription.id };
+        });
     } catch (error) {
         console.error('Error handling customer.subscription.deleted:', error);
+        return { success: false, subscriptionId: subscription.id, error: String(error) };
     }
 }
 
 /**
- * Process invoice payment failed event (W2).
- *
- * Fail-closed: any payment failure immediately revokes paid-tier standing
- * until payment succeeds (a subsequent paid invoice re-grants it via
- * customer.subscription.updated / checkout.session.completed). The
- * subscription status is downgraded to unpaid/past_due as reported by the
- * invoice's own latest status, never assumed.
+ * Process invoice payment failed event atomically using local database state
  */
-async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
+async function handleInvoicePaymentFailed(
+    invoice: Stripe.Invoice,
+    eventId: string
+): Promise<HandlerResult> {
     try {
         const userId = invoice.metadata?.userId;
         if (!userId) {
             console.error('[WEBHOOK] Missing userId in invoice metadata:', invoice.id);
-            return;
+            return { success: false, error: 'Missing userId' };
         }
 
-        // Downgrade immediately — privileges follow money.
-        const tierResult = await updateUserTier(userId, 'free');
-        if (!tierResult.success) {
-            throw new Error(`Failed to downgrade on payment failure: ${tierResult.error}`);
-        }
+        const invoicePeriod = invoice.lines?.data?.[0]?.period;
+        const { currentPeriodStart, currentPeriodEnd } = extractPeriod({
+            invoicePeriod,
+            fallbackAnchorSeconds: invoice.created,
+        });
 
-        // Record the failed-payment status on the subscription row if we
-        // can locate the customer's active subscription. NOTE: the Invoice
-        // object in Stripe SDK v20 has no `subscription` field — invoices
-        // were decoupled from subscriptions — so the authoritative status
-        // must come from the subscription object itself via the customer.
-        // A paid invoice later re-grants the tier through
-        // customer.subscription.updated / checkout.session.completed.
-        const customerId = invoice.customer as string | null;
-        if (customerId) {
-            try {
-                const subs = await stripe.subscriptions.list({ customer: customerId, limit: 1 });
-                const sub = subs.data[0];
-                if (sub) {
-                    const upsertResult = await upsertSubscription(userId, {
-                        stripeSubscriptionId: sub.id,
-                        tier: 'free',
-                        status: sub.status as 'past_due' | 'unpaid' | 'active' | 'canceled' | 'trialing' | 'incomplete' | 'incomplete_expired',
-                        // Stripe SDK v20 removed `current_period_start/end`
-                        // from the Subscription object (billing-period info
-                        // lives on the invoice/subscription-details now).
-                        // Persist start_date as the row's reference anchor.
-                        currentPeriodStart: new Date(sub.start_date * 1000),
-                        currentPeriodEnd: new Date(sub.start_date * 1000),
-                        cancelAtPeriodEnd: sub.cancel_at_period_end || false,
-                    });
-                    if (!upsertResult.success) {
-                        throw new Error(`Failed to record failed-payment status: ${upsertResult.error}`);
-                    }
-                } else {
-                    // No subscription found for the customer — the row still
-                    // exists from checkout; mark it canceled-consistent.
-                    await upsertSubscription(userId, {
-                        stripeSubscriptionId: '',
-                        tier: 'free',
-                        status: 'canceled',
-                        currentPeriodStart: new Date(),
-                        currentPeriodEnd: new Date(),
-                        cancelAtPeriodEnd: false,
-                    });
-                }
-            } catch (err) {
-                // A read failure must not block the downgrade — privileges
-                // follow money even if we cannot reconcile the row right now.
-                console.error('[WEBHOOK] Failed to reconcile subscription for invoice:', invoice.id, err);
+        // Atomic Transaction: Downgrade User + Update Subscription locally + Record Event
+        return await executeSubscriptionTransition(async (tx) => {
+            const tierResult = await updateUserTier(userId, 'free', tx);
+            if (!tierResult.success) {
+                throw new Error(`Failed to downgrade on payment failure: ${tierResult.error}`);
             }
-        }
 
-        console.log(`[WEBHOOK] Payment failed for invoice ${invoice.id}; user ${userId} downgraded to free`);
+            // Local DB Lookup: Look up user's existing subscription directly without external Stripe network call
+            const existingSub = await getUserSubscription(userId, tx);
+            const subId = existingSub?.stripeSubscriptionId || '';
+
+            const upsertResult = await upsertSubscription(
+                userId,
+                {
+                    stripeSubscriptionId: subId,
+                    tier: 'free',
+                    status: 'past_due',
+                    currentPeriodStart: existingSub?.currentPeriodStart || currentPeriodStart,
+                    currentPeriodEnd: existingSub?.currentPeriodEnd || currentPeriodEnd,
+                    cancelAtPeriodEnd: existingSub?.cancelAtPeriodEnd ?? false,
+                },
+                tx
+            );
+
+            if (!upsertResult.success) {
+                throw new Error(`Failed to record failed-payment status: ${upsertResult.error}`);
+            }
+
+            await recordSubscriptionEvent(
+                {
+                    eventId,
+                    eventType: 'invoice.payment_failed',
+                    userId,
+                    stripeSubscriptionId: subId || null,
+                    status: 'processed',
+                },
+                tx
+            );
+
+            console.log(
+                `[WEBHOOK] Payment failed handled atomically for user ${userId}; downgraded to free`
+            );
+            return { success: true, userId, subscriptionId: subId };
+        });
     } catch (error) {
         console.error('Error handling invoice.payment_failed:', error);
+        return { success: false, error: String(error) };
     }
 }
 
 /**
- * Main webhook handler
+ * Main webhook handler (POST /api/stripe/webhook)
  */
 export async function POST(request: NextRequest) {
     try {
-        // Get the raw body as text
+        // 1. Get raw body as text
         const body = await request.text();
 
-        // Get Stripe signature from headers
+        // 2. Get Stripe signature from headers
         const headersList = await headers();
         const signature = headersList.get('stripe-signature');
 
@@ -305,101 +522,110 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Verify webhook signature and construct event.
-        // Replay protection is built into constructEvent via the tolerance
-        // parameter: signatures whose timestamp is older than the allowed
-        // window are rejected automatically, so a captured signature cannot
-        // be replayed later.
+        // 3. Verify webhook signature & timestamp tolerance (Fail-closed)
         let event: Stripe.Event;
 
         try {
-            // Stripe SDK v20 constructEvent is async; awaiting it is
-            // mandatory — without it `event` holds an unresolved Promise,
-            // so event.type/id are undefined and every handler receives
-            // an empty event (no tier updates, no dedupe, silent no-ops).
             event = await stripe.webhooks.constructEvent(
                 body,
                 signature,
                 process.env.STRIPE_WEBHOOK_SECRET!,
-                MAX_TIMESTAMP_AGE_SECONDS,
+                MAX_TIMESTAMP_AGE_SECONDS
             );
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             if (message.includes('Timestamp outside')) {
                 console.error(
-                    '[WEBHOOK] Replay protection: signature timestamp outside tolerance window',
+                    '[WEBHOOK] Replay protection: signature timestamp outside tolerance window'
                 );
                 return NextResponse.json(
                     { error: 'Webhook timestamp outside tolerance window' },
-                    { status: 400 },
+                    { status: 400 }
                 );
             }
             console.error('Webhook signature verification failed:', error);
             return NextResponse.json(
                 { error: 'Invalid signature' },
-                { status: 400 },
+                { status: 400 }
             );
         }
 
-        // Idempotency: Stripe may retry failed webhooks, so guard against
-        // processing the same event ID more than once.
         const eventId = event.id;
+
+        // 4. Idempotency Gate (Fast-path memory check + Authoritative DB check)
         if (processedEventIds.has(eventId)) {
-            console.log(`[WEBHOOK] Duplicate event ignored: ${eventId}`);
+            console.log(`[WEBHOOK] Duplicate event ignored (in-memory): ${eventId}`);
             return NextResponse.json({ received: true, duplicate: true });
         }
-        processedEventIds.add(eventId);
-        // Bound the dedupe set to prevent unbounded memory growth.
-        if (processedEventIds.size > 10_000) {
-            const toDelete = Array.from(processedEventIds).slice(0, 5_000);
-            toDelete.forEach(id => processedEventIds.delete(id));
+
+        const isProcessedInDb = await isSubscriptionEventProcessed(eventId);
+        if (isProcessedInDb) {
+            console.log(`[WEBHOOK] Duplicate event ignored (durable DB ledger): ${eventId}`);
+            processedEventIds.add(eventId);
+            return NextResponse.json({ received: true, duplicate: true });
         }
 
-        // Handle different event types
+        // 5. Route to event handlers
+        let mutationMeta: HandlerResult = { success: true };
 
-        // ENGINEERING UPGRADE (W2): the default branch is now FAIL-CLOSED.
-        // Previously any unrecognized event type was silently ignored — a
-        // misconfigured Stripe endpoint (or an attacker probing the
-        // endpoint) could send events the system never reacted to. Now
-        // unknown event types still return 200 (to avoid Stripe's 3-day
-        // disable for unreceived acknowledgments) but log a concrete error
-        // so misconfigurations surface in monitoring instead of silently
-        // dropping payment-failure signals.
         switch (event.type) {
             case 'checkout.session.completed':
-                await handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+                mutationMeta = await handleCheckoutSessionCompleted(
+                    event.data.object as Stripe.Checkout.Session,
+                    eventId
+                );
                 break;
 
             case 'customer.subscription.updated':
-                await handleSubscriptionUpdated(event.data.object as Stripe.Subscription);
+                mutationMeta = await handleSubscriptionUpdated(
+                    event.data.object as Stripe.Subscription,
+                    eventId
+                );
                 break;
 
             case 'customer.subscription.deleted':
-                await handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
+                mutationMeta = await handleSubscriptionDeleted(
+                    event.data.object as Stripe.Subscription,
+                    eventId
+                );
                 break;
 
             case 'customer.subscription.trial_will_end':
-                // Informational — users on trial keep their tier until the
-                // subscription actually transitions. No action needed, but
-                // the event is handled explicitly so it does not hit the
-                // unknown-event branch.
+                // Informational event — user retains current tier until subscription transitions
                 break;
 
             case 'invoice.payment_failed':
-                // Payment failure: the invoice's subscription knows its new
-                // status (usually `past_due` or `unpaid`). Downgrade the
-                // user immediately rather than waiting for a subscription
-                // update event that may be delayed.
-                await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
+                mutationMeta = await handleInvoicePaymentFailed(
+                    event.data.object as Stripe.Invoice,
+                    eventId
+                );
                 break;
 
             default:
                 console.error(`[WEBHOOK] Unknown/unhandled event type (fail-closed): ${event.type}`);
+                await recordSubscriptionEvent({
+                    eventId,
+                    eventType: event.type,
+                    status: 'unhandled',
+                });
+                processedEventIds.add(eventId);
+                return NextResponse.json({ received: true, event: eventId });
         }
 
-        // Return success response
-        return NextResponse.json({ received: true, event: eventId });
+        if (mutationMeta.success) {
+            processedEventIds.add(eventId);
+        }
 
+        // 6. Zero-Allocation Fast-Path Cache Eviction (O(1) Memory Overhead)
+        if (processedEventIds.size > 10_000) {
+            let count = 0;
+            for (const id of processedEventIds) {
+                processedEventIds.delete(id);
+                if (++count >= 5_000) break;
+            }
+        }
+
+        return NextResponse.json({ received: true, event: eventId });
     } catch (error) {
         console.error('Error in webhook handler:', error);
         return NextResponse.json(

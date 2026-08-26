@@ -1,5 +1,11 @@
 # Architectural Blueprint: Enhanced Offline-First Synchronization System
 
+> ⚠️ **Design Blueprint Notice:** This document records the original offline-first architecture blueprint.
+> For the active runtime implementation and API contracts, see:
+> - Architecture: [`../architecture/sync-lifecycle-architecture.md`](../architecture/sync-lifecycle-architecture.md) & [`../architecture/editor-sync-orchestration.md`](../architecture/editor-sync-orchestration.md)
+> - API Contract: [`../reference/SYNC_API.md`](../reference/SYNC_API.md) (`GET /api/files/sync?since=...`)
+> - Client Storage: `lugx_offline_db` / user-partitioned IndexedDB (`src/lib/sync/idb-types.ts`)
+
 This document outlines the technical architecture, protocol specifications, data models, and implementation roadmap for an enterprise-grade, offline-first synchronization engine for LUGX. The system guarantees zero data loss, optimistic user interactions, resilient network failure recovery, and deterministic multi-device conflict resolution.
 
 ---
@@ -8,7 +14,7 @@ This document outlines the technical architecture, protocol specifications, data
 
 ### 1.1 IndexedDB Storage Engine
 
-The client storage layer is implemented on top of the browser's native **IndexedDB API** under the database name `lugx_sync_db` (or `textai_db`) with transactional schema versioning. The engine utilizes three specialized Object Stores:
+The client storage layer is implemented on top of the browser's native **IndexedDB API** (`lugx_offline_db` / `lugx_sync_${userId}`) with transactional schema versioning. The engine utilizes three specialized Object Stores:
 
 1. **`files`**: Stores complete document snapshots and local synchronization state.
 2. **`operations`**: Append-only log recording granular editing mutations (Operation Log) to enable delta sync and operational transformations.

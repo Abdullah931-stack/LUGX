@@ -2,6 +2,21 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.9.0] - 2026-08-26 (Phase 13: Stripe Webhook, Durable Idempotency & Subscriptions Hardening)
+
+### Added - Durable Event Ledger & Database Migration (`subscription_events`)
+
+- **Durable Webhook Idempotency Ledger (`src/lib/db/migrations/0006_subscription_events.sql` & `src/lib/db/schema.ts`):** Created the `subscription_events` PostgreSQL table with a unique index on `event_id` (`idx_subscription_events_event_id`). Deduplication is now backed authoritatively by the database ledger, surviving server restarts, worker restarts, and serverless cold starts. Fast-path in-memory caching is retained with zero-allocation Set iteration eviction bounded at 10,000 entries.
+- **Transactional Atomic Transitions (`executeSubscriptionTransition` in `subscription-actions.ts`):** Wrapped user tier updates, subscription upserts, and event recording within single atomic database transactions, guaranteeing complete All-or-Nothing ACID semantics.
+- **Terminal State Protection:** In `handleSubscriptionUpdated`, incoming events attempting to transition a `canceled` subscription back to `active` are rejected and recorded as `ignored_stale`, preventing delayed out-of-order webhook packets from reviving terminated subscriptions.
+- **Local DB Invoice Reconciliation:** `handleInvoicePaymentFailed` queries the user's subscription directly from local PostgreSQL database state by `userId`, eliminating external Stripe API network round-trips and rate limit consumption.
+
+### Fixed - Subscription Billing Period Normalization (3-Location Invariant)
+
+- **Decoupled Period Extraction (`extractPeriod`):** Fixed the legacy defect where `start_date` was duplicated into both `currentPeriodStart` and `currentPeriodEnd`. Billing periods are now accurately extracted from `SubscriptionItem` (`item.current_period_start/end`) or associated `Invoice` line items (`invoice.lines.data[0].period.start/end`), strictly enforcing the invariant `currentPeriodEnd > currentPeriodStart`.
+- **Fail-Closed Unmapped Status Handling:** Any unrecognized subscription status triggers fail-closed error handling, logging the discrepancy without mutating or corrupting the user's tier in the database.
+- **Live Test Suite Expansion (`src/app/api/stripe/webhook/route.live.test.ts`):** Added 6 live integration tests on the isolated Neon test branch verifying real HMAC signatures, durable restart deduplication, period date invariants, fail-closed unmapped status isolation, and live terminal state protection.
+
 ## [1.8.0] - 2026-08-25 (Phase 12: Authentication, OAuth & Operation Ownership Hardening)
 
 ### Added - Security Hardening & Safe Redirection (`src/lib/auth/safe-redirect.ts`)

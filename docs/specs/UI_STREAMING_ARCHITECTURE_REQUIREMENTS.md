@@ -49,12 +49,21 @@ sequenceDiagram
 
     alt Stream Completed Successfully (Clean EOF)
         Backend-->>StreamHandler: Stream Closed [Done]
-        StreamHandler->>GhostExt: Teardown Ephemeral Decoration
-        StreamHandler->>Editor: Dispatch Single Atomic Transaction on [from, to]
-        Editor->>Editor: Push 1 Entry to History Stack (Undo Ready)
-        Editor-->>User: Render Final Formatted Output
-    else Stream Error / User Abort / Network Loss
+        StreamHandler->>Editor: Park output in preview_ready (Doc Untouched)
+        Note over User,Editor: User chooses in AIStreamPreview: Accept / Reject / Retry
+        alt User clicks Accept (commitPreview)
+            StreamHandler->>Backend: Atomic commit (commitAIFileOperation)
+            StreamHandler->>GhostExt: Teardown Ephemeral Decoration
+            StreamHandler->>Editor: Dispatch Single Atomic Transaction on [from, to]
+            Editor->>Editor: Push 1 Entry to History Stack (Undo Ready)
+            Editor-->>User: Render Final Formatted Output
+        else User clicks Reject or Retry
+            StreamHandler->>Backend: Settle quota as consumed (commitAIReservation)
+            StreamHandler->>GhostExt: Teardown Ephemeral Decoration (Doc Pristine)
+        end
+    else Stream Error / System Abort / Network Loss
         Backend--xStreamHandler: Socket Error / Abort Event
+        StreamHandler->>Backend: Auto-refund reservation (refundAIReservation)
         StreamHandler->>GhostExt: Immediate Teardown Ephemeral Decoration
         StreamHandler->>Editor: Restore Target Selection & Unlock Editor
         Editor-->>User: Display Toast Notification (Original Range Restored)

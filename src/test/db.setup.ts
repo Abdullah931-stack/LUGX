@@ -88,17 +88,15 @@ export async function runMigrations() {
         const { testDb } = await import("./test-db");
         const { sql } = await import("drizzle-orm");
 
-        // Run 0003 & 0005 migrations if files exist
-        const mig0003Path = path.join(ROOT, "src/lib/db/migrations/0003_usage_unique_index.sql");
-        if (fs.existsSync(mig0003Path)) {
-            const sql0003 = fs.readFileSync(mig0003Path, "utf8");
-            await testDb.execute(sql.raw(sql0003));
-        }
-
-        const mig0005Path = path.join(ROOT, "src/lib/db/migrations/0005_ai_reservations.sql");
-        if (fs.existsSync(mig0005Path)) {
-            const sql0005 = fs.readFileSync(mig0005Path, "utf8");
-            await testDb.execute(sql.raw(sql0005));
+        const migrationsDir = path.join(ROOT, "src/lib/db/migrations");
+        if (fs.existsSync(migrationsDir)) {
+            const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith(".sql")).sort();
+            for (const file of files) {
+                const sqlContent = fs.readFileSync(path.join(migrationsDir, file), "utf8");
+                if (sqlContent.trim()) {
+                    await testDb.execute(sql.raw(sqlContent));
+                }
+            }
         }
     } catch (err) {
         console.warn("[runMigrations] Error applying migrations to test DB:", err);

@@ -125,6 +125,21 @@ export const aiReservations = pgTable("ai_reservations", {
     index("idx_ai_reservations_status_expires").on(table.status, table.expiresAt),
 ]);
 
+// Subscription Events table - durable idempotency ledger for Stripe webhooks
+export const subscriptionEvents = pgTable("subscription_events", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: varchar("event_id", { length: 255 }).notNull().unique(),
+    eventType: varchar("event_type", { length: 128 }).notNull(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
+    status: varchar("status", { length: 64 }).notNull().default("processed"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+    uniqueIndex("idx_subscription_events_event_id").on(table.eventId),
+    index("idx_subscription_events_user_id").on(table.userId),
+    index("idx_subscription_events_created_at").on(table.createdAt),
+]);
+
 // Types for TypeScript
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -134,3 +149,6 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type Usage = typeof usage.$inferSelect;
 export type AIReservation = typeof aiReservations.$inferSelect;
 export type NewAIReservation = typeof aiReservations.$inferInsert;
+export type SubscriptionEvent = typeof subscriptionEvents.$inferSelect;
+export type NewSubscriptionEvent = typeof subscriptionEvents.$inferInsert;
+

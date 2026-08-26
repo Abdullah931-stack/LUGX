@@ -52,10 +52,12 @@ export const StreamingGhostExtension = Extension.create({
                 ({ from, to, text = '', operation }) =>
                     ({ tr, dispatch }) => {
                         if (dispatch) {
+                            const safeFrom = Math.max(0, from);
+                            const safeTo = Math.max(safeFrom, to);
                             tr.setMeta(streamingGhostPluginKey, {
                                 type: 'START',
-                                from,
-                                to,
+                                from: safeFrom,
+                                to: safeTo,
                                 text,
                                 operation,
                             });
@@ -110,10 +112,12 @@ export const StreamingGhostExtension = Extension.create({
                         if (!meta) {
                             // If document changed, map the positions forward if still active
                             if (prevState.active && tr.docChanged) {
+                                const mappedFrom = Math.max(0, tr.mapping.map(prevState.from));
+                                const mappedTo = Math.max(mappedFrom, tr.mapping.map(prevState.to));
                                 return {
                                     ...prevState,
-                                    from: tr.mapping.map(prevState.from),
-                                    to: tr.mapping.map(prevState.to),
+                                    from: mappedFrom,
+                                    to: mappedTo,
                                 };
                             }
                             return prevState;
@@ -123,8 +127,8 @@ export const StreamingGhostExtension = Extension.create({
                             case 'START':
                                 return {
                                     active: true,
-                                    from: meta.from,
-                                    to: meta.to,
+                                    from: Math.max(0, meta.from),
+                                    to: Math.max(Math.max(0, meta.from), meta.to),
                                     text: meta.text || '',
                                     operation: meta.operation,
                                 };
@@ -211,7 +215,7 @@ export const StreamingGhostExtension = Extension.create({
                                 return container;
                             },
                             {
-                                side: -1,
+                                side: from > 0 ? -1 : 0,
                                 key: 'ai-streaming-ghost-widget',
                             }
                         );
