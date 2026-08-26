@@ -158,7 +158,8 @@ export class ConflictResolver {
     /**
      * Attempt Three-Way Merge
      * 
-     * Handles text, HTML, metadata (title, parentFolderId), and delete conflicts.
+     * Handles text, Markdown, metadata (title, parentFolderId), and delete conflicts.
+     * Enforces base snapshot presence and post-merge Markdown syntax integrity verification.
      * Rejects automatic merge with 'manual_resolution_required' if base is missing.
      */
     attemptThreeWayMerge(input: ThreeWayMergeInput): MergeResult {
@@ -215,9 +216,21 @@ export class ConflictResolver {
         // 4. Content 3-Way Merge
         const contentMerge = this.mergeContentThreeWay(base.content, local.content, remote.content);
 
+        // 5. Post-Merge Markdown Syntax Integrity Verification
+        let syntaxIntegrityFailed = false;
+        let syntaxFailureReason: string | undefined;
+
+        if (contentMerge.success && contentMerge.content !== undefined) {
+            const integrity = validateMarkdownSyntaxIntegrity(contentMerge.content);
+            if (!integrity.valid) {
+                syntaxIntegrityFailed = true;
+                syntaxFailureReason = integrity.reason;
+            }
+        }
+
         const hasMetadataConflict = titleMerge.hasConflict || parentMerge.hasConflict;
-        const hasOverlaps = contentMerge.hasOverlaps || hasMetadataConflict;
-        const success = contentMerge.success && !hasMetadataConflict;
+        const hasOverlaps = contentMerge.hasOverlaps || hasMetadataConflict || syntaxIntegrityFailed;
+        const success = contentMerge.success && !hasMetadataConflict && !syntaxIntegrityFailed;
 
         return {
             success,
@@ -227,8 +240,10 @@ export class ConflictResolver {
             parentFolderId: parentMerge.value,
             hasOverlaps,
             diffs: contentMerge.diffs || this.computeVisualDiff(local.content, remote.content),
-            conflictMarkers: contentMerge.conflictMarkers,
-            reason: hasOverlaps ? 'Conflicting changes detected in content or metadata' : undefined,
+            conflictMarkers: contentMerge.conflictMarkers || (syntaxIntegrityFailed ? contentMerge.content : undefined),
+            reason: hasOverlaps
+                ? (syntaxFailureReason || 'Conflicting changes detected in content or metadata')
+                : undefined,
         };
     }
 
@@ -335,25 +350,16 @@ export class ConflictResolver {
     }
 
     /**
-     * Tokenize content into lines or top-level HTML blocks
+     * Tokenize content into normalized lines
      */
     private tokenizeContent(content: string): string[] {
         if (!content) return [];
-        if (content.includes('\n')) {
-            return content.split('\n');
-        }
-        // If minified HTML without newlines, split on block element boundaries
-        if (/(?:<\/p>|<\/div>|<\/h[1-6]>|<\/li>)/i.test(content)) {
-            return content
-                .replace(/(<\/(?:p|div|h[1-6]|li)>)/gi, '$1\n')
-                .split('\n')
-                .filter(t => t.length > 0);
-        }
-        return [content];
+        return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
     }
 
     /**
      * Compute Longest Common Subsequence (LCS) match indices with flat Int32Array
+     * Optimized with linear Common Prefix & Suffix trimming for high-load / massive documents.
      */
     private computeLCS(a: string[], b: string[]): Array<[number, number]> {
         const m = a.length;
@@ -361,43 +367,88 @@ export class ConflictResolver {
 
         if (m === 0 || n === 0) return [];
 
-        const stride = n + 1;
-        const dp = new Int32Array((m + 1) * stride);
-
-        for (let i = 1; i <= m; i++) {
-            const iRow = i * stride;
-            const prevRow = (i - 1) * stride;
-            const aVal = a[i - 1];
-
-            for (let j = 1; j <= n; j++) {
-                if (aVal === b[j - 1]) {
-                    dp[iRow + j] = dp[prevRow + (j - 1)] + 1;
-                } else {
-                    const top = dp[prevRow + j];
-                    const left = dp[iRow + (j - 1)];
-                    dp[iRow + j] = top >= left ? top : left;
-                }
-            }
+        // 1. Fast linear Common Prefix trimming
+        let start = 0;
+        while (start < m && start < n && a[start] === b[start]) {
+            start++;
         }
 
-        // Backtrack to find matching index pairs
-        const matches: Array<[number, number]> = [];
-        let i = m;
-        let j = n;
-
-        while (i > 0 && j > 0) {
-            const iRow = i * stride;
-            const prevRow = (i - 1) * stride;
-
-            if (a[i - 1] === b[j - 1]) {
-                matches.unshift([i - 1, j - 1]);
-                i--;
-                j--;
-            } else if (dp[prevRow + j] >= dp[iRow + (j - 1)]) {
-                i--;
-            } else {
-                j--;
+        // If entire smaller array is a prefix of the other
+        if (start === m || start === n) {
+            const matches: Array<[number, number]> = [];
+            for (let k = 0; k < start; k++) {
+                matches.push([k, k]);
             }
+            return matches;
+        }
+
+        // 2. Fast linear Common Suffix trimming
+        let endA = m - 1;
+        let endB = n - 1;
+        while (endA >= start && endB >= start && a[endA] === b[endB]) {
+            endA--;
+            endB--;
+        }
+
+        // Prefix matches
+        const matches: Array<[number, number]> = [];
+        for (let k = 0; k < start; k++) {
+            matches.push([k, k]);
+        }
+
+        // 3. Compute DP matrix ONLY for the mutated middle slice
+        const midA = a.slice(start, endA + 1);
+        const midB = b.slice(start, endB + 1);
+        const midM = midA.length;
+        const midN = midB.length;
+
+        if (midM > 0 && midN > 0) {
+            const stride = midN + 1;
+            const dp = new Int32Array((midM + 1) * stride);
+
+            for (let i = 1; i <= midM; i++) {
+                const iRow = i * stride;
+                const prevRow = (i - 1) * stride;
+                const aVal = midA[i - 1];
+
+                for (let j = 1; j <= midN; j++) {
+                    if (aVal === midB[j - 1]) {
+                        dp[iRow + j] = dp[prevRow + (j - 1)] + 1;
+                    } else {
+                        const top = dp[prevRow + j];
+                        const left = dp[iRow + (j - 1)];
+                        dp[iRow + j] = top >= left ? top : left;
+                    }
+                }
+            }
+
+            // Backtrack to find matching index pairs in middle slice
+            const midMatches: Array<[number, number]> = [];
+            let i = midM;
+            let j = midN;
+
+            while (i > 0 && j > 0) {
+                const iRow = i * stride;
+                const prevRow = (i - 1) * stride;
+
+                if (midA[i - 1] === midB[j - 1]) {
+                    midMatches.unshift([start + i - 1, start + j - 1]);
+                    i--;
+                    j--;
+                } else if (dp[prevRow + j] >= dp[iRow + (j - 1)]) {
+                    i--;
+                } else {
+                    j--;
+                }
+            }
+
+            matches.push(...midMatches);
+        }
+
+        // 4. Append Suffix matches
+        const suffixLen = m - 1 - endA;
+        for (let k = 0; k < suffixLen; k++) {
+            matches.push([endA + 1 + k, endB + 1 + k]);
         }
 
         return matches;
@@ -461,63 +512,68 @@ export class ConflictResolver {
         const localChunks = this.diff2Way(base, local);
         const remoteChunks = this.diff2Way(base, remote);
 
-        // Collect all boundary points along the base array [0..base.length]
-        const boundaries = new Set<number>([0, base.length]);
+        // Identify non-equal change intervals in local and remote
+        const rawChangeIntervals: Array<{ start: number; end: number }> = [];
+
         for (const c of localChunks) {
-            boundaries.add(c.baseStart);
-            boundaries.add(c.baseEnd);
+            const baseSub = base.slice(c.baseStart, c.baseEnd);
+            if (!this.areArraysEqual(c.modTokens, baseSub)) {
+                rawChangeIntervals.push({ start: c.baseStart, end: c.baseEnd });
+            }
         }
+
         for (const c of remoteChunks) {
-            boundaries.add(c.baseStart);
-            boundaries.add(c.baseEnd);
+            const baseSub = base.slice(c.baseStart, c.baseEnd);
+            if (!this.areArraysEqual(c.modTokens, baseSub)) {
+                rawChangeIntervals.push({ start: c.baseStart, end: c.baseEnd });
+            }
         }
 
-        const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
-        const resultTokens: string[] = [];
-        let hasOverlaps = false;
+        // Sort intervals by start index
+        rawChangeIntervals.sort((a, b) => a.start - b.start || a.end - b.end);
 
-        // Helper to extract replacement tokens from chunks for a base range [start, end)
-        const getReplacement = (chunks: Array<{ baseStart: number; baseEnd: number; modTokens: string[] }>, start: number, end: number, isBaseZero: boolean): string[] => {
-            const tokens: string[] = [];
-            for (const c of chunks) {
-                if (start === end) {
-                    // Pure insertion before base index
-                    if (c.baseStart === start && c.baseEnd === end) {
-                        tokens.push(...c.modTokens);
-                    }
-                } else if (c.baseStart >= start && c.baseEnd <= end) {
-                    tokens.push(...c.modTokens);
+        // Merge overlapping change intervals
+        const mergedIntervals: Array<{ start: number; end: number }> = [];
+        for (const interval of rawChangeIntervals) {
+            if (mergedIntervals.length === 0) {
+                mergedIntervals.push({ ...interval });
+            } else {
+                const prev = mergedIntervals[mergedIntervals.length - 1];
+                const isOverlapping = interval.start < prev.end || interval.start === prev.start;
+                if (isOverlapping) {
+                    prev.end = Math.max(prev.end, interval.end);
+                } else {
+                    mergedIntervals.push({ ...interval });
                 }
             }
-            return tokens;
-        };
+        }
 
-        for (let b = 0; b < sortedBoundaries.length - 1; b++) {
-            const start = sortedBoundaries[b];
-            const end = sortedBoundaries[b + 1];
-            const baseSlice = base.slice(start, end);
+        const resultTokens: string[] = [];
+        let hasOverlaps = false;
+        let lastEnd = 0;
 
-            // Find what local and remote did in this slice
-            const localSlice = this.extractSliceForRange(localChunks, start, end, baseSlice);
-            const remoteSlice = this.extractSliceForRange(remoteChunks, start, end, baseSlice);
+        for (const region of mergedIntervals) {
+            // Unchanged gap before this region
+            if (region.start > lastEnd) {
+                resultTokens.push(...base.slice(lastEnd, region.start));
+            }
+
+            const baseSlice = base.slice(region.start, region.end);
+            const localSlice = this.extractSliceForRange(localChunks, region.start, region.end, baseSlice);
+            const remoteSlice = this.extractSliceForRange(remoteChunks, region.start, region.end, baseSlice);
 
             const localChanged = !this.areArraysEqual(localSlice, baseSlice);
             const remoteChanged = !this.areArraysEqual(remoteSlice, baseSlice);
 
             if (!localChanged && !remoteChanged) {
-                // Neither changed -> keep base
                 resultTokens.push(...baseSlice);
             } else if (localChanged && !remoteChanged) {
-                // Only local changed -> apply local
                 resultTokens.push(...localSlice);
             } else if (!localChanged && remoteChanged) {
-                // Only remote changed -> apply remote
                 resultTokens.push(...remoteSlice);
             } else if (this.areArraysEqual(localSlice, remoteSlice)) {
-                // Both changed identically -> apply change
                 resultTokens.push(...localSlice);
             } else {
-                // Both changed differently -> Conflict!
                 hasOverlaps = true;
                 resultTokens.push('<<<<<<< LOCAL');
                 resultTokens.push(...localSlice);
@@ -525,6 +581,13 @@ export class ConflictResolver {
                 resultTokens.push(...remoteSlice);
                 resultTokens.push('>>>>>>> REMOTE');
             }
+
+            lastEnd = region.end;
+        }
+
+        // Trailing unchanged gap
+        if (lastEnd < base.length) {
+            resultTokens.push(...base.slice(lastEnd, base.length));
         }
 
         return {
@@ -665,6 +728,105 @@ export class ConflictResolver {
                 throw new Error(`Unknown resolution strategy: ${strategy}`);
         }
     }
+}
+
+/**
+ * Markdown Syntax Integrity Validator
+ * 
+ * Verifies that automated three-way merges did not produce structurally corrupt Markdown,
+ * specifically checking for:
+ * 1. Unclosed fenced code blocks (``` or ~~~)
+ * 2. Malformed / broken GFM tables (orphan delimiters, column count mismatches)
+ */
+export function validateMarkdownSyntaxIntegrity(content: string): { valid: boolean; reason?: string } {
+    if (!content) return { valid: true };
+
+    const lines = content.split('\n');
+
+    let inCodeBlock = false;
+    let codeFenceChar = '';
+    let codeFenceLength = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // 1. Code Fence Detection
+        const fenceMatch = line.match(/^(\s{0,3})(`{3,}|~{3,})(.*)$/);
+        if (fenceMatch) {
+            const fence = fenceMatch[2];
+            const char = fence[0];
+            const length = fence.length;
+            const rest = fenceMatch[3].trim();
+
+            if (!inCodeBlock) {
+                // Opening fence
+                inCodeBlock = true;
+                codeFenceChar = char;
+                codeFenceLength = length;
+                continue;
+            } else if (char === codeFenceChar && length >= codeFenceLength && rest === '') {
+                // Closing fence
+                inCodeBlock = false;
+                codeFenceChar = '';
+                codeFenceLength = 0;
+                continue;
+            }
+        }
+
+        // If inside a code block, skip table structure checks
+        if (inCodeBlock) {
+            continue;
+        }
+
+        // 2. GFM Table Delimiter Detection
+        // GFM table delimiter row: consists of pipes, dashes, colons, spaces, e.g. | :--- | ---: | :---: |
+        const isTableDelimiter = /^\s*\|?(\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\|?\s*$/.test(line) && line.includes('-');
+
+        if (isTableDelimiter) {
+            // Must have a preceding header line
+            if (i === 0) {
+                return {
+                    valid: false,
+                    reason: 'Malformed GFM table: delimiter row appears at document start without header',
+                };
+            }
+
+            const prevLine = lines[i - 1].trim();
+            if (!prevLine || !prevLine.includes('|')) {
+                return {
+                    valid: false,
+                    reason: 'Malformed GFM table: orphan delimiter row without preceding table header',
+                };
+            }
+
+            // Count columns in header vs delimiter (respecting escaped pipes \|)
+            const getColumns = (row: string) => {
+                let s = row.trim();
+                if (s.startsWith('|')) s = s.slice(1);
+                if (s.endsWith('|')) s = s.slice(0, -1);
+                return s.split(/(?<!\\)\|/).map(c => c.trim());
+            };
+
+            const headerCols = getColumns(prevLine);
+            const delimiterCols = getColumns(line);
+
+            if (headerCols.length !== delimiterCols.length) {
+                return {
+                    valid: false,
+                    reason: `Malformed GFM table: column count mismatch (header: ${headerCols.length}, delimiter: ${delimiterCols.length})`,
+                };
+            }
+        }
+    }
+
+    if (inCodeBlock) {
+        return {
+            valid: false,
+            reason: `Unclosed fenced code block (${codeFenceChar.repeat(codeFenceLength)}) detected after merge`,
+        };
+    }
+
+    return { valid: true };
 }
 
 // Export singleton instance

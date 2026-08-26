@@ -22,12 +22,14 @@ import {
     createOperationsGC,
     OperationsGarbageCollector,
     normalizeMarkdownSource,
+    RemoteUpdateEvent,
 } from '@/lib/sync';
 
 export interface UseSyncOptions {
     userId?: string | null;
     autoSyncInterval?: number;
     onConflict?: (conflict: SyncConflict) => Promise<'local' | 'server' | 'merge'>;
+    onRemoteUpdate?: (event: RemoteUpdateEvent) => void;
 }
 
 export interface UseSyncReturn {
@@ -44,7 +46,7 @@ export interface UseSyncReturn {
 }
 
 export function useSync(options: UseSyncOptions): UseSyncReturn {
-    const { userId, autoSyncInterval = 30000, onConflict } = options;
+    const { userId, autoSyncInterval = 30000, onConflict, onRemoteUpdate } = options;
 
     const [status, setStatus] = useState<SyncStatus>(() => (userId?.trim() ? 'idle' : 'stopped'));
     const [connectionState, setConnectionState] = useState<ConnectionState>(() => connectionDetector.getState());
@@ -60,6 +62,11 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
     useEffect(() => {
         onConflictRef.current = onConflict;
     }, [onConflict]);
+
+    const onRemoteUpdateRef = useRef(onRemoteUpdate);
+    useEffect(() => {
+        onRemoteUpdateRef.current = onRemoteUpdate;
+    }, [onRemoteUpdate]);
 
     // Unified scoped lifecycle effect
     useEffect(() => {
@@ -194,10 +201,17 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             if (!isCancelled) setConnectionState(state);
         });
 
+        const unsubscribeRemoteUpdate = scopedSyncManager.onRemoteUpdate((event) => {
+            if (!isCancelled) {
+                onRemoteUpdateRef.current?.(event);
+            }
+        });
+
         return () => {
             isCancelled = true;
             unsubscribeStatus();
             unsubscribeConnection();
+            unsubscribeRemoteUpdate();
 
             if (pendingInterval) {
                 clearInterval(pendingInterval);

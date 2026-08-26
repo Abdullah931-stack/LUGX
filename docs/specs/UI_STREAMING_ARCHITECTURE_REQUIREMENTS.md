@@ -14,9 +14,9 @@ In previous iterations, real-time UI streaming was replaced with an off-screen b
 ### 2.2 System Invariants
 Any acceptable architectural solution must rigorously satisfy the following five invariants:
 
-1. **Auto-Save Invariance:** The live ProseMirror document state (`editor.state.doc`) MUST NOT be mutated during active streaming **or while a completed result awaits an explicit user decision** (`preview_ready`). No intermediate chunk shall trigger debounced auto-save mutations to IndexedDB or the remote database (Supabase).
-2. **Partial Selection & Scope Invariance:** When an operation targets a specific sub-range $[from, to]$ within the document, the preceding content $[0, from)$ and subsequent content $(to, \text{doc.content.size}]$ MUST remain in their normal, unaffected layout and state. Streaming occurs strictly at the anchor point $from$.
-3. **Atomic Commit Invariance (Acceptance-Triggered):** Stream completion does NOT mutate the document. The sanitized output is parked in `preview_ready`, and only an explicit user **Accept** applies the AI transformation in exactly ONE atomic ProseMirror transaction targeting $[from, to]$ (server-first commit confirmed before the local write). **Reject** and **Retry** leave the document fully untouched.
+1. **Auto-Save Invariance:** The live editor document state MUST NOT be mutated during active streaming **or while a completed result awaits an explicit user decision** (`preview_ready`). No intermediate chunk shall trigger debounced auto-save mutations to IndexedDB or the remote database.
+2. **Partial Selection & Scope Invariance:** When an operation targets a specific sub-range $[from, to]$ within the document, the preceding content $[0, from)$ and subsequent content $(to, \text{content.length}]$ MUST remain in their normal, unaffected layout and state. Streaming preview anchors strictly at the selection coordinates.
+3. **Atomic Commit Invariance (Acceptance-Triggered):** Stream completion does NOT mutate the document. The sanitized output is parked in `preview_ready`, and only an explicit user **Accept** applies the AI transformation in exactly ONE atomic transaction targeting $[from, to]$ via `adapter.replaceRange(from, to, previewContent)` (server-first commit confirmed before the local write). **Reject** and **Retry** leave the document fully untouched.
 4. **Single-Action Undo Invariance:** Exactly one history entry is produced. A single `Ctrl+Z` (or undo command) restores the original document state and selection range prior to the AI invocation.
 5. **Deterministic Rollback Invariance:** If the stream fails, times out, is aborted by the user, or encounters an API error (429/500/503), the ephemeral visual state is purged in $O(1)$ time with zero side effects on the document content.
 6. **Explicit Settlement Invariance (v1.6.0):** Quota refunds apply ONLY to system failures (stream errors, startup errors, 412 conflicts). User-driven outcomes — Reject, Retry, Stop-mid-generation, or abandoning a completed preview — settle the reservation as consumed (`commitAIReservation`, idempotent, no document write) and are never refunded.
@@ -54,7 +54,7 @@ sequenceDiagram
         alt User clicks Accept (commitPreview)
             StreamHandler->>Backend: Atomic commit (commitAIFileOperation)
             StreamHandler->>GhostExt: Teardown Ephemeral Preview
-            StreamHandler->>Editor: Dispatch Single Atomic Transaction on [from, to] (replaceRange)
+            StreamHandler->>Editor: Dispatch Single Atomic Transaction on [from, to] (adapter.replaceRange)
             Editor->>Editor: Push 1 Entry to History Stack (Undo Ready)
             Editor-->>User: Render Final Formatted Output
         else User clicks Reject or Retry
@@ -70,12 +70,12 @@ sequenceDiagram
     end
 ```
 
-### 3.1 ProseMirror Ephemeral Decoration
-Rather than modifying the ProseMirror Node tree, the stream is rendered through a dedicated `ProseMirror Plugin` leveraging `DecorationSet.create()`.
+### 3.1 Ephemeral Preview Layer
+Rather than modifying the underlying document model, the stream is rendered through an isolated preview overlay:
 * **Rendering Strategy:** 
-  - `Decoration.inline(from, to, { class: 'opacity-40 line-through select-none' })` dims the selected range being replaced, giving clear visual context.
-  - `Decoration.widget(from, domWidget, { side: -1 })` mounts the live streaming text preview directly before or in place of the target range with an animated cursor.
-* **Storage Isolation:** Because `DecorationSet` is purely view-layer metadata maintained by the plugin state, `doc.descendants` and `editor.getHTML()` remain pristine throughout the stream lifecycle.
+  - Visual dimming on the selected range being replaced $[from, to]$, giving clear visual context.
+  - Live streaming preview banner/widget rendering the generated text with an animated cursor.
+* **Storage Isolation:** Because the preview is view-layer metadata maintained by ephemeral React state, `adapter.getValue()` and the underlying document remain pristine throughout the stream lifecycle.
 
 ---
 
@@ -84,11 +84,11 @@ Rather than modifying the ProseMirror Node tree, the stream is rendered through 
 ```
 Document Model:
 +------------------------------------+-----------------------------+------------------------------------+
-|  Preceding Text [0, from)          | Target Selection [from, to] | Subsequent Text (to, size]         |
-|  (Untouched & Rendered Normally)   | (Dimmed via Decoration)     | (Untouched & Rendered Normally)    |
+|  Preceding Text [0, from)          | Target Selection [from, to] | Subsequent Text (to, length]       |
+|  (Untouched & Rendered Normally)   | (Dimmed via Preview Target) | (Untouched & Rendered Normally)    |
 +------------------------------------+-----------------------------+------------------------------------+
                                       |
-                                      +--> Widget Decoration at 'from':
+                                      +--> Preview Overlay at 'from':
                                            [ Live Streaming AI Text... | ]
 ```
 
@@ -96,10 +96,10 @@ Document Model:
    - The stream targets exactly $[from, to]$.
    - The text preceding $from$ and following $to$ remains rendered completely as-is in the normal editor flow.
    - The streaming widget renders in-place starting at index $from$.
-   - On commit, `editor.chain().setTextSelection({ from, to }).deleteSelection().insertContent(html).run()` modifies only that slice.
+   - On commit, `adapter.replaceRange(from, to, previewMarkdown)` modifies only that slice in a single atomic transaction.
 2. **When NO text is selected (Full Document Operation, $from = to = 0$):**
-   - The target spans $[0, \text{doc.content.size}]$.
-   - The entire document is dimmed and the streaming widget previews the replacement starting from top-of-document.
+   - The target spans the entire document $[0, \text{content.length}]$.
+   - The entire document is dimmed and the streaming widget previews the replacement.
 
 ---
 
@@ -107,9 +107,9 @@ Document Model:
 
 | Failure Mode | Detection Mechanism | Immediate Action | Recovery State | User Feedback |
 | :--- | :--- | :--- | :--- | :--- |
-| **Network Disconnection** | `ReadableStream` reader error or `TypeError: Failed to fetch` | Close stream reader, invoke `abortController.abort()` | Document retains 100% of pre-operation text; ghost decoration dismantled | Toast notification: *"Connection interrupted. Original content preserved."* with a Retry action |
-| **Server / AI Model Error (429/500/503)** | Non-200 HTTP status or error event chunk | Terminate reader loop; do not invoke `applyAITransaction` | Document untouched; lock released | Localized banner / error message detailing error category |
-| **Client-Side Explicit Abort** | User clicks *"Stop Generation"* or presses `Escape` | Trigger `abortController.abort()` | Instantly remove ghost decoration; re-enable editor interaction | Stream cancelled gracefully; zero leftover artefacts |
+| **Network Disconnection** | `ReadableStream` reader error or `TypeError: Failed to fetch` | Close stream reader, invoke `abortController.abort()` | Document retains 100% of pre-operation text; ghost preview dismantled | Toast notification: *"Connection interrupted. Original content preserved."* with a Retry action |
+| **Server / AI Model Error (429/500/503)** | Non-200 HTTP status or error event chunk | Terminate reader loop; do not invoke transaction | Document untouched; lock released | Localized banner / error message detailing error category |
+| **Client-Side Explicit Abort** | User clicks *"Stop Generation"* or presses `Escape` | Trigger `abortController.abort()` | Instantly remove ghost preview; re-enable editor interaction | Stream cancelled gracefully; zero leftover artefacts |
 | **Tab Closing / Browser Crash** | Browser `beforeunload` or sudden process kill | N/A (Client ceases execution) | IndexedDB and Remote DB retain last clean auto-saved snapshot (unaffected by stream) | Upon next load, document is in clean pre-operation state |
 | **Empty or Malformed Stream** | Sanitizer / Parser validation yields empty string or corrupted markup | Reject transaction dispatch | Document remains in pre-operation state | Error toast: *"AI produced an invalid response. No changes applied."* |
 
@@ -117,27 +117,26 @@ Document Model:
 
 ## 5. Architectural Comparison Matrix
 
-| Evaluation Dimension | Ephemeral Decoration Layer (Selected) | Direct Mutation with History Squashing | Shadow DOM / Offscreen Editor | CRDT / Yjs Ephemeral Branching |
+| Evaluation Dimension | Ephemeral Preview Layer (Selected) | Direct Mutation with History Squashing | Shadow DOM / Offscreen Editor | CRDT / Yjs Ephemeral Branching |
 | :--- | :--- | :--- | :--- | :--- |
-| **Partial Selection Isolation** | **Native & Seamless**: Scoped strictly to $[from, to]$ via Decoration coordinates | **Risky**: Document splices can corrupt adjacent node offsets | **Complex**: Requires mapping offsets between two editors | **Complex**: Branch slicing required |
-| **Rendering Performance** | **High (60 FPS)**: Minimal DOM repaint scoped to decoration widget | **Medium**: Reparsing ProseMirror nodes on each chunk | **Low**: Overhead of maintaining dual editor instances | **Medium**: Branch merge overhead |
+| **Partial Selection Isolation** | **Native & Seamless**: Scoped strictly to $[from, to]$ via `EditorAdapter` coordinates | **Risky**: Document splices can corrupt adjacent node offsets | **Complex**: Requires mapping offsets between two editors | **Complex**: Branch slicing required |
+| **Rendering Performance** | **High (60 FPS)**: Minimal DOM repaint scoped to preview overlay | **Medium**: Frequent document reparsing on each chunk | **Low**: Overhead of maintaining dual editor instances | **Medium**: Branch merge overhead |
 | **Auto-Save Safety** | **Absolute (100%)**: Zero change events dispatched during streaming | **Vulnerable**: Requires dangerous global auto-save suppression flags | **High**: Isolated to offscreen instance | **High**: Isolated to virtual branch |
-| **Undo Stack Determinism** | **Deterministic**: Single atomic ProseMirror step | **Fragile**: Requires internal history filter manipulation | **Deterministic**: Single patch application | **Complex**: Requires multi-layer rollback |
-| **Code Footprint & Maintenance** | **Low**: Single lightweight preview extension / overlay (~120 LOC) | **High**: Entangled with core editor transaction pipeline | **High**: Synchronization glue code between instances | **Very High**: Heavy CRDT dependencies |
+| **Undo Stack Determinism** | **Deterministic**: Single atomic `replaceRange` step | **Fragile**: Requires internal history filter manipulation | **Deterministic**: Single patch application | **Complex**: Requires multi-layer rollback |
+| **Code Footprint & Maintenance** | **Low**: Single lightweight preview overlay / hook | **High**: Entangled with core editor transaction pipeline | **High**: Synchronization glue code between instances | **Very High**: Heavy CRDT dependencies |
 
 ---
 
 ## 6. Implementation Modules & Phased Delivery
 
-1. **`src/lib/extensions/streaming-ghost-extension.ts`**:
-   - Implements ProseMirror plugin with dynamic `DecorationSet` scoped to $[from, to]$.
-   - Supports live Markdown-to-HTML formatting for incoming text chunks.
+1. **`src/components/editor/markdown/markdown-editor.tsx`**:
+   - Implements CodeMirror 6 standalone Markdown editor and provides `EditorAdapter` interface.
    - Built-in bidirectional (RTL/LTR) layout adaptation.
 2. **`src/lib/ai/stream-handler.ts`**:
    - Encapsulates SSE consumption, `AbortController` lifecycle, backpressure handling, and error mapping.
 3. **`src/components/editor/ai-toolbar.tsx`**:
    - Active streaming state indicator with instant *"Stop Generation"* action.
 4. **`src/app/workspace/editor/[fileId]/page.tsx`**:
-   - Integration point connecting `stream-handler`, `streaming-ghost-extension`, and atomic transaction commits on $[from, to]$.
+   - Integration point connecting `stream-handler`, `AIStreamPreview`, and atomic transaction commits on $[from, to]$ via `adapter.replaceRange`.
 5. **`src/lib/ai-transaction.test.ts`**:
    - Comprehensive unit and integration test suite asserting auto-save isolation, partial range replacement, single-action undo, and failure recovery.

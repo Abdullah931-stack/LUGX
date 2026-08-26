@@ -264,16 +264,34 @@ Invariants:
 
 ---
 
+## 6d. Pure Markdown Sync, Diff3 Conflict Resolution & Syntax Integrity (Phase 4 Amendment)
+
+In Phase 4 of the Markdown migration roadmap, all synchronization channels, conflict detection, three-way merge algorithms, and conflict dialogs were transitioned from legacy HTML parsing to pure, engine-agnostic Markdown.
+
+### 6d.1 Remote Update Event Pipeline
+1. When background sync pulls clean updates from the server via `SyncManager.pullFile()`, it dispatches typed `RemoteUpdateEvent` payloads to registered listeners.
+2. `useSync` subscribes to `SyncManager.onRemoteUpdate` and forwards events to `useEditorOrchestrator.handleRemoteUpdate`.
+3. `useEditorOrchestrator` runs invariant guards (verifies document is clean, no active conflict, no active AI streaming, and hydration is complete) and uses `classifyRemoteUpdate` to safely fast-forward the editor (`adapter.setValue(event.content)`) under programmatic protection without creating phantom dirty states.
+
+### 6d.2 Markdown Structural Syntax Integrity Guard
+1. Automatic Diff3 merging can textually succeed on disjoint line ranges yet produce syntactically corrupt Markdown (e.g. unclosed code fences ``` or broken GFM table delimiter rows).
+2. `validateMarkdownSyntaxIntegrity(content)` inspects the merged document to guarantee balanced fenced code blocks and valid GFM table column alignments.
+3. If an automatic three-way merge results in corrupted Markdown syntax, the merge is automatically rejected (`status: 'conflict_overlaps'`, `hasOverlaps: true`) and routed to the visual `ConflictDialog` for explicit manual resolution.
+
+### 6d.3 Native Markdown Conflict Dialog
+- `ConflictDialog` (`src/components/sync/conflict-dialog.tsx`) operates exclusively on raw UTF-8 Markdown text with monospace diff highlighting, eliminating legacy HTML converters (`htmlToPlainText`, `convertTextToHTML`, `sanitizeHtml`).
+
+---
+
 ## 7. Verification Proof
 
 - Automated Tests (current):
+  - `src/lib/sync/conflict-resolver.test.ts` (32/32 passing)
+  - `src/lib/sync/sync-manager.test.ts` (36/36 passing)
   - `src/test/editor-orchestration.integration.test.ts` (15/15 passing)
+  - `src/hooks/use-sync.test.ts` (14/14 passing)
   - `src/test/editor-recovery-reload.test.ts` (5/5 passing)
   - `src/test/editor-atomic-commit.test.ts` (4/4 passing)
   - `src/lib/sync/reconciliation.test.ts` (10/10 passing)
-  - `src/hooks/use-sync.test.ts` (13/13 passing)
-  - LIVE bucket (isolated Neon branch, `npm run test:live`):
-    `src/test/editor-orchestration.live.test.ts`,
-    `src/test/conflict-resolution.integration.test.ts`,
-    `src/test/ai-reservation-status.live.test.ts` — all green on
-    `ep-soft-glade-b1hdcbwm-pooler`.
+  - Full test suite: 35/35 test files, 451/451 tests passing.
+

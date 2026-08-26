@@ -113,9 +113,9 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 - **Risk**: Upstream proxy or malformed source streaming megabytes of text without a newline (`\n`), causing unbounded `lineBuffer` expansion and browser Heap Out-Of-Memory (OOM).
 - **Protection**: `stream-handler.ts` enforces `MAX_LINE_BUFFER_CHARS = 256 * 1024` (256KB). If buffer length exceeds ceiling without `\n`, it terminates the stream with `stream_buffer_overflow` and releases reader locks.
 
-### 4.2 Dynamic ProseMirror Selection Range Mapping
+### 4.2 Dynamic Selection Range Mapping & Locking
 - **Risk**: User typing during streaming causing position drift between original selection bounds and actual document coordinates at commit time.
-- **Protection**: `use-ai-stream.ts` dynamically queries `streamingGhostPluginKey.getState(editor.state)` for the mapped `from`/`to` positions updated via ProseMirror `tr.mapping.map()`, preventing destructive overwrite of shifted content.
+- **Protection**: `use-ai-stream.ts` locks target `from`/`to` coordinates and suspends user mutations during active generation. User typing automatically aborts generation or is scoped via `EditorAdapter`, preventing destructive overwrite of shifted content.
 
 ### 4.3 Payload Validation & Size Ceiling (`MAX_INPUT_CHARS`)
 - **Risk**: Massive payloads or non-string inputs causing high CPU regex evaluation during word counting and quota reservation.

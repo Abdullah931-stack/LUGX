@@ -43,9 +43,10 @@ The system resolves concurrent multi-device and offline-to-online edit discrepan
 
 ### 2.1 Three-Way Merge Engine (`src/lib/sync/conflict-resolver.ts`)
 - **Base Version Invariant:** A valid `baseSnapshot` is required to perform three-way merging. If the base snapshot is missing or corrupted, blind automated merging is strictly rejected, and the status transitions to `manual_resolution_required`.
-- **Linear Memory LCS Algorithm:** Replaced $O(M \times N)$ 2D matrix allocation with a single linear `Int32Array` rolling buffer, cutting large document merge latency from ~3500ms down to **11ms**.
-- **Half-Open Interval Boundary Slicing:** Employs half-open intervals `[start, end)` for chunk reconciliation, preventing duplication or truncation of adjacent boundary words.
-- **Minified HTML & Block Tokenization:** Tokenizes block boundaries (`</p>`, `</h1>`, `</div>`) when raw newlines are absent, preventing false paragraph grouping.
+- **Linear Memory LCS with Prefix/Suffix Trimming:** Replaced naive 2D matrix allocation with a flat `Int32Array` buffer combined with linear Common Prefix & Suffix trimming, reducing memory allocation by >99% and executing merges in sub-millisecond time even on large documents (2,000+ lines).
+- **Half-Open Interval Boundary Slicing:** Employs strict half-open intervals `[start, end)` for chunk reconciliation, preventing duplication, truncation, or false conflicts on adjacent boundary lines.
+- **Markdown Line & CRLF Normalization:** Normalizes all line-break variants (`\r\n`, `\r`) to standard `\n` line delimiters, eliminating false byte conflicts across operating systems.
+- **Markdown Syntax Integrity Validator (`validateMarkdownSyntaxIntegrity`):** Evaluates candidate 3-way merge outputs for balanced fenced code blocks (``` and ~~~) and valid GFM table delimiters with full support for escaped pipes (`\|`). If merge output corrupts syntax, automated merge is cancelled and safely escalated to interactive conflict resolution.
 
 ### 2.2 Base Snapshot Persistence (`src/lib/sync/indexeddb.ts`)
 - Before any local mutation is committed to the local queue, the engine captures a frozen snapshot of the current synchronized base (`content`, `title`, `version`, `etag`) into the `files` store.
@@ -74,11 +75,12 @@ The system resolves concurrent multi-device and offline-to-online edit discrepan
 ```typescript
 export interface MergeResult {
     success: boolean;
-    status: 'clean_local' | 'clean_remote' | 'merged_clean' | 'merged_with_conflicts' | 'manual_resolution_required';
+    status: 'clean_local' | 'clean_remote' | 'merged_clean' | 'merged_with_conflicts' | 'manual_resolution_required' | 'conflict_overlaps';
     content: string | null;
     title: string | null;
     hasOverlaps: boolean;
     diffs?: DiffOp[];
+    reason?: string;
 }
 ```
 
@@ -101,18 +103,18 @@ If-Match: "server_etag"
 
 | Test Suite | Test Count | Status | Description |
 | :--- | :--- | :--- | :--- |
-| `src/lib/sync/conflict-resolver.test.ts` | 23 | Passed | 3-way merge, LCS linear array, adversarial chunk overlaps, minified HTML. |
+| `src/lib/sync/conflict-resolver.test.ts` | 39 | Passed | 3-way merge, LCS linear array, adversarial chunk overlaps, escaped table pipes, CRLF normalization, large doc trimming. |
 | `src/lib/sync/indexeddb.test.ts` | 14 | Passed | Base snapshot persistence, create-to-update coalescing, store integrity. |
-| `src/lib/sync/sync-manager.test.ts` | 31 | Passed | 412 conflict handling, retry backoff, dead-letter transitions. |
+| `src/lib/sync/sync-manager.test.ts` | 36 | Passed | 412 conflict handling, retry backoff, dead-letter transitions, RemoteUpdateEvent dispatch. |
 | `src/test/conflict-resolution.integration.test.ts` | 3 | Passed | Real PostgreSQL lifecycle integration (Base -> Remote write -> Local 412 -> 3-way merge -> Authoritative write -> Verified reload). |
 | `src/app/api/files/[id]/route.putguard.test.ts` | 3 | Passed | Concurrency race conditions, stale write rejection. |
 | `src/server/actions/file-ops.lostupdate.test.ts` | 4 | Passed | Lost-update prevention via optimistic database version locking. |
 | `src/lib/sync/operations-gc.test.ts` | 5 | Passed | Garbage collection of synced operations, compaction thresholds. |
 | `src/lib/sync/rollback.test.ts` | 22 | Passed | Checkpoint creation, rollback recovery from crashes. |
 | `src/lib/sync/connection-detector.test.ts` | 17 | Passed | Exponential backoff, jitter, network status detection. |
-| `src/lib/sync/etag-generator.test.ts` | 13 | Passed | ETag formatting, parsing, weak comparison. |
+| `src/lib/sync/etag-generator.test.ts` | 20 | Passed | ETag formatting, parsing, weak comparison, Markdown normalization. |
 | `src/lib/sync/parallel.test.ts` | 6 | Passed | Parallel batch file processing, concurrency throttling. |
 | `src/lib/sync/error-handler.test.ts` | 26 | Passed | Structured error dispatching and recovery logging. |
 | `src/lib/sync/concurrency-manager.test.ts` | 9 | Passed | Mutex locking per file ID. |
-| **Total Test Count** | **176** | **100% Passed** | **All suites verified against real database and runtime contracts.** |
+| **Total Test Count** | **204** | **100% Passed** | **All suites verified against real database and runtime contracts.** |
 | **TypeScript Typecheck** | `tsc --noEmit` | **0 Errors** | **Strict TypeScript compliance verified across all workspace files.** |

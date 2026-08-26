@@ -12,9 +12,7 @@ import { useState, useEffect, useMemo } from "react";
 import { X, Check, ArrowLeft, ArrowRight, GitMerge, AlertTriangle, RotateCcw, Trash2, FileText, Database } from "lucide-react";
 import { SyncConflict } from "@/lib/sync/idb-types";
 import { conflictResolver, DiffOp, MergeResult, ResolutionStrategy } from "@/lib/sync/conflict-resolver";
-import { htmlToPlainText } from "@/lib/exporters/utils/markdown-stripper";
-import { convertTextToHTML } from "@/lib/parsers/text-to-html";
-import { sanitizeHtml } from "@/lib/sanitize-client";
+import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 
 export interface ConflictResolutionPayload {
     strategy: ResolutionStrategy;
@@ -46,72 +44,30 @@ function formatTime(timestamp?: number): string {
 }
 
 /**
- * Strip HTML tags from a text string while preserving conflict markers
- */
-function cleanHtmlForDisplay(content: string): string {
-    if (!content) return "";
-    
-    // If it contains conflict markers, format each section cleanly
-    if (content.includes('<<<<<<< LOCAL')) {
-        const lines = content.split('\n');
-        const cleanedLines: string[] = [];
-        for (const line of lines) {
-            if (line.startsWith('<<<<<<<') || line.startsWith('=======') || line.startsWith('>>>>>>>')) {
-                cleanedLines.push(line);
-            } else {
-                const plain = htmlToPlainText(line);
-                cleanedLines.push(plain || line);
-            }
-        }
-        return cleanedLines.join('\n');
-    }
-
-    return htmlToPlainText(content);
-}
-
-/**
- * Ensure content submitted back to editor is valid TipTap HTML
- */
-function ensureHtmlForSave(content: string, originalHtmlFallback?: string): string {
-    if (!content || content.trim().length === 0) {
-        return '<p></p>';
-    }
-
-    // If it already has HTML block tags, sanitize and return
-    if (/<(?:\/p|\/h[1-6]|\/li|\/blockquote|\/div)>/i.test(content)) {
-        return sanitizeHtml(content);
-    }
-
-    // If plain text (user edited natural text), convert paragraphs to HTML
-    return convertTextToHTML(content);
-}
-
-/**
- * Render a single diff line with appropriate styling in natural text
+ * Render a single diff line with appropriate styling in Markdown monospace font
  */
 function DiffLine({ op }: { op: DiffOp }) {
-    const plainText = htmlToPlainText(op.value) || op.value;
-    if (!plainText.trim() && op.type === 'equal') return null;
+    if (!op.value.trim() && op.type === 'equal') return null;
 
-    const baseClasses = "text-xs sm:text-sm px-2.5 py-1 whitespace-pre-wrap break-words leading-relaxed rounded font-sans";
+    const baseClasses = "text-xs sm:text-sm px-2.5 py-1 whitespace-pre-wrap break-words leading-relaxed rounded font-mono";
 
     switch (op.type) {
         case 'insert':
             return (
                 <div className={`${baseClasses} bg-green-950/70 border-r-2 border-green-500 text-green-300`}>
-                    + {plainText}
+                    + {op.value}
                 </div>
             );
         case 'delete':
             return (
                 <div className={`${baseClasses} bg-red-950/70 border-r-2 border-red-500 text-red-300 line-through opacity-80`}>
-                    - {plainText}
+                    - {op.value}
                 </div>
             );
         case 'equal':
             return (
                 <div className={`${baseClasses} text-zinc-400`}>
-                    &nbsp; {plainText}
+                    &nbsp; {op.value}
                 </div>
             );
     }
@@ -121,10 +77,10 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
     const isDeleteConflict = conflict.type === 'delete_conflict' || conflict.serverVersion.deleted;
     const hasBaseSnapshot = !!conflict.baseVersion && typeof conflict.baseVersion.content === 'string';
 
-    // Clean display strings (no HTML tags)
-    const localDisplayText = useMemo(() => cleanHtmlForDisplay(conflict.localVersion.content), [conflict.localVersion.content]);
-    const serverDisplayText = useMemo(() => cleanHtmlForDisplay(conflict.serverVersion.content), [conflict.serverVersion.content]);
-    const baseDisplayText = useMemo(() => cleanHtmlForDisplay(conflict.baseVersion?.content || ""), [conflict.baseVersion?.content]);
+    // Raw Markdown display strings
+    const localDisplayText = conflict.localVersion.content || "";
+    const serverDisplayText = conflict.serverVersion.content || "";
+    const baseDisplayText = conflict.baseVersion?.content || "";
 
     // Compute initial 3-way merge
     const initialMergeResult = useMemo<MergeResult>(() => {
@@ -141,9 +97,9 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
         return 'local';
     });
 
-    // Editable text for merge editor (pure text without HTML tags)
+    // Editable text for merge editor (pure Markdown text)
     const [editableText, setEditableText] = useState<string>(() => {
-        return cleanHtmlForDisplay(initialMergeResult.content || conflict.localVersion.content);
+        return initialMergeResult.content || conflict.localVersion.content || "";
     });
 
     const [selectedTitle, setSelectedTitle] = useState<string>(() => {
@@ -168,7 +124,7 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
             setSelectedStrategy('local');
         }
 
-        setEditableText(cleanHtmlForDisplay(result.content || conflict.localVersion.content));
+        setEditableText(result.content || conflict.localVersion.content || "");
         setSelectedTitle(result.title || conflict.localVersion.title || conflict.serverVersion.title || 'Untitled');
     }, [conflict, isDeleteConflict]);
 
@@ -177,16 +133,16 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
 
         switch (selectedStrategy) {
             case 'local':
-                contentToSubmit = conflict.localVersion.content;
+                contentToSubmit = normalizeMarkdownSource(conflict.localVersion.content);
                 break;
             case 'server':
-                contentToSubmit = conflict.serverVersion.content;
+                contentToSubmit = normalizeMarkdownSource(conflict.serverVersion.content);
                 break;
             case 'merge':
-                contentToSubmit = ensureHtmlForSave(editableText, initialMergeResult.content);
+                contentToSubmit = normalizeMarkdownSource(editableText);
                 break;
             case 'restore':
-                contentToSubmit = conflict.localVersion.content;
+                contentToSubmit = normalizeMarkdownSource(conflict.localVersion.content);
                 break;
             case 'delete':
                 contentToSubmit = '';
@@ -350,10 +306,10 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
                         <div className="flex-1 flex flex-col p-4 overflow-hidden">
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs text-zinc-400">
-                                    محرر تسوية الدمج (اكتب أو عدّل النص الطبيعي مباشرة دون الحاجة لأي وسوم):
+                                    محرر تسوية الدمج (اكتب أو عدّل نص Markdown النهائي هنا مباشرة):
                                 </span>
                                 <button
-                                    onClick={() => setEditableText(cleanHtmlForDisplay(initialMergeResult.content || conflict.localVersion.content))}
+                                    onClick={() => setEditableText(initialMergeResult.content || conflict.localVersion.content || "")}
                                     className="text-xs text-amber-400 hover:underline"
                                 >
                                     إعادة ضبط للنص المقترح
@@ -362,9 +318,9 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
                             <textarea
                                 value={editableText}
                                 onChange={(e) => setEditableText(e.target.value)}
-                                placeholder="اكتب أو عدل النص النهائي هنا..."
+                                placeholder="اكتب أو عدل نص Markdown النهائي هنا..."
                                 className="flex-1 w-full bg-zinc-950 border border-zinc-800 rounded-lg p-4 
-                                    text-zinc-100 font-sans text-sm resize-none focus:outline-none 
+                                    text-zinc-100 font-mono text-sm resize-none focus:outline-none 
                                     focus:ring-1 focus:ring-amber-500/60 leading-relaxed custom-scrollbar"
                                 dir="auto"
                             />

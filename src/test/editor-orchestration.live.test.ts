@@ -13,17 +13,56 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { Editor } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
+import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/lib/db/schema";
 import { getUser } from "@/lib/supabase/server";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER_ID })) }));
+
+function createMockAdapter(initialContent = ""): EditorAdapter {
+    let content = initialContent;
+    let sel = { from: 0, to: 0 };
+    return {
+        getValue: () => content,
+        setValue: (newContent: string) => {
+            content = newContent;
+        },
+        getSelection: () => sel,
+        setSelection: (from: number, to = from) => {
+            sel = { from, to };
+        },
+        replaceRange: (from: number, to: number, insert: string) => {
+            content = content.slice(0, from) + insert + content.slice(to);
+        },
+        replaceRanges: (changes: { from: number; to: number; insert: string }[]) => {
+            const sorted = [...changes].sort((a, b) => b.from - a.from);
+            for (const c of sorted) {
+                content = content.slice(0, c.from) + c.insert + content.slice(c.to);
+            }
+        },
+        getSelectedText: () => content.slice(sel.from, sel.to),
+        insertMarkdown: vi.fn(),
+        setEditable: vi.fn(),
+        focus: vi.fn(),
+        blur: vi.fn(),
+        hasFocus: vi.fn().mockReturnValue(true),
+        undo: vi.fn().mockReturnValue(true),
+        redo: vi.fn().mockReturnValue(true),
+        canUndo: vi.fn().mockReturnValue(true),
+        canRedo: vi.fn().mockReturnValue(false),
+        getWordCount: () => content.split(/\s+/).filter(Boolean).length,
+        getCharCount: () => content.length,
+        getLineCount: () => content.split("\n").length,
+        getHeadingCount: () => (content.match(/^#{1,6}\s/gm) || []).length,
+        getMode: () => "live",
+        setMode: vi.fn(),
+        destroy: vi.fn(),
+    };
+}
 
 // Browser-local storage boundary (NOT the system under test).
 vi.mock("@/lib/sync", async (importOriginal) => {
@@ -68,17 +107,25 @@ const FILE_ID = randomUUID();
 
 async function seedFile(): Promise<void> {
     await testDb
-        .insert(schema.users)
-        .values({ id: USER_ID, email: `${USER_ID}@live.test` })
-        .onConflictDoNothing();
-    await testDb.delete(schema.files).where(eq(schema.files.userId, USER_ID));
-    await testDb.insert(schema.files).values({
-        id: FILE_ID,
-        userId: USER_ID,
-        title: "Test Note",
-        content: "<p>Original</p>",
-        etag: "etag-v1",
-    });
+        .insert(schema.files)
+        .values({
+            id: FILE_ID,
+            userId: USER_ID,
+            title: "Test Note",
+            content: "Original",
+            version: 1,
+            etag: "etag-v1",
+        })
+        .onConflictDoUpdate({
+            target: schema.files.id,
+            set: {
+                title: "Test Note",
+                content: "Original",
+                version: 1,
+                etag: "etag-v1",
+                deletedAt: null,
+            },
+        });
 }
 
 async function getFileRow() {
@@ -89,25 +136,20 @@ async function getFileRow() {
     return row;
 }
 
-const renderOrchestrator = () => renderHook;
-
 describe("LIVE: editor orchestration single-writer path on isolated branch", () => {
-    let editor: Editor;
+    let adapter: EditorAdapter;
 
     const renderOrchestrator = () =>
-        renderHook(() => useEditorOrchestrator({ fileId: FILE_ID, userId: USER_ID, editor }));
+        renderHook(() => useEditorOrchestrator({ fileId: FILE_ID, userId: USER_ID, adapter }));
 
     beforeEach(async () => {
         vi.mocked(getUser).mockResolvedValue({ id: USER_ID } as never);
         await seedFile();
-        editor = new Editor({
-            extensions: [StarterKit, StreamingGhostExtension],
-            content: "<p>Original</p>",
-        });
+        adapter = createMockAdapter("Original");
     });
 
     afterEach(() => {
-        editor.destroy();
+        adapter.destroy();
     });
 
     afterAll(async () => {

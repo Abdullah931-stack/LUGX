@@ -51,8 +51,8 @@ vi.mock("@/lib/ai/stream-handler", () => ({
 }));
 let capturedCallbacks: ConsumeCallbacks;
 
-// Mock IndexedDB and SyncManager dependencies
 const mockLocalDb: Record<string, Record<string, unknown>> = {};
+let capturedRemoteUpdateCallback: ((event: any) => void) | null = null;
 
 vi.mock("@/lib/sync", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/sync")>();
@@ -78,6 +78,10 @@ vi.mock("@/lib/sync", async (importOriginal) => {
             syncFile: vi.fn().mockResolvedValue(undefined),
             getStatus: vi.fn().mockReturnValue("idle"),
             onStatusChange: vi.fn().mockReturnValue(() => undefined),
+            onRemoteUpdate: vi.fn().mockImplementation((cb) => {
+                capturedRemoteUpdateCallback = cb;
+                return () => { capturedRemoteUpdateCallback = null; };
+            }),
             setConflictCallback: vi.fn(),
         })),
         connectionDetector: {
@@ -665,5 +669,93 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         expect(localRecord).toBeDefined();
         expect(localRecord?.isDirty).toBe(true);
         expect(String(localRecord?.content)).toContain("Offline composition");
+    });
+
+    describe("Remote Update Event Propagation & Guards (Phase 4)", () => {
+        it("should apply safe fast-forward remote update cleanly to editor when document is clean", async () => {
+            const { result } = renderHook(() =>
+                useEditorOrchestrator({ fileId, userId, adapter })
+            );
+
+            await waitFor(() => expect(result.current.hydration).toBe("ready"));
+            expect(result.current.isDirty).toBe(false);
+            expect(capturedRemoteUpdateCallback).toBeDefined();
+
+            // Simulate incoming clean remote update
+            act(() => {
+                capturedRemoteUpdateCallback!({
+                    fileId,
+                    content: "# Remote Updated Title\n\nFresh remote body",
+                    etag: "etag-remote-v2",
+                    version: 2,
+                    title: "Remote Title",
+                    updatedAt: new Date().toISOString(),
+                });
+            });
+
+            expect(adapter.getValue()).toBe("# Remote Updated Title\n\nFresh remote body");
+            expect(result.current.serverVersion).toBe(2);
+            expect(result.current.serverEtag).toBe("etag-remote-v2");
+            expect(result.current.title).toBe("Remote Title");
+            expect(result.current.isDirty).toBe(false);
+        });
+
+        it("should NOT overwrite editor when remote update arrives while local document is dirty", async () => {
+            const { result } = renderHook(() =>
+                useEditorOrchestrator({ fileId, userId, adapter })
+            );
+
+            await waitFor(() => expect(result.current.hydration).toBe("ready"));
+
+            // User types local changes -> becomes dirty
+            act(() => {
+                adapter.setValue("# My In-Progress Local Edits");
+                result.current.handleEditorChange("# My In-Progress Local Edits");
+            });
+            expect(result.current.isDirty).toBe(true);
+
+            // Simulate remote update arriving concurrently
+            act(() => {
+                capturedRemoteUpdateCallback!({
+                    fileId,
+                    content: "# Competing Server Version",
+                    etag: "etag-remote-competing",
+                    version: 3,
+                    title: "Server Title",
+                    updatedAt: new Date().toISOString(),
+                });
+            });
+
+            // Local uncommitted user typing must remain completely untouched!
+            expect(adapter.getValue()).toBe("# My In-Progress Local Edits");
+            expect(result.current.isDirty).toBe(true);
+        });
+
+        it("should preserve and clamp cursor selection when safe fast-forward remote update arrives and editor has focus", async () => {
+            const { result } = renderHook(() =>
+                useEditorOrchestrator({ fileId, userId, adapter })
+            );
+
+            await waitFor(() => expect(result.current.hydration).toBe("ready"));
+
+            // Set focused selection in clean editor
+            adapter.setSelection(12, 12);
+            expect(adapter.getSelection()).toEqual({ from: 12, to: 12 });
+
+            act(() => {
+                capturedRemoteUpdateCallback!({
+                    fileId,
+                    content: "# Brand New Server Content",
+                    etag: "etag-remote-cursor-v2",
+                    version: 2,
+                    title: "Remote Title",
+                    updatedAt: new Date().toISOString(),
+                });
+            });
+
+            expect(adapter.getValue()).toBe("# Brand New Server Content");
+            // Selection should be preserved at 12 without jumping to 0
+            expect(adapter.getSelection()).toEqual({ from: 12, to: 12 });
+        });
     });
 });

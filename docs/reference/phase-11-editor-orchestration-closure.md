@@ -1,6 +1,6 @@
-# Phase 11 Closure Report - TipTap Editor, AutoSave & Sync Orchestration
+# Phase 11 Closure Report — Editor, AutoSave & Sync Orchestration
 
-Status: **CLOSED** (2026-08-24)
+Status: **CLOSED** (2026-08-24 · Amended in Markdown Migration Phase 2 & 3 with `MarkdownEditor` and `EditorAdapter`)
 Session contract: Phase 9 session-execution template (one phase per session).
 Derivation: Phase 10 closed (isolated Neon test branch, commit `60da9ac`).
 

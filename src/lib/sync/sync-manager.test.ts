@@ -793,4 +793,110 @@ describe('Sync Manager', () => {
             mockIndexedDBManager.getOperations.mockReset();
         });
     });
+
+    describe('onRemoteUpdate Callback Event Dispatch (Phase 4)', () => {
+        it('should dispatch remote update event when clean server update is pulled', async () => {
+            await manager.init({ userId: 'user-123' });
+
+            const remoteUpdateListener = vi.fn();
+            const unsubscribe = manager.onRemoteUpdate(remoteUpdateListener);
+
+            mockIndexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'doc-1',
+                content: '# Old Content',
+                etag: 'etag-old',
+                version: 1,
+                title: 'Old Title',
+                isDirty: false,
+            });
+
+            const serverUpdate = {
+                id: 'doc-1',
+                content: '# New Server Content',
+                etag: 'etag-v2',
+                version: 2,
+                title: 'New Title',
+                parentFolderId: null,
+                isFolder: false,
+                updatedAt: new Date().toISOString(),
+            };
+
+            const result = await (manager as any).pullFile(serverUpdate);
+
+            expect(result.success).toBe(true);
+            expect(result.action).toBe('pulled');
+            expect(remoteUpdateListener).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    fileId: 'doc-1',
+                    content: '# New Server Content',
+                    etag: 'etag-v2',
+                    version: 2,
+                    title: 'New Title',
+                })
+            );
+
+            unsubscribe();
+            mockIndexedDBManager.getFile.mockReset();
+        });
+
+        it('should dispatch remote update event when new file is pulled from server', async () => {
+            await manager.init({ userId: 'user-123' });
+
+            const remoteUpdateListener = vi.fn();
+            manager.onRemoteUpdate(remoteUpdateListener);
+
+            // No local file exists
+            mockIndexedDBManager.getFile.mockResolvedValueOnce(null);
+
+            const newServerFile = {
+                id: 'doc-new',
+                content: '# Brand New File',
+                etag: 'etag-new-1',
+                version: 1,
+                title: 'Brand New',
+                parentFolderId: null,
+                isFolder: false,
+                updatedAt: new Date().toISOString(),
+            };
+
+            const result = await (manager as any).pullFile(newServerFile);
+
+            expect(result.success).toBe(true);
+            expect(result.action).toBe('pulled');
+            expect(remoteUpdateListener).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    fileId: 'doc-new',
+                    content: '# Brand New File',
+                    version: 1,
+                })
+            );
+
+            mockIndexedDBManager.getFile.mockReset();
+        });
+
+        it('should clear remote update listeners on destroy', async () => {
+            await manager.init({ userId: 'user-123' });
+
+            const remoteUpdateListener = vi.fn();
+            manager.onRemoteUpdate(remoteUpdateListener);
+
+            manager.destroy();
+
+            // Attempting to pull after destroy should not invoke listener
+            mockIndexedDBManager.getFile.mockResolvedValueOnce(null);
+            await (manager as any).pullFile({
+                id: 'doc-after-destroy',
+                content: '# Content',
+                etag: 'etag-1',
+                version: 1,
+                title: 'Title',
+                parentFolderId: null,
+                isFolder: false,
+                updatedAt: new Date().toISOString(),
+            });
+
+            expect(remoteUpdateListener).not.toHaveBeenCalled();
+            mockIndexedDBManager.getFile.mockReset();
+        });
+    });
 });

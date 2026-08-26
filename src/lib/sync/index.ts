@@ -30,11 +30,11 @@ export type { LockStatus } from './concurrency-manager';
 
 // Sync Manager
 export { syncManager, SyncManager, createSyncManager } from './sync-manager';
-export type { SyncStatus, FileSyncResult, SyncResult, SyncStatusCallback, ConflictCallback, SyncManagerConfig } from './sync-manager';
+export type { SyncStatus, FileSyncResult, SyncResult, SyncStatusCallback, ConflictCallback, SyncManagerConfig, RemoteUpdateEvent, RemoteUpdateCallback } from './sync-manager';
 
 
 // Conflict Resolution
-export { conflictResolver, ConflictResolver } from './conflict-resolver';
+export { conflictResolver, ConflictResolver, validateMarkdownSyntaxIntegrity } from './conflict-resolver';
 export type { DiffOp, MergeResult, ResolutionStrategy } from './conflict-resolver';
 
 // Performance

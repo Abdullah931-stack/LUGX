@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
         syncFile: vi.fn().mockResolvedValue(undefined),
         getStatus: vi.fn().mockReturnValue('idle'),
         onStatusChange: vi.fn().mockReturnValue(() => undefined),
+        onRemoteUpdate: vi.fn().mockReturnValue(() => undefined),
         setConflictCallback: vi.fn(),
     },
     connectionDetector: {
@@ -330,5 +331,36 @@ describe('useSync hook', () => {
             expect(mockStopGC).toHaveBeenCalled();
             expect(mocks.syncManager.destroy).toHaveBeenCalled();
         }
+    });
+
+    it('should forward onRemoteUpdate events from SyncManager to subscriber', async () => {
+        let capturedCallback: ((event: any) => void) | null = null;
+        mocks.syncManager.onRemoteUpdate.mockImplementation((cb) => {
+            capturedCallback = cb;
+            return () => { capturedCallback = null; };
+        });
+
+        const onRemoteUpdateSpy = vi.fn();
+        const { unmount } = renderHook(() => useSync({ userId: 'user-123', onRemoteUpdate: onRemoteUpdateSpy }));
+
+        await waitFor(() => expect(mocks.syncManager.init).toHaveBeenCalled());
+
+        expect(capturedCallback).toBeDefined();
+
+        const fakeEvent = {
+            fileId: 'file-remote',
+            content: '# Remote Content',
+            etag: 'etag-remote-2',
+            version: 2,
+            updatedAt: new Date().toISOString(),
+        };
+
+        act(() => {
+            capturedCallback!(fakeEvent);
+        });
+
+        expect(onRemoteUpdateSpy).toHaveBeenCalledWith(fakeEvent);
+
+        unmount();
     });
 });

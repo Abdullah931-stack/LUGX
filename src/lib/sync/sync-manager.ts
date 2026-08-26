@@ -52,6 +52,24 @@ export interface SyncResult {
 }
 
 /**
+ * Remote update event payload emitted when a newer server version is pulled cleanly
+ */
+export interface RemoteUpdateEvent {
+    fileId: string;
+    content: string;
+    etag: string;
+    version: number;
+    title?: string;
+    parentFolderId?: string | null;
+    updatedAt: string;
+}
+
+/**
+ * Remote update callback
+ */
+export type RemoteUpdateCallback = (event: RemoteUpdateEvent) => void;
+
+/**
  * Sync status callback
  */
 export type SyncStatusCallback = (status: SyncStatus, progress?: number) => void;
@@ -98,6 +116,7 @@ export interface SyncManagerConfig {
 class SyncManager {
     private status: SyncStatus = 'stopped';
     private statusCallbacks: Set<SyncStatusCallback> = new Set();
+    private remoteUpdateCallbacks: Set<RemoteUpdateCallback> = new Set();
     private conflictCallback?: ConflictCallback;
     private syncQueue: SyncQueueItem[] = [];
     private autoSyncTimer?: ReturnType<typeof setInterval>;
@@ -255,6 +274,7 @@ class SyncManager {
 
         this.idb?.close();
         this.statusCallbacks.clear();
+        this.remoteUpdateCallbacks.clear();
         this.syncQueue = [];
         this.conflictCallback = undefined;
         this.isConsumerRunning = false;
@@ -270,6 +290,14 @@ class SyncManager {
      */
     setConflictCallback(callback: ConflictCallback): void {
         this.conflictCallback = callback;
+    }
+
+    /**
+     * Register remote update callback to notify when clean files are pulled
+     */
+    onRemoteUpdate(callback: RemoteUpdateCallback): () => void {
+        this.remoteUpdateCallbacks.add(callback);
+        return () => this.remoteUpdateCallbacks.delete(callback);
     }
 
     /**
@@ -964,6 +992,22 @@ class SyncManager {
             };
             await this.idb.saveFile(newFile);
 
+            for (const cb of this.remoteUpdateCallbacks) {
+                try {
+                    cb({
+                        fileId: serverFile.id,
+                        content: serverFile.content,
+                        etag: serverFile.etag,
+                        version: serverFile.version,
+                        title: serverFile.title,
+                        parentFolderId: serverFile.parentFolderId,
+                        updatedAt: serverFile.updatedAt,
+                    });
+                } catch (err) {
+                    console.error('[SyncManager] Remote update callback error:', err);
+                }
+            }
+
             return { fileId: serverFile.id, success: true, action: 'pulled' };
         }
 
@@ -996,6 +1040,22 @@ class SyncManager {
             isDirty: false,
         };
         await this.idb.saveFile(updatedFile);
+
+        for (const cb of this.remoteUpdateCallbacks) {
+            try {
+                cb({
+                    fileId: serverFile.id,
+                    content: serverFile.content,
+                    etag: serverFile.etag,
+                    version: serverFile.version,
+                    title: serverFile.title,
+                    parentFolderId: serverFile.parentFolderId,
+                    updatedAt: serverFile.updatedAt,
+                });
+            } catch (err) {
+                console.error('[SyncManager] Remote update callback error:', err);
+            }
+        }
 
         return { fileId: serverFile.id, success: true, action: 'pulled', newEtag: serverFile.etag };
     }

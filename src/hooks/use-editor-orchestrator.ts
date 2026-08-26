@@ -209,13 +209,6 @@ export function useEditorOrchestrator({
         [fileId]
     );
 
-    const syncHook = useSync({
-        userId: userId || "",
-        autoSyncInterval: 30000,
-        onConflict: handleSyncConflict,
-    });
-    syncHookRef.current = syncHook;
-
     // --- AI Stream Hook Integration ---
     const aiStream = useAIStream({
         onCommitSuccess: ({ version, etag }) => {
@@ -227,8 +220,8 @@ export function useEditorOrchestrator({
             setLastSaved(new Date());
             setIsDirty(false);
 
-            if (syncHook.isInitialized && adapterRef.current) {
-                syncHook.saveLocal({
+            if (syncHookRef.current?.isInitialized && adapterRef.current) {
+                syncHookRef.current.saveLocal({
                     id: fileId,
                     content: adapterRef.current.getValue(),
                     title,
@@ -260,6 +253,109 @@ export function useEditorOrchestrator({
             }
         },
     });
+
+    const handleRemoteUpdate = useCallback(
+        async (event: {
+            fileId: string;
+            content: string;
+            etag: string;
+            version: number;
+            title?: string;
+            parentFolderId?: string | null;
+            updatedAt: string;
+        }) => {
+            if (event.fileId !== fileId) return;
+
+            // Invariant Guards:
+            // 1. Never overwrite during active unresolved conflict or active conflict resolution
+            if (activeConflictRef.current !== null || isResolvingConflictRef.current) {
+                return;
+            }
+
+            // 2. Never overwrite during AI generation / reservation / commit
+            if (
+                aiStream.isLoading ||
+                aiStream.isStreaming ||
+                aiStream.isCommitting ||
+                aiStream.status === "reserved" ||
+                aiStream.status === "preview_ready"
+            ) {
+                return;
+            }
+
+            // 3. Never overwrite during programmatic transactions or before hydration completes
+            if (isProgrammaticUpdateRef.current || !hydratedRef.current) {
+                return;
+            }
+
+            const currentLocalContent = adapterRef.current?.getValue() ?? "";
+            const localBaseline: LocalBaseline = {
+                version: fileVersionRef.current,
+                etag: fileEtagRef.current,
+                content: currentLocalContent,
+            };
+
+            const decision = classifyRemoteUpdate({
+                localBaseline,
+                isDirty: isDirtyRef.current,
+                remoteVersion: event.version,
+                remoteEtag: event.etag,
+                remoteContent: event.content,
+            });
+
+            if (decision.action === "apply") {
+                // Generation guard: apply remote update cleanly without disrupting user
+                fileVersionRef.current = event.version;
+                setServerVersion(event.version);
+                fileEtagRef.current = event.etag;
+                setServerEtag(event.etag);
+                editorGenerationRef.current += 1;
+
+                const prevSelection = adapterRef.current?.getSelection();
+                const hadFocus = adapterRef.current?.hasFocus() ?? false;
+
+                isProgrammaticUpdateRef.current = true;
+                try {
+                    adapterRef.current?.setValue(event.content);
+                    if (prevSelection && hadFocus) {
+                        const maxLen = event.content.length;
+                        adapterRef.current?.setSelection(
+                            Math.min(prevSelection.from, maxLen),
+                            Math.min(prevSelection.to, maxLen)
+                        );
+                    }
+                } finally {
+                    isProgrammaticUpdateRef.current = false;
+                }
+
+                if (event.title && event.title !== title) {
+                    setTitle(event.title);
+                }
+
+                markServerPersisted(event.updatedAt);
+                setIsDirty(false);
+            } else if (decision.action === "adopt_metadata") {
+                fileVersionRef.current = event.version;
+                setServerVersion(event.version);
+                fileEtagRef.current = event.etag;
+                setServerEtag(event.etag);
+                markServerPersisted(event.updatedAt);
+            } else if (decision.action === "keep_local") {
+                console.log(
+                    `[Orchestrator] Remote update retained locally (reason: ${decision.reason}). Local edits preserved.`
+                );
+            }
+        },
+        [fileId, title, aiStream.isLoading, aiStream.isStreaming, aiStream.isCommitting, aiStream.status, markServerPersisted]
+    );
+
+    const syncHook = useSync({
+        userId: userId || "",
+        autoSyncInterval: 30000,
+        onConflict: handleSyncConflict,
+        onRemoteUpdate: handleRemoteUpdate,
+    });
+    syncHookRef.current = syncHook;
 
     // Write State Computation
     const writeState: WriteStateType = isResolvingConflict

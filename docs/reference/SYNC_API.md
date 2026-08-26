@@ -146,7 +146,7 @@ ETag: "server-etag"
   "serverVersion": {
     "etag": "server-etag",
     "version": 6,
-    "content": "<p>current server content</p>",
+    "content": "# Current Server Title\n\nAuthoritative server markdown content.",
     "updatedAt": "2026-02-01T12:25:00.000Z"
   }
 }

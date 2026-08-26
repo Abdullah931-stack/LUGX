@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ConflictResolver, ResolutionStrategy } from './conflict-resolver';
+import { ConflictResolver, ResolutionStrategy, validateMarkdownSyntaxIntegrity } from './conflict-resolver';
 import { IDBFile, SyncConflict } from './idb-types';
 
 describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
@@ -403,6 +403,224 @@ describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
 
             expect(result.deleted).toBe(true);
             expect(result.content).toBe('');
+        });
+    });
+
+    describe('Markdown Syntax Integrity Validation (Phase 4)', () => {
+        it('should validate clean Markdown with balanced code blocks and valid GFM tables', () => {
+            const content = `# Title\n\n\`\`\`typescript\nconst x = 10;\n\`\`\`\n\n| Col 1 | Col 2 |\n| :--- | ---: |\n| Val 1 | Val 2 |\n`;
+            const check = validateMarkdownSyntaxIntegrity(content);
+            expect(check.valid).toBe(true);
+        });
+
+        it('should detect unclosed fenced code block with backticks', () => {
+            const unclosed = `# Title\n\`\`\`javascript\nconst a = 1;\nconsole.log(a);\n`;
+            const check = validateMarkdownSyntaxIntegrity(unclosed);
+            expect(check.valid).toBe(false);
+            expect(check.reason).toContain('Unclosed fenced code block');
+        });
+
+        it('should detect unclosed fenced code block with tildes', () => {
+            const unclosed = `# Title\n~~~python\ndef hello():\n    pass\n`;
+            const check = validateMarkdownSyntaxIntegrity(unclosed);
+            expect(check.valid).toBe(false);
+            expect(check.reason).toContain('Unclosed fenced code block');
+        });
+
+        it('should ignore table delimiters inside closed code blocks', () => {
+            const codeBlockWithTable = `# Code Block\n\`\`\`markdown\n| Not | A | Real | Table |\n| --- | - | ---- | ----- |\n\`\`\`\n`;
+            const check = validateMarkdownSyntaxIntegrity(codeBlockWithTable);
+            expect(check.valid).toBe(true);
+        });
+
+        it('should detect orphan table delimiter row with no header', () => {
+            const orphanTable = `# Section\n\n| :--- | ---: |\n| Val 1 | Val 2 |\n`;
+            const check = validateMarkdownSyntaxIntegrity(orphanTable);
+            expect(check.valid).toBe(false);
+            expect(check.reason).toContain('Malformed GFM table');
+        });
+
+        it('should detect table delimiter column count mismatch', () => {
+            const brokenColumns = `| Header 1 | Header 2 | Header 3 |\n| :--- | ---: |\n| Cell 1 | Cell 2 | Cell 3 |\n`;
+            const check = validateMarkdownSyntaxIntegrity(brokenColumns);
+            expect(check.valid).toBe(false);
+            expect(check.reason).toContain('column count mismatch');
+        });
+
+        it('should cancel automatic 3-way merge if merge output produces unclosed code block', () => {
+            const base = `# Title\nIntro paragraph\n\n\`\`\`js\nconst x = 1;\n\`\`\`\n`;
+            // Local modified the intro at top
+            const local = `# Title Updated\nIntro paragraph modified\n\n\`\`\`js\nconst x = 1;\n\`\`\`\n`;
+            // Remote modified the bottom code block and omitted the closing fence
+            const remote = `# Title\nIntro paragraph\n\n\`\`\`js\nconst x = 1;\nconsole.log(x);\n`;
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(false);
+            expect(result.status).toBe('conflict_overlaps');
+            expect(result.hasOverlaps).toBe(true);
+            expect(result.reason).toContain('Unclosed fenced code block');
+        });
+
+        it('should cancel automatic 3-way merge if merge output corrupts GFM table delimiter', () => {
+            const base = `# Document\nTop section\n\n| Col 1 | Col 2 |\n| :--- | ---: |\n| A | B |\n`;
+            // Local modified top section
+            const local = `# Document Updated\nTop section edited\n\n| Col 1 | Col 2 |\n| :--- | ---: |\n| A | B |\n`;
+            // Remote modified table delimiter to mismatch header columns
+            const remote = `# Document\nTop section\n\n| Col 1 | Col 2 |\n| :--- | ---: | :---: |\n| A | B |\n`;
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(false);
+            expect(result.status).toBe('conflict_overlaps');
+            expect(result.hasOverlaps).toBe(true);
+            expect(result.reason).toContain('column count mismatch');
+        });
+
+        it('should merge valid Markdown tables and code blocks cleanly when changes do not overlap', () => {
+            const base = `# Title\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n\n| Name | Role |\n| :--- | :--- |\n| Alice | Dev |\n\nEnd`;
+            const local = `# Title Updated\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n\n| Name | Role |\n| :--- | :--- |\n| Alice | Dev |\n\nEnd`;
+            const remote = `# Title\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n\n| Name | Role |\n| :--- | :--- |\n| Alice | Lead Dev |\n\nEnd`;
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.hasOverlaps).toBe(false);
+            expect(result.content).toContain('# Title Updated');
+            expect(result.content).toContain('Alice | Lead Dev');
+        });
+
+        it('Adversarial Test: should correctly handle GFM tables containing escaped pipes in headers without false column mismatch', () => {
+            const tableWithEscapedPipes = `| Function \\| Flag | Description |\n| :--- | :--- |\n| \`test(a \\| b)\` | Evaluates a or b |\n`;
+            const check = validateMarkdownSyntaxIntegrity(tableWithEscapedPipes);
+            expect(check.valid).toBe(true);
+
+            // Three-way merge with escaped pipes in table header
+            const base = `# Docs\n\n| Function \\| Flag | Description |\n| :--- | :--- |\n| \`test()\` | Baseline |\n\nFooter`;
+            const local = `# Docs Updated\n\n| Function \\| Flag | Description |\n| :--- | :--- |\n| \`test()\` | Baseline |\n\nFooter`;
+            const remote = `# Docs\n\n| Function \\| Flag | Description |\n| :--- | :--- |\n| \`test()\` | Baseline updated |\n\nFooter`;
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.content).toContain('# Docs Updated');
+            expect(result.content).toContain('Baseline updated');
+        });
+
+        it('Adversarial Test: should cleanly merge large documents (2,000+ lines) via Prefix/Suffix trimming with zero memory blowup', () => {
+            const headerLines = Array.from({ length: 1000 }, (_, i) => `Header line ${i + 1}`);
+            const footerLines = Array.from({ length: 1000 }, (_, i) => `Footer line ${i + 1}`);
+
+            const base = [...headerLines, 'Target Line: Base', ...footerLines].join('\n');
+            const local = [...headerLines, 'Target Line: Local Modification', ...footerLines].join('\n');
+            const remote = [...headerLines, 'Target Line: Base', ...footerLines, 'Appended Remote Line'].join('\n');
+
+            const startT = performance.now();
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+            const elapsed = performance.now() - startT;
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.content).toContain('Target Line: Local Modification');
+            expect(result.content).toContain('Appended Remote Line');
+            // Prefix/Suffix trimming computes LCS on the 1-line mutated middle slice in sub-second time
+            expect(elapsed).toBeLessThan(1000);
+        });
+
+        it('Adversarial Test: should normalize mixed CRLF and LF line endings without generating false byte conflicts', () => {
+            const base = "Line 1\r\nLine 2\r\nLine 3";
+            const local = "Line 1\r\nLine 2 (local edit)\r\nLine 3";
+            const remote = "Line 1\nLine 2\nLine 3 (remote edit)";
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.content).toContain('Line 2 (local edit)');
+            expect(result.content).toContain('Line 3 (remote edit)');
+        });
+
+        it('Adversarial Test: should correctly reject malformed table with column count mismatch even when containing escaped pipes', () => {
+            // Header has 2 real columns (with 1 escaped pipe in col 1). Delimiter has 3 columns -> true mismatch
+            const brokenTableWithEscapedPipes = `| Command (-a \\| -b) | Action |\n| :--- | :--- | :--- |\n| run | start |\n`;
+            const check = validateMarkdownSyntaxIntegrity(brokenTableWithEscapedPipes);
+            expect(check.valid).toBe(false);
+            expect(check.reason).toContain('column count mismatch (header: 2, delimiter: 3)');
+        });
+
+        it('Adversarial Test: should cleanly handle pure insertion in the middle between common prefix and suffix', () => {
+            const base = "Prefix Line 1\nPrefix Line 2\nSuffix Line 1\nSuffix Line 2";
+            const local = "Prefix Line 1\nPrefix Line 2\nLocal Middle Insertion\nSuffix Line 1\nSuffix Line 2";
+            const remote = "Prefix Line 1\nPrefix Line 2\nSuffix Line 1\nSuffix Line 2\nRemote Appended";
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.content).toBe("Prefix Line 1\nPrefix Line 2\nLocal Middle Insertion\nSuffix Line 1\nSuffix Line 2\nRemote Appended");
+        });
+
+        it('Adversarial Test: should cleanly handle pure deletion in the middle between common prefix and suffix', () => {
+            const base = "Prefix 1\nPrefix 2\nObsolete Middle 1\nObsolete Middle 2\nSuffix 1\nSuffix 2";
+            const local = "Prefix 1\nPrefix 2\nSuffix 1\nSuffix 2"; // Deleted middle
+            const remote = "Prefix 1 (remote modified)\nPrefix 2\nObsolete Middle 1\nObsolete Middle 2\nSuffix 1\nSuffix 2";
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.content).toBe("Prefix 1 (remote modified)\nPrefix 2\nSuffix 1\nSuffix 2");
+        });
+
+        it('Adversarial Test: should merge adjacent non-overlapping modifications on contiguous line numbers cleanly without false conflict', () => {
+            const base = "Line A\nLine B\nLine C\nLine D";
+            const local = "Line A\nLine B (local modified)\nLine C\nLine D"; // Modifies index 1
+            const remote = "Line A\nLine B\nLine C (remote modified)\nLine D"; // Modifies index 2
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.hasOverlaps).toBe(false);
+            expect(result.content).toBe("Line A\nLine B (local modified)\nLine C (remote modified)\nLine D");
         });
     });
 });
