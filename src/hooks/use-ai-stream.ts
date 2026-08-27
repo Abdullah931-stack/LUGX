@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Editor } from '@tiptap/react';
 import type { EditorAdapter } from '@/components/editor/markdown/types';
 import {
     AIStreamSession,
@@ -16,7 +15,6 @@ import { consumeAIStream, AIOperationType } from '@/lib/ai/stream-handler';
 import { formatStreamOutputToHTML, validateStreamMarkdownOutput } from '@/lib/parsers/stream-markdown';
 import { commitAIFileOperation, refundAIReservation } from '@/server/actions/ai-commit';
 import { commitAIReservation, getAIReservationStatus } from '@/server/actions/ai-ops';
-import { streamingGhostPluginKey } from '@/lib/extensions/streaming-ghost-extension';
 import {
     trackPendingAIOperation,
     updatePendingAIOperationPhase,
@@ -39,7 +37,7 @@ export interface UseAIStreamOptions {
     onProgrammaticTransaction?: (fn: () => void) => void;
 }
 
-export type EditorInstance = EditorAdapter | Editor | any;
+export type EditorInstance = EditorAdapter;
 
 export interface StartStreamParams {
     editor: EditorInstance;
@@ -86,13 +84,11 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     const retryPreviewRef = useRef<(() => Promise<void>) | null>(null);
     const stopStreamRef = useRef<(() => Promise<void>) | null>(null);
 
-    // Helper to safely invoke ghost methods across both EditorAdapter and TipTap
+    // Helper to safely invoke ghost methods on EditorAdapter
     const clearGhostDecoration = useCallback((editor: EditorInstance | null): void => {
-        if (!editor || editor.isDestroyed) return;
+        if (!editor) return;
         if (typeof editor.clearStreamingGhost === 'function') {
             editor.clearStreamingGhost();
-        } else if (editor.commands?.clearStreamingGhost) {
-            editor.commands.clearStreamingGhost();
         }
     }, []);
 
@@ -186,7 +182,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             transitionSession(session, 'aborted');
             setStatus('aborted');
 
-            if (editorRef.current && !editorRef.current.isDestroyed) {
+            if (editorRef.current) {
                 runAsProgrammaticTransaction(() => {
                     clearGhostDecoration(editorRef.current);
                 });
@@ -256,7 +252,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             setStatus('aborted');
 
             // Dismantle ghost preview in editor
-            if (editorRef.current && !editorRef.current.isDestroyed) {
+            if (editorRef.current) {
                 clearGhostDecoration(editorRef.current);
             }
         } catch (err) {
@@ -280,7 +276,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         originalEtag,
         editorGeneration,
     }: StartStreamParams): Promise<void> => {
-        if (!editor || editor.isDestroyed) return;
+        if (!editor) return;
 
         // IN-FLIGHT MUTEX: Prevent duplicate / double-click triggering while a stream is actively running
         if (activeSessionRef.current && !isTerminalStatus(activeSessionRef.current.status)) {
@@ -297,23 +293,23 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
         const selection = typeof editor.getSelection === 'function'
             ? editor.getSelection()
-            : (editor.state?.selection || { from: 0, to: 0 });
+            : { from: 0, to: 0 };
         const from = selection.from ?? 0;
         const to = selection.to ?? 0;
         const hasSelection = from !== to;
         const docSize = typeof editor.getCharCount === 'function'
             ? editor.getCharCount()
-            : (editor.state?.doc?.content?.size || editor.getText?.().length || 0);
+            : (typeof editor.getValue === 'function' ? editor.getValue().length : 0);
         const selectionStart = hasSelection ? from : 0;
         const selectionEnd = hasSelection ? to : docSize;
 
         const textToProcess = hasSelection
             ? (typeof editor.getSelectedText === 'function'
                 ? editor.getSelectedText()
-                : (editor.state?.doc?.textBetween(from, to) || ''))
+                : '')
             : (typeof editor.getValue === 'function'
                 ? editor.getValue()
-                : (editor.getText?.() || ''));
+                : '');
 
         if (!textToProcess.trim()) {
             setError('Please enter some text first');
@@ -326,7 +322,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
         const originalContent = typeof editor.getValue === 'function'
             ? editor.getValue()
-            : (editor.getHTML?.() || '');
+            : '';
 
         const session = createStreamSession({
             sessionId,
@@ -365,13 +361,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 onRetry: () => { void retryPreviewRef.current?.(); },
                 onStop: () => { void stopStreamRef.current?.(); },
             });
-        } else if (editor.commands?.startStreamingGhost) {
-            editor.commands.startStreamingGhost({
-                from: selectionStart,
-                to: selectionEnd,
-                text: '',
-                operation,
-            });
         }
 
         try {
@@ -396,11 +385,9 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     previewBuffer.append(sessionId, latestChunk);
                     setPreviewText(accumulated);
 
-                    if (editor && !editor.isDestroyed) {
+                    if (editor) {
                         if (typeof editor.updateStreamingGhost === 'function') {
                             editor.updateStreamingGhost(accumulated, true);
-                        } else if (editor.commands?.updateStreamingGhost) {
-                            editor.commands.updateStreamingGhost(accumulated);
                         }
                     }
                 },
@@ -439,7 +426,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     }
 
                     // Update ghost widget state to preview_ready (switching action buttons to Reject/Retry/Apply)
-                    if (editor && !editor.isDestroyed) {
+                    if (editor) {
                         if (typeof editor.updateStreamingGhost === 'function') {
                             editor.updateStreamingGhost(validatedMarkdown, false);
                         }
@@ -464,7 +451,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 onError: (err) => {
                     if (activeSessionRef.current?.sessionId !== sessionId) return;
 
-                    if (editor && !editor.isDestroyed) {
+                    if (editor) {
                         clearGhostDecoration(editor);
                     }
 
@@ -490,15 +477,13 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const detailMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
             console.error('[useAIStream] Exception during execution:', err);
             if (activeSessionRef.current?.sessionId === sessionId) {
-                if (editor && !editor.isDestroyed) {
+                if (editor) {
                     runAsProgrammaticTransaction(() => {
                         clearGhostDecoration(editor);
                         // USER DATA PROTECTION (AUD-02): Never overwrite user's manual edits
                         if (editorGeneration === session.editorGeneration && session.originalMarkdown) {
                             if (typeof editor.setValue === 'function' && editor.getValue() !== session.originalMarkdown) {
                                 editor.setValue(session.originalMarkdown);
-                            } else if (typeof editor.chain === 'function' && editor.getHTML() !== (session.originalHtml || session.originalMarkdown)) {
-                                editor.chain().setContent(session.originalHtml || session.originalMarkdown).run();
                             }
                         }
                     });
@@ -554,7 +539,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 : null;
             const currentDocLength = typeof editor?.getCharCount === 'function'
                 ? editor.getCharCount()
-                : (typeof editor?.getValue === 'function' ? editor.getValue().length : (editor?.state?.doc?.content?.size || 0));
+                : (typeof editor?.getValue === 'function' ? editor.getValue().length : 0);
 
             const targetFrom = ghostRange ? ghostRange.from : Math.max(0, Math.min(selectionStart, currentDocLength));
             const targetTo = ghostRange ? ghostRange.to : Math.max(targetFrom, Math.min(selectionEnd, currentDocLength));
@@ -600,15 +585,13 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 transitionSession(session, 'conflict');
                 setStatus('conflict');
 
-                if (editor && !editor.isDestroyed) {
+                if (editor) {
                     runAsProgrammaticTransaction(() => {
                         clearGhostDecoration(editor);
                         // USER DATA PROTECTION (AUD-02): Only rollback if editor generation hasn't changed
                         if (editorGeneration === session.editorGeneration && session.originalMarkdown) {
                             if (typeof editor.setValue === 'function' && editor.getValue() !== session.originalMarkdown) {
                                 editor.setValue(session.originalMarkdown);
-                            } else if (typeof editor.chain === 'function' && editor.getHTML() !== (session.originalHtml || session.originalMarkdown)) {
-                                editor.chain().setContent(session.originalHtml || session.originalMarkdown).run();
                             }
                         }
                     });
@@ -631,7 +614,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             }
 
             // STEP 2: Local Atomic Commit (1 Transaction in History)
-            if (editor && !editor.isDestroyed) {
+            if (editor) {
                 runAsProgrammaticTransaction(() => {
                     if (typeof editor.replaceRange === 'function') {
                         // CodeMirror Markdown EditorAdapter: query latest dynamic range before clearing
@@ -643,22 +626,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         const actualTo = latestGhost ? latestGhost.to : Math.max(actualFrom, Math.min(targetTo, docLen));
 
                         editor.replaceRange(actualFrom, actualTo, resultMarkdown);
-                    } else if (typeof editor.chain === 'function') {
-                        // TipTap Editor fallback
-                        const ghostState = streamingGhostPluginKey.getState(editor.state);
-                        const docSize = editor.state?.doc?.content?.size || 0;
-                        const tFrom = ghostState?.active
-                            ? Math.max(0, Math.min(ghostState.from, docSize))
-                            : Math.max(0, Math.min(selectionStart, docSize));
-                        const tTo = ghostState?.active
-                            ? Math.max(tFrom, Math.min(ghostState.to, docSize))
-                            : Math.max(tFrom, Math.min(selectionEnd, docSize));
-
-                        editor.chain()
-                            .setTextSelection({ from: tFrom, to: tTo })
-                            .deleteSelection()
-                            .insertContent(safeHtml || resultMarkdown)
-                            .run();
                     }
 
                     clearGhostDecoration(editor);
@@ -681,7 +648,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const detailMessage = err instanceof Error ? err.message : 'Preview commit failed';
             console.error('[useAIStream] Preview commit error:', err);
 
-            if (editor && !editor.isDestroyed) {
+            if (editor) {
                 runAsProgrammaticTransaction(() => {
                     clearGhostDecoration(editor);
                 });

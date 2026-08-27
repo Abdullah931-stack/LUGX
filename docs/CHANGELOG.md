@@ -2,6 +2,35 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.16.0] - 2026-08-27 (AI Stream Collision Guard, Non-Colliding Edit Tolerance & Clean Documentation Sync)
+
+### Added - AI Stream Collision Guard & Dynamic Range Shifting
+- **Collision-Aware Dynamic Selection Shifting (`src/components/editor/markdown/streaming-ghost.ts`):** `codeMirrorStreamingGhostField` tracks all document mutations via `tr.changes.iterChanges`. Non-overlapping edits occurring elsewhere in the document dynamically shift the AI generation bounds `[from, to]` via `mapPos(from, 1)` and `mapPos(to, -1)`, allowing the user to write and edit freely without interrupting AI generation.
+- **Direct Collision Abort Protection:** Direct edits overlapping with the target generation range dismiss the ghost decoration and safely trigger `onStop()` to prevent text corruption.
+- **Orchestrator Manual Edit Policy (`src/hooks/use-editor-orchestrator.ts`):** Updated `handleEditorChange` to query `adapter.getGhostRange()`, preserving active streaming sessions on non-colliding manual edits.
+
+### Changed - Code Hygiene & Test Setup Modernization
+- **Dead Code Elimination (`src/lib/sync/conflict-resolver.ts`):** Removed obsolete HTML tag scanning (`isHtml`) from the pure Markdown three-way merge tokenizer.
+- **Centralized JSDOM CodeMirror Polyfills (`vitest.setup.ts`):** Centralized `Range.prototype.getClientRects` and `Range.prototype.getBoundingClientRect` polyfills in the central setup file for unified CodeMirror 6 testing reliability.
+- **Documentation Modernization (`docs/`):** Purged obsolete TipTap and HTML references across `docs/architecture/` and `docs/specs/` to guarantee 100% synchronization with the source code.
+
+## [1.15.0] - 2026-08-27 (Markdown Migration Phase 6: Complete TipTap Purge & Final Verification Closure)
+
+### Removed - Complete TipTap & ProseMirror Dependency Purge
+- **Uninstalled 4 `@tiptap/*` packages:** Completely removed `@tiptap/core`, `@tiptap/react`, `@tiptap/pm`, `@tiptap/starter-kit`, and `@tiptap/extension-placeholder` from `package.json` and `package-lock.json` (63 packages removed).
+- **Deleted Legacy TipTap Extensions:** Deleted `src/lib/extensions/direction-extension.ts` and `src/lib/extensions/streaming-ghost-extension.ts` along with the `src/lib/extensions` directory.
+- **Deleted Obsolete HTML Server Converter:** Deleted `src/lib/parsers/text-to-html.server.ts`.
+
+### Added - Standalone CodeMirror 6 Plugins & Comprehensive E2E Tests
+- **Standalone Streaming Ghost Plugin (`src/components/editor/markdown/streaming-ghost.ts`):** Encapsulated CodeMirror 6 `StateField`, `WidgetType`, `StateEffect`, and dynamic range tracking with zero external/TipTap dependencies.
+- **Comprehensive Markdown Editor E2E Test Suite (`src/test/markdown-editor-e2e.test.ts`):** Established comprehensive test suite covering file hydration (NFC/LF), rapid typing, remote pull cursor preservation, offline caching & 3-way merge resolution, AI streaming preview & explicit decision flow, and pure Markdown/Text import/export fidelity.
+
+### Changed - Type Modernization & Test Hardening
+- **Enforced `EditorAdapter` Across AI Stream Hook (`src/hooks/use-ai-stream.ts`):** Removed all `@tiptap/react` imports and ProseMirror transaction branches; unified `EditorInstance` on `EditorAdapter`.
+- **Modernized Legacy Test Suites:** Upgraded `editor-recovery-reload.test.ts`, `editor-atomic-commit.test.ts`, `ai-preview-decision.test.ts`, `ai-preview-decision.live.test.ts`, and `ai-transaction.test.ts` to pure `EditorAdapter` and CodeMirror 6.
+- **Fixed Live Test Database Isolation:** Fixed user seeding and file title collision handling in `src/test/editor-orchestration.live.test.ts` and `src/test/ai-reservation-status.live.test.ts`.
+- **Full Verification Passed:** 100% test pass rate across 546 total automated tests (477 unit + 69 live) and 0 TypeScript compilation errors with passing Next.js production build.
+
 ## [1.14.0] - 2026-08-27 (Markdown Migration Phase 5: Markdown AI Streaming, Direct Exporters & Unified Inline Preview)
 
 ### Added - Unified Inline Interactive Streaming Widget & CodeMirror 6 StateField

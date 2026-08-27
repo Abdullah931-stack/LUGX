@@ -15,7 +15,7 @@ In previous iterations, real-time UI streaming was replaced with an off-screen b
 Any acceptable architectural solution must rigorously satisfy the following five invariants:
 
 1. **Auto-Save Invariance:** The live editor document state MUST NOT be mutated during active streaming **or while a completed result awaits an explicit user decision** (`preview_ready`). No intermediate chunk shall trigger debounced auto-save mutations to IndexedDB or the remote database.
-2. **Partial Selection & Scope Invariance:** When an operation targets a specific sub-range $[from, to]$ within the document, the preceding content $[0, from)$ and subsequent content $(to, \text{content.length}]$ MUST remain in their normal, unaffected layout and state. Streaming preview anchors strictly at the selection coordinates.
+2. **Partial Selection & Scope Invariance (with Non-Colliding Edit Tolerance):** When an operation targets a specific sub-range $[from, to]$ within the document, the preceding content $[0, from)$ and subsequent content $(to, \text{content.length}]$ remain completely interactive and editable. Edits occurring outside the target range dynamically shift $[from, to]$ via `mapPos` without aborting the stream. If an edit directly mutates the target range itself, the stream is safely aborted and the preview dismissed.
 3. **Atomic Commit Invariance (Acceptance-Triggered):** Stream completion does NOT mutate the document. The sanitized output is parked in `preview_ready`, and only an explicit user **Accept** applies the AI transformation in exactly ONE atomic transaction targeting $[from, to]$ via `adapter.replaceRange(from, to, previewContent)` (server-first commit confirmed before the local write). **Reject** and **Retry** leave the document fully untouched.
 4. **Single-Action Undo Invariance:** Exactly one history entry is produced. A single `Ctrl+Z` (or undo command) restores the original document state and selection range prior to the AI invocation.
 5. **Deterministic Rollback Invariance:** If the stream fails, times out, is aborted by the user, or encounters an API error (429/500/503), the ephemeral visual state is purged in $O(1)$ time with zero side effects on the document content.
@@ -94,7 +94,8 @@ Document Model:
 
 1. **When text IS selected ($from \neq to$):**
    - The stream targets exactly $[from, to]$.
-   - The text preceding $from$ and following $to$ remains rendered completely as-is in the normal editor flow.
+   - The text preceding $from$ and following $to$ remains rendered completely as-is in the normal editor flow and remains editable.
+   - Non-overlapping edits elsewhere in the document dynamically shift $from$ and $to$ via CodeMirror `mapPos`.
    - The streaming widget renders in-place starting at index $from$.
    - On commit, `adapter.replaceRange(from, to, previewMarkdown)` modifies only that slice in a single atomic transaction.
 2. **When NO text is selected (Full Document Operation, $from = to = 0$):**

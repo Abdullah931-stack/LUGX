@@ -18,9 +18,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { Editor } from '@tiptap/core';
-import StarterKit from '@tiptap/starter-kit';
-import { StreamingGhostExtension } from '@/lib/extensions/streaming-ghost-extension';
+import { EditorState } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
+import { CodeMirrorEditorAdapter, createEditorAdapter } from '@/components/editor/markdown/editor-adapter';
+import { createMarkdownExtensions } from '@/components/editor/markdown/markdown-extensions';
 import { useAIStream } from '@/hooks/use-ai-stream';
 
 // Mock server actions
@@ -50,9 +51,11 @@ vi.mock('@/lib/ai/stream-handler', () => ({
 }));
 
 describe('AI Preview Explicit Decision Model (preview_ready)', () => {
-    let editor: Editor;
+    let editor: CodeMirrorEditorAdapter;
+    let view: EditorView;
+    let container: HTMLElement;
     let capturedCallbacks: ConsumeCallbacks;
-    const initialContent = '<p>The quick brown fox jumps over the lazy dog.</p>';
+    const initialContent = 'The quick brown fox jumps over the lazy dog.';
 
     const renderAIStream = () =>
         renderHook(() =>
@@ -108,13 +111,19 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             await options.onComplete?.('Better text');
         });
 
-        editor = new Editor({
-            extensions: [StarterKit, StreamingGhostExtension],
-            content: initialContent,
+        container = document.createElement('div');
+        document.body.appendChild(container);
+
+        const state = EditorState.create({
+            doc: initialContent,
+            extensions: createMarkdownExtensions({ mode: 'live' }),
         });
+        view = new EditorView({ state, parent: container });
+        editor = new CodeMirrorEditorAdapter(view);
     });
+
     it('parks the result in preview_ready without any commit or document mutation', async () => {
-        const snapshotBefore = editor.getHTML();
+        const snapshotBefore = editor.getValue();
         const { result } = renderAIStream();
 
         await startDefaultStream(result);
@@ -126,12 +135,12 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
         expect(mockCommitAIReservation).not.toHaveBeenCalled();
 
         // The document remains pristine; preview text is held for the decision
-        expect(editor.getHTML()).toBe(snapshotBefore);
+        expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.previewText).toBe('Better text');
     });
 
     it('rejectPreview settles the reservation as consumed and NEVER refunds it', async () => {
-        const snapshotBefore = editor.getHTML();
+        const snapshotBefore = editor.getValue();
         const { result } = renderAIStream();
 
         await startDefaultStream(result);
@@ -147,7 +156,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
         expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
 
         // Ghost dismantled, document untouched, session released
-        expect(editor.getHTML()).toBe(snapshotBefore);
+        expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.previewText).toBe('');
     });
 
@@ -172,7 +181,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
         expect(mockCommitAIFileOperation).toHaveBeenCalledTimes(1);
         expect(mockRefundAIReservation).not.toHaveBeenCalled();
 
-        expect(editor.getHTML()).toContain('Better text');
+        expect(editor.getValue()).toContain('Better text');
         expect(result.current.status).toBe('committed');
         // The preview panel must disappear on acceptance (same as rejection)
         expect(result.current.previewText).toBe('');
@@ -205,7 +214,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             options.onMeta?.({ sessionId: 's', operationId: 'op' });
             options.onChunk?.('Partial ', 'Partial ');
         });
-        const snapshotBefore = editor.getHTML();
+        const snapshotBefore = editor.getValue();
         const { result } = renderAIStream();
 
         await startDefaultStream(result);
@@ -219,27 +228,22 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
         // settlement wins over the server-side disconnect refund.
         expect(mockCommitAIReservation).toHaveBeenCalledTimes(1);
         expect(mockRefundAIReservation).not.toHaveBeenCalled();
-        expect(editor.getHTML()).toBe(snapshotBefore);
+        expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.status).toBe('aborted');
     });
 
     describe('Markdown EditorAdapter & Dynamic Ghost Range Shifting', () => {
         it('should dynamically map ghost range forward when user edits document during stream and commit accurately', async () => {
-            const { EditorState } = await import('@codemirror/state');
-            const { EditorView } = await import('@codemirror/view');
-            const { createEditorAdapter } = await import('@/components/editor/markdown/editor-adapter');
-            const { createMarkdownExtensions } = await import('@/components/editor/markdown/markdown-extensions');
-
-            const container = document.createElement('div');
-            document.body.appendChild(container);
-
             const initialText = 'Line 1: Prefix text.\nLine 2: TARGET_TO_IMPROVE.\nLine 3: Suffix text.';
+            const testContainer = document.createElement('div');
+            document.body.appendChild(testContainer);
+
             const state = EditorState.create({
                 doc: initialText,
                 extensions: createMarkdownExtensions({ mode: 'live' }),
             });
-            const view = new EditorView({ state, parent: container });
-            const adapter = createEditorAdapter(view);
+            const testView = new EditorView({ state, parent: testContainer });
+            const adapter = createEditorAdapter(testView);
 
             // Select "TARGET_TO_IMPROVE"
             const targetStart = initialText.indexOf('TARGET_TO_IMPROVE');
@@ -251,7 +255,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             // Start stream
             await act(async () => {
                 await result.current.startStream({
-                    editor: adapter as any,
+                    editor: adapter,
                     operation: 'improve',
                     fileId: 'file-cm-1',
                     expectedVersion: 1,
@@ -268,7 +272,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
 
             // SIMULATE CONCURRENT USER EDIT: User types 20 characters at the very beginning of the document
             const prefixAddition = 'EXTRA_PREFIX_CHARS!!';
-            view.dispatch({
+            testView.dispatch({
                 changes: { from: 0, to: 0, insert: prefixAddition },
             });
 
@@ -301,31 +305,75 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             expect(currentDoc).toContain('Better text');
             expect(currentDoc).not.toContain('TARGET_TO_IMPROVE');
 
-            view.destroy();
-            container.remove();
+            testView.destroy();
+            testContainer.remove();
+        });
+
+        it('should immediately abort stream and clear ghost when user edits directly inside the target range', async () => {
+            const initialText = 'Line 1: Prefix text.\nLine 2: TARGET_TO_IMPROVE.\nLine 3: Suffix text.';
+            const testContainer = document.createElement('div');
+            document.body.appendChild(testContainer);
+
+            const state = EditorState.create({
+                doc: initialText,
+                extensions: createMarkdownExtensions({ mode: 'live' }),
+            });
+            const testView = new EditorView({ state, parent: testContainer });
+            const adapter = createEditorAdapter(testView);
+
+            // Select "TARGET_TO_IMPROVE"
+            const targetStart = initialText.indexOf('TARGET_TO_IMPROVE');
+            const targetEnd = targetStart + 'TARGET_TO_IMPROVE'.length;
+            adapter.setSelection(targetStart, targetEnd);
+
+            const { result } = renderAIStream();
+
+            // Start stream
+            await act(async () => {
+                await result.current.startStream({
+                    editor: adapter,
+                    operation: 'improve',
+                    fileId: 'file-cm-2',
+                    expectedVersion: 1,
+                    originalEtag: 'etag-v1',
+                    editorGeneration: 1,
+                });
+            });
+
+            await waitFor(() => expect(result.current.status).toBe('preview_ready'));
+            expect(adapter.getGhostRange?.()).toEqual({ from: targetStart, to: targetEnd });
+
+            // SIMULATE DIRECT COLLIDING EDIT: User deletes or modifies characters INSIDE the target range
+            testView.dispatch({
+                changes: { from: targetStart + 2, to: targetStart + 8, insert: 'MODIFIED' },
+            });
+
+            // Ghost range must be invalidated / cleared immediately
+            expect(adapter.getGhostRange?.()).toBeNull();
+
+            // Stream should transition to aborted via onStop callback
+            await waitFor(() => expect(result.current.status).toBe('aborted'));
+
+            testView.destroy();
+            testContainer.remove();
         });
 
         it('should render unified inline widget with interactive buttons and trigger actions on click', async () => {
-            const { EditorState } = await import('@codemirror/state');
-            const { EditorView } = await import('@codemirror/view');
-            const { createEditorAdapter } = await import('@/components/editor/markdown/editor-adapter');
-            const { createMarkdownExtensions } = await import('@/components/editor/markdown/markdown-extensions');
-
-            const container = document.createElement('div');
-            document.body.appendChild(container);
+            const testContainer = document.createElement('div');
+            document.body.appendChild(testContainer);
 
             const state = EditorState.create({
                 doc: 'Original text to translate',
                 extensions: createMarkdownExtensions({ mode: 'live' }),
             });
-            const view = new EditorView({ state, parent: container });
-            const adapter = createEditorAdapter(view);
+            const testView = new EditorView({ state, parent: testContainer });
+            const adapter = createEditorAdapter(testView);
 
             const { result } = renderAIStream();
 
             await act(async () => {
                 await result.current.startStream({
-                    editor: adapter as any,
+                    editor: adapter,
                     operation: 'translate',
                     fileId: 'file-widget-1',
                     expectedVersion: 1,
@@ -337,7 +385,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             await waitFor(() => expect(result.current.status).toBe('preview_ready'));
 
             // Verify widget DOM exists inside editor
-            const widgetElement = container.querySelector('.cm-ai-ghost-widget');
+            const widgetElement = testContainer.querySelector('.cm-ai-ghost-widget');
             expect(widgetElement).not.toBeNull();
             expect(widgetElement?.textContent).toContain('معاينة الذكاء الاصطناعي (translate)');
 
@@ -364,10 +412,8 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             await waitFor(() => expect(result.current.status).toBe('committed'));
             expect(mockCommitAIFileOperation).toHaveBeenCalledTimes(1);
 
-            view.destroy();
-            container.remove();
+            testView.destroy();
+            testContainer.remove();
         });
     });
 });
-
-

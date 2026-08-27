@@ -576,9 +576,11 @@ export function useEditorOrchestrator({
     );
 
     /**
-     * Manual Edit Policy (Phase 2):
-     * If user performs manual edit:
-     * - If AI stream is active: abort stream immediately to prevent race conditions.
+     * Manual Edit Policy:
+     * - If AI stream is active:
+     *   - Check if an active non-colliding ghost range is maintained via adapter.getGhostRange().
+     *   - If ghost range was cleared / collided (user edited the target text directly): abort stream.
+     *   - If ghost range is still valid (user edited outside the target text): keep stream active.
      * - Advance editor generation.
      * - Record dirty state and schedule debounced save.
      */
@@ -588,14 +590,32 @@ export function useEditorOrchestrator({
             // Sync-before-write: drop input events until hydration completed.
             if (!hydratedRef.current) return;
 
-            if (aiStream.isLoading || aiStream.isStreaming || aiStream.status === "reserved" || aiStream.status === "preview_ready") {
-                console.warn("[Orchestrator] User manual edit occurred while AI generation is active. Aborting AI generation.");
-                aiStream.stopStream();
-                editorGenerationRef.current += 1;
-            } else {
-                editorGenerationRef.current += 1;
+            const isAIActive =
+                aiStream.isLoading ||
+                aiStream.isStreaming ||
+                aiStream.status === "reserved" ||
+                aiStream.status === "preview_ready";
+
+            if (isAIActive) {
+                const ghostRange =
+                    typeof adapterRef.current?.getGhostRange === "function"
+                        ? adapterRef.current.getGhostRange()
+                        : null;
+
+                if (!ghostRange) {
+                    console.warn(
+                        "[Orchestrator] User manual edit collided with AI target range or entire document was modified. Aborting AI generation."
+                    );
+                    aiStream.stopStream();
+                } else {
+                    console.log(
+                        "[Orchestrator] User manual edit occurred outside AI target range. Retaining active stream at shifted range:",
+                        ghostRange
+                    );
+                }
             }
 
+            editorGenerationRef.current += 1;
             setIsDirty(true);
             debouncedAutoSaveRef.current(newContent);
         },

@@ -11,11 +11,12 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { Editor } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
+import { CodeMirrorEditorAdapter, createEditorAdapter } from "@/components/editor/markdown/editor-adapter";
+import { createMarkdownExtensions } from "@/components/editor/markdown/markdown-extensions";
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/lib/db/schema";
@@ -31,7 +32,6 @@ vi.mock("@/lib/db/transactional", async () => {
     const { testDb } = await import("@/test/test-db");
     return { txDb: testDb };
 });
-
 
 type ConsumeCallbacks = {
     onMeta?: (meta: { sessionId: string; operationId: string; reservationId?: string }) => void;
@@ -56,13 +56,12 @@ vi.mock("@/lib/ai/stream-handler", () => ({
 }));
 
 const USER_ID = "88888888-8888-8888-8888-888888888888"; // placeholder pattern
-const INITIAL = "<p>The quick brown fox jumps over the lazy dog.</p>";
+const INITIAL = "The quick brown fox jumps over the lazy dog.";
 
 interface Fixture {
     fileId: string;
 }
 
-let capturedOptions: { operationId?: string } & Record<string, unknown>;
 let activeFixture: Fixture | null = null;
 
 async function seedUserAndFile(): Promise<Fixture> {
@@ -93,23 +92,30 @@ async function seedServerReservation(operationId: string, fileId: string) {
     if (!res.reserved) throw new Error(`server-seed failed: ${res.reason}`);
 }
 
-
 afterAll(async () => {
     await cleanupTestUsers([USER_ID]);
 });
 
 describe("LIVE: AI preview explicit decision model on isolated branch", () => {
-    let editor: Editor;
+    let editor: CodeMirrorEditorAdapter;
+    let view: EditorView;
+    let container: HTMLElement;
 
     beforeEach(() => {
-        editor = new Editor({
-            extensions: [StarterKit, StreamingGhostExtension],
-            content: INITIAL,
+        container = document.createElement("div");
+        document.body.appendChild(container);
+
+        const state = EditorState.create({
+            doc: INITIAL,
+            extensions: createMarkdownExtensions({ mode: "live" }),
         });
+        view = new EditorView({ state, parent: container });
+        editor = new CodeMirrorEditorAdapter(view);
     });
 
     afterEach(() => {
-        editor.destroy();
+        view.destroy();
+        container.remove();
     });
 
     const renderAIStream = () =>
@@ -121,20 +127,6 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
                 onProgrammaticTransaction: (fn) => fn(),
             })
         );
-
-    const driveSuccessfulStream = async () => {
-        await act(async () => {
-            /* consumeAIStream mock drives callbacks synchronously */
-        });
-        // The operationId used for settlement is the one the HOOK generated
-        // (and our mocked consumer seeded server-side) — not a test constant.
-        capturedCallbacks.onMeta?.({
-            sessionId: "s-live",
-            operationId: capturedCallbacks.operationId!,
-        });
-        capturedCallbacks.onChunk?.("Better text", " text");
-        await capturedCallbacks.onComplete?.("Better text");
-    };
 
     const startDefaultStream = async (
         result: { current: ReturnType<typeof useAIStream> },
@@ -155,14 +147,14 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
     it("parks the completed stream in preview_ready with ZERO server writes", async () => {
         activeFixture = await seedUserAndFile();
         const fixture = activeFixture;
-        const snapshot = editor.getHTML();
+        const snapshot = editor.getValue();
         const { result } = renderAIStream();
 
         await startDefaultStream(result, fixture);
         await waitFor(() => expect(result.current.status).toBe("preview_ready"));
 
         // Document pristine, preview parked.
-        expect(editor.getHTML()).toBe(snapshot);
+        expect(editor.getValue()).toBe(snapshot);
         expect(result.current.previewText).toBe("Better text");
 
         // DB untouched by preview: file still v1, reservation still reserved.
@@ -181,7 +173,7 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
     it("rejectPreview settles the reservation as consumed (never refunds) and keeps the document pristine", async () => {
         activeFixture = await seedUserAndFile();
         const fixture = activeFixture;
-        const snapshot = editor.getHTML();
+        const snapshot = editor.getValue();
         const { result } = renderAIStream();
 
         await startDefaultStream(result, fixture);
@@ -191,7 +183,7 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
             result.current.rejectPreview();
         });
 
-        expect(editor.getHTML()).toBe(snapshot);
+        expect(editor.getValue()).toBe(snapshot);
 
         // Settlement is fire-and-forget inside the hook — wait for the row.
         let reservation!: typeof schema.aiReservations.$inferSelect;
@@ -247,9 +239,8 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
         expect(reservation.status).toBe("committed");
 
         // Local editor applied the AI output as exactly one undoable step.
-        expect(editor.getHTML()).toContain("Better text");
-        editor.commands.undo();
-        expect(editor.getHTML()).toBe(INITIAL);
+        expect(editor.getValue()).toContain("Better text");
+        editor.undo();
+        expect(editor.getValue()).toBe(INITIAL);
     });
 });
-

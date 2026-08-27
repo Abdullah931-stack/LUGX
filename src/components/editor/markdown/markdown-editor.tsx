@@ -73,6 +73,10 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
         getHeadingCount: () => adapterRef.current?.getHeadingCount() ?? 0,
         getMode: () => adapterRef.current?.getMode() ?? "live",
         setMode: (m) => adapterRef.current?.setMode(m),
+        startStreamingGhost: (opts) => adapterRef.current?.startStreamingGhost?.(opts),
+        updateStreamingGhost: (text, isStreaming) => adapterRef.current?.updateStreamingGhost?.(text, isStreaming),
+        clearStreamingGhost: () => adapterRef.current?.clearStreamingGhost?.(),
+        getGhostRange: () => adapterRef.current?.getGhostRange?.() ?? null,
         destroy: () => adapterRef.current?.destroy(),
     }), []);
 

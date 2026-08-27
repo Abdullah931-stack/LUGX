@@ -38,7 +38,7 @@ function createMockAdapter(initialContent = ""): EditorAdapter {
         replaceRange: (from: number, to: number, insert: string) => {
             content = content.slice(0, from) + insert + content.slice(to);
         },
-        replaceRanges: (changes: { from: number; to: number; insert: string }[]) => {
+        replaceRanges: (changes) => {
             const sorted = [...changes].sort((a, b) => b.from - a.from);
             for (const c of sorted) {
                 content = content.slice(0, c.from) + c.insert + content.slice(c.to);
@@ -60,6 +60,10 @@ function createMockAdapter(initialContent = ""): EditorAdapter {
         getHeadingCount: () => (content.match(/^#{1,6}\s/gm) || []).length,
         getMode: () => "live",
         setMode: vi.fn(),
+        startStreamingGhost: vi.fn(),
+        updateStreamingGhost: vi.fn(),
+        clearStreamingGhost: vi.fn(),
+        getGhostRange: vi.fn().mockReturnValue(null),
         destroy: vi.fn(),
     };
 }
@@ -87,7 +91,9 @@ vi.mock("@/lib/sync", async (importOriginal) => {
             syncFile: vi.fn().mockResolvedValue(undefined),
             getStatus: vi.fn().mockReturnValue("idle"),
             onStatusChange: vi.fn().mockReturnValue(() => undefined),
+            onRemoteUpdate: vi.fn().mockReturnValue(() => undefined),
             setConflictCallback: vi.fn(),
+            setRemoteUpdateCallback: vi.fn(),
         })),
         connectionDetector: {
             init: vi.fn(),
@@ -102,10 +108,17 @@ vi.mock("@/lib/sync", async (importOriginal) => {
     };
 });
 
-const USER_ID = "77777777-7777-7777-7777-777777777777"; // placeholder pattern
-const FILE_ID = randomUUID();
+const USER_ID = "55555555-5555-5555-5555-555555555555";
+let FILE_ID: string;
 
 async function seedFile(): Promise<void> {
+    await testDb
+        .insert(schema.users)
+        .values({ id: USER_ID, email: `${USER_ID}@live.test` })
+        .onConflictDoNothing();
+
+    await testDb.delete(schema.files).where(eq(schema.files.userId, USER_ID));
+
     await testDb
         .insert(schema.files)
         .values({
@@ -115,16 +128,6 @@ async function seedFile(): Promise<void> {
             content: "Original",
             version: 1,
             etag: "etag-v1",
-        })
-        .onConflictDoUpdate({
-            target: schema.files.id,
-            set: {
-                title: "Test Note",
-                content: "Original",
-                version: 1,
-                etag: "etag-v1",
-                deletedAt: null,
-            },
         });
 }
 
@@ -136,6 +139,10 @@ async function getFileRow() {
     return row;
 }
 
+afterAll(async () => {
+    await cleanupTestUsers([USER_ID]);
+});
+
 describe("LIVE: editor orchestration single-writer path on isolated branch", () => {
     let adapter: EditorAdapter;
 
@@ -143,6 +150,7 @@ describe("LIVE: editor orchestration single-writer path on isolated branch", () 
         renderHook(() => useEditorOrchestrator({ fileId: FILE_ID, userId: USER_ID, adapter }));
 
     beforeEach(async () => {
+        FILE_ID = randomUUID();
         vi.mocked(getUser).mockResolvedValue({ id: USER_ID } as never);
         await seedFile();
         adapter = createMockAdapter("Original");
@@ -150,10 +158,6 @@ describe("LIVE: editor orchestration single-writer path on isolated branch", () 
 
     afterEach(() => {
         adapter.destroy();
-    });
-
-    afterAll(async () => {
-        await cleanupTestUsers([USER_ID]);
     });
 
     it("initializes from the REAL database row (title/version/etag)", async () => {
@@ -192,6 +196,7 @@ describe("LIVE: editor orchestration single-writer path on isolated branch", () 
     it("detects a real 412 against a sibling write and resolves via authoritative merge", async () => {
         const { result } = renderOrchestrator();
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
+        await waitFor(() => expect(result.current.isDirty).toBe(false));
 
         // First local save advances to v2 (establishes hook's expected state).
         act(() => {

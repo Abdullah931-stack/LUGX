@@ -22,7 +22,7 @@ import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { GFM } from "@lezer/markdown";
 import { EditorMode } from "./types";
 import { markdownThemeExtension } from "./markdown-theme";
-import { codeMirrorStreamingGhostField } from "@/lib/extensions/streaming-ghost-extension";
+import { codeMirrorStreamingGhostField } from "./streaming-ghost";
 
 // Compartments for dynamic reconfiguration without state recreation
 export const modeCompartment = new Compartment();

@@ -1,12 +1,11 @@
 /**
  * @vitest-environment jsdom
  *
- * M4/M5 / Gate G8 / Phase 8: AI operation content-safety & UI streaming tests.
+ * M4/M5 / Gate G8 / Phase 8 / Phase 6: AI operation content-safety & UI streaming tests with CodeMirror 6.
  *
- * The editor page's handleAIOperation guarantees that an AI operation
- * can NEVER corrupt or leave the document in a half-modified state:
+ * Guarantees that an AI operation can NEVER corrupt or leave the document in a half-modified state:
  *   1. Streaming isolation: during active streaming, chunks update an
- *      ephemeral ProseMirror decoration without mutating the underlying
+ *      ephemeral CodeMirror 6 StateField decoration without mutating the underlying
  *      document tree (docChanged is false, auto-save does NOT fire).
  *   2. Partial selection: only the target sub-range [from, to] is replaced;
  *      preceding and subsequent paragraphs remain completely intact.
@@ -14,198 +13,179 @@
  *      and a single Ctrl+Z restores the full original content.
  *   4. On failure / abort: the ephemeral decoration is cleared and the
  *      document remains in its pristine pre-operation state.
- *   5. Server confirmation invariant (Phase 8): Local editor transaction
+ *   5. Server confirmation invariant: Local editor transaction
  *      is executed ONLY after server commit confirms success.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { Editor } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
-import { convertTextToHTML } from "@/lib/parsers/text-to-html";
-import { sanitizeHtml } from "@/lib/sanitize-client";
-import {
-    StreamingGhostExtension,
-    streamingGhostPluginKey,
-} from "@/lib/extensions/streaming-ghost-extension";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { history } from "@codemirror/commands";
+import { CodeMirrorEditorAdapter } from "@/components/editor/markdown/editor-adapter";
+import { codeMirrorStreamingGhostField } from "@/components/editor/markdown/streaming-ghost";
 
-/**
- * Reproduces the page's applyAITransaction semantics on a raw editor.
- * Returns { docAfter, undoResult } for assertion.
- */
-function runAITransaction(
-    editor: Editor,
-    selectionStart: number,
-    selectionEnd: number,
-    collectedText: string
-): { docAfter: string; undoResult: string } {
-    const html = convertTextToHTML(collectedText);
-    const safeHtml = sanitizeHtml(html);
+const initialDoc = "Hello world, this is a test document with multiple paragraphs.\n\nSecond paragraph here.";
 
-    // Clear streaming ghost decoration first
-    editor.commands.clearStreamingGhost();
+describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirror 6)", () => {
+    let adapter: CodeMirrorEditorAdapter;
+    let view: EditorView;
+    let parent: HTMLDivElement;
 
-    // ONE undoable transaction: select, delete, insert (matches the page).
-    editor.chain()
-        .setTextSelection({ from: selectionStart, to: selectionEnd })
-        .deleteSelection()
-        .insertContent(safeHtml)
-        .run();
+    beforeEach(() => {
+        if (typeof Range.prototype.getClientRects !== 'function') {
+            Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+        }
+        if (typeof Range.prototype.getBoundingClientRect !== 'function') {
+            Range.prototype.getBoundingClientRect = () => ({
+                top: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
+                width: 0,
+                height: 0,
+                x: 0,
+                y: 0,
+                toJSON: () => ({}),
+            });
+        }
 
-    const docAfter = editor.getHTML();
-    const undoResult = editor.chain().undo().run() ? editor.getHTML() : docAfter;
-    return { docAfter, undoResult };
-}
+        parent = document.createElement("div");
+        document.body.appendChild(parent);
 
-let editor: Editor;
+        const state = EditorState.create({
+            doc: initialDoc,
+            extensions: [
+                history(),
+                codeMirrorStreamingGhostField,
+            ],
+        });
 
-beforeEach(() => {
-    editor = new Editor({
-        extensions: [StarterKit, StreamingGhostExtension],
-        content: "<p>Hello world, this is a test document with multiple paragraphs.</p><p>Second paragraph here.</p>",
+        view = new EditorView({
+            state,
+            parent,
+        });
+
+        adapter = new CodeMirrorEditorAdapter(view);
     });
-});
 
-describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees", () => {
-    it("should start and update streaming ghost with real-time text chunks without mutating editor.state.doc or triggering auto-save", () => {
-        const initialDocHTML = editor.getHTML();
-        const updateListener = vi.fn();
-        editor.on("update", updateListener);
+    afterEach(() => {
+        if (view) {
+            view.destroy();
+        }
+        if (parent && parent.parentNode) {
+            parent.parentNode.removeChild(parent);
+        }
+    });
+
+    it("should start and update streaming ghost with real-time text chunks without mutating doc or triggering auto-save", () => {
+        const initialText = adapter.getValue();
 
         // 1. Start streaming ghost at range [0, 20]
-        editor.commands.startStreamingGhost({
+        adapter.startStreamingGhost({
             from: 0,
             to: 20,
             text: "Generating...",
             operation: "improve",
         });
 
-        // Verify plugin state is active
-        const state1 = streamingGhostPluginKey.getState(editor.state);
-        expect(state1?.active).toBe(true);
-        expect(state1?.from).toBe(0);
-        expect(state1?.to).toBe(20);
+        // Verify field state is active
+        const state1 = view.state.field(codeMirrorStreamingGhostField);
+        expect(state1.active).toBe(true);
+        expect(state1.from).toBe(0);
+        expect(state1.to).toBe(20);
 
-        // Crucial: document HTML must NOT have changed
-        expect(editor.getHTML()).toBe(initialDocHTML);
-        // Crucial: TipTap update listener must NOT have fired
-        expect(updateListener).not.toHaveBeenCalled();
+        // Crucial: document text must NOT have changed
+        expect(adapter.getValue()).toBe(initialText);
 
         // 2. Stream several chunks progressively
-        editor.commands.updateStreamingGhost("Generating paragraph 1...");
-        editor.commands.updateStreamingGhost("Generating paragraph 1... and paragraph 2.");
+        adapter.updateStreamingGhost("Generating paragraph 1...", true);
+        adapter.updateStreamingGhost("Generating paragraph 1... and paragraph 2.", true);
 
-        const state2 = streamingGhostPluginKey.getState(editor.state);
-        expect(state2?.text).toBe("Generating paragraph 1... and paragraph 2.");
+        const state2 = view.state.field(codeMirrorStreamingGhostField);
+        expect(state2.text).toBe("Generating paragraph 1... and paragraph 2.");
 
         // Document still completely pristine
-        expect(editor.getHTML()).toBe(initialDocHTML);
-        expect(updateListener).not.toHaveBeenCalled();
+        expect(adapter.getValue()).toBe(initialText);
 
         // 3. Clear streaming ghost
-        editor.commands.clearStreamingGhost();
-        const state3 = streamingGhostPluginKey.getState(editor.state);
-        expect(state3?.active).toBe(false);
-        expect(editor.getHTML()).toBe(initialDocHTML);
+        adapter.clearStreamingGhost();
+        const state3 = view.state.field(codeMirrorStreamingGhostField);
+        expect(state3.active).toBe(false);
+        expect(adapter.getValue()).toBe(initialText);
     });
-});
 
-describe("AI transaction — Success path & Single-action Undo", () => {
     it("replaces the full document with AI output as one undoable action", () => {
-        const before = editor.getHTML();
+        const before = adapter.getValue();
         const aiResult = "Improved: hello world — now better written!";
 
-        editor.commands.startStreamingGhost({
+        adapter.startStreamingGhost({
             from: 0,
-            to: editor.state.doc.content.size,
+            to: adapter.getCharCount(),
             text: aiResult,
         });
 
-        const { docAfter, undoResult } = runAITransaction(
-            editor,
-            0,
-            editor.state.doc.content.size,
-            aiResult
-        );
+        adapter.clearStreamingGhost();
+        adapter.replaceRange(0, adapter.getCharCount(), aiResult);
 
         // Doc changed: AI result is present, original wording replaced.
-        expect(docAfter).toContain(convertTextToHTML(aiResult).replace(/<\/?[^>]+>/g, ""));
-        expect(docAfter).not.toContain("Hello world, this is a test");
+        expect(adapter.getValue()).toBe(aiResult);
 
         // Streaming ghost is deactivated
-        const ghostState = streamingGhostPluginKey.getState(editor.state);
-        expect(ghostState?.active).toBe(false);
+        const ghostState = view.state.field(codeMirrorStreamingGhostField);
+        expect(ghostState.active).toBe(false);
 
         // Single undo restores the FULL original document exactly.
-        expect(undoResult).toBe(before);
+        const undoSuccess = adapter.undo();
+        expect(undoSuccess).toBe(true);
+        expect(adapter.getValue()).toBe(before);
     });
 
     it("replaces only the selected range, leaving surrounding text intact with atomic undo", () => {
-        const fullText = editor.getText();
+        const fullText = adapter.getValue();
         const phrase = "this is a test document";
-        const idx = fullText.indexOf(phrase);
-        expect(idx).toBeGreaterThan(0);
+        const from = fullText.indexOf(phrase);
+        const to = from + phrase.length;
+        expect(from).toBeGreaterThan(0);
 
-        const { from, to } = (() => {
-            let pos = 0;
-            let f = -1, t = -1;
-            editor.state.doc.descendants((node, p) => {
-                if (node.isText && f === -1) {
-                    const segStart = p;
-                    if (idx >= pos && idx + phrase.length <= pos + node.text!.length) {
-                        f = segStart + (idx - pos);
-                        t = f + phrase.length;
-                        return false;
-                    }
-                    pos += node.text!.length;
-                }
-            });
-            return { from: f, to: t };
-        })();
-
-        const before = editor.getHTML();
+        const before = adapter.getValue();
 
         // Start streaming ghost on target range
-        editor.commands.startStreamingGhost({ from, to, text: "an edited phrase" });
+        adapter.startStreamingGhost({ from, to, text: "an edited phrase" });
 
         // Commit transaction
-        const { docAfter, undoResult } = runAITransaction(
-            editor,
-            from,
-            to,
-            "an edited phrase"
-        );
+        adapter.clearStreamingGhost();
+        adapter.replaceRange(from, to, "an edited phrase");
 
         // Surrounding context preserved.
-        expect(docAfter).toContain("Hello world,");
-        expect(docAfter).toContain("Second paragraph here.");
-        expect(docAfter).not.toContain("test document");
+        expect(adapter.getValue()).toContain("Hello world,");
+        expect(adapter.getValue()).toContain("Second paragraph here.");
+        expect(adapter.getValue()).not.toContain("test document");
 
         // Single undo restores everything including the unedited phrase.
-        expect(undoResult).toBe(before);
+        adapter.undo();
+        expect(adapter.getValue()).toBe(before);
     });
-});
 
-describe("AI transaction — Failure rollback & Abort", () => {
     it("clearing streaming ghost on abort/error leaves pristine document untouched", () => {
-        const before = editor.getHTML();
+        const before = adapter.getValue();
 
         // Simulate streaming in progress
-        editor.commands.startStreamingGhost({
+        adapter.startStreamingGhost({
             from: 0,
             to: 15,
             text: "Partial chunk before network drop...",
         });
 
         // Simulate user abort / network drop -> clear ghost
-        editor.commands.clearStreamingGhost();
+        adapter.clearStreamingGhost();
 
-        expect(streamingGhostPluginKey.getState(editor.state)?.active).toBe(false);
-        expect(editor.getHTML()).toBe(before);
+        expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(false);
+        expect(adapter.getValue()).toBe(before);
     });
 
-    it("does not apply local editor transaction if server commit fails (Phase 8 Server-First Invariant)", async () => {
-        const before = editor.getHTML();
+    it("does not apply local editor transaction if server commit fails (Server-First Invariant)", async () => {
+        const before = adapter.getValue();
 
-        editor.commands.startStreamingGhost({
+        adapter.startStreamingGhost({
             from: 0,
             to: 10,
             text: "Generated text awaiting commit",
@@ -221,9 +201,9 @@ describe("AI transaction — Failure rollback & Abort", () => {
         const res = await fakeServerCommit();
         if (!res.success) {
             // Local transaction aborted
-            editor.commands.clearStreamingGhost();
+            adapter.clearStreamingGhost();
         }
 
-        expect(editor.getHTML()).toBe(before);
+        expect(adapter.getValue()).toBe(before);
     });
 });

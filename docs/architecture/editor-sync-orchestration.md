@@ -121,7 +121,7 @@ render cycle, and the effect dependencies included it. Each re-execution perform
 differed from the live document. While background sync was running, this visibly wiped
 in-progress typing; the text reappeared only after the next sync cycle restored it.
 Beyond the lifecycle bug, the decision rule itself was wrong: a raw content inequality
-between editor HTML and server HTML cannot distinguish a legitimate remote advance from a
+between editor Markdown and server Markdown cannot distinguish a legitimate remote advance from a
 divergent history or from unsaved local work.
 
 ### 6a.2 Deterministic Decision Matrix (`src/lib/sync/reconciliation.ts`)
@@ -293,6 +293,15 @@ To prevent race conditions where a pending debounced auto-save executes in the b
 
 ---
 
+## 6f. Non-Colliding Manual Edit Stream Tolerance (Phase 6 Amendment)
+
+To preserve uninterrupted user workflow when writing with AI assistance:
+1. **Dynamic Shift on Non-Overlapping Edits:** When the user types or edits elsewhere in the document while an AI stream or ephemeral ghost preview is active, `codeMirrorStreamingGhostField` uses `tr.changes.mapPos(from, 1)` and `mapPos(to, -1)` to dynamically reposition the active target range `[from, to]` in CodeMirror 6.
+2. **Orchestrator Manual Edit Policy (`handleEditorChange`):** When an active AI stream is running, `handleEditorChange` checks `adapter.getGhostRange()`. Because non-colliding edits dynamically preserve a valid shifted ghost range, the active stream is **not** aborted; the orchestrator flags `isDirty` without interrupting generation.
+3. **Collision Discard:** If an edit directly mutates or deletes within the target range being transformed by AI, the ghost decoration is dismissed and `stopStream()` is safely triggered to prevent document corruption.
+
+---
+
 ## 7. Verification Proof
 
 - Automated Tests (current):
@@ -306,5 +315,7 @@ To prevent race conditions where a pending debounced auto-save executes in the b
   - `src/test/ai-preview-decision.test.ts` (10/10 passing)
   - `src/test/ai-server-atomic-commit.test.ts` (11/11 passing)
   - `src/test/markdown-exporters.test.ts` (6/6 passing)
-  - Full test suite: 36/36 test files, 469/469 tests passing (100% success rate).
+  - `src/test/markdown-editor-e2e.test.ts` (12/12 passing)
+  - Full test suite: 37/37 test files, 478/478 tests passing (100% success rate).
+
 

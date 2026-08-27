@@ -60,6 +60,7 @@ docs/
 | [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |
 | [phase-4-sync-diff3-conflict-closure.md](./reference/phase-4-sync-diff3-conflict-closure.md) | Phase 4 closure: Markdown-native Diff3 3-way conflict resolution engine, syntax boundary protection |
 | [phase-5-ai-streaming-export-closure.md](./reference/phase-5-ai-streaming-export-closure.md) | Phase 5 closure: Markdown AI streaming, unified inline interactive preview widget (`CMStreamingGhostWidget`), pure exporters, lock self-healing |
+| [phase-6-tiptap-removal-final-verification-closure.md](./reference/phase-6-tiptap-removal-final-verification-closure.md) | Phase 6 closure: Complete TipTap dependency purge, standalone CodeMirror 6 plugins, comprehensive E2E verification |
 
 ### Specifications (`specs/`)
 

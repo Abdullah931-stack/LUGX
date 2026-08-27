@@ -9,7 +9,8 @@ import {
     updateGhostEffect,
     clearGhostEffect,
     codeMirrorStreamingGhostField,
-} from "@/lib/extensions/streaming-ghost-extension";
+    CMStreamingGhostOptions,
+} from "./streaming-ghost";
 
 /**
  * Word count helper that reliably handles Unicode, Arabic, and mixed text.
@@ -237,7 +238,7 @@ export class CodeMirrorEditorAdapter implements EditorAdapter {
         });
     }
 
-    startStreamingGhost(options: { from: number; to: number; text?: string; operation?: string }): void {
+    startStreamingGhost(options: CMStreamingGhostOptions): void {
         const docLength = this.view.state.doc.length;
         const safeFrom = Math.max(0, Math.min(options.from, docLength));
         const safeTo = Math.max(safeFrom, Math.min(options.to, docLength));

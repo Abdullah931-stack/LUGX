@@ -1,4 +1,4 @@
-﻿/**
+/**
  * LIVE integration tests - getAIReservationStatus ownership and lifecycle reads
  * (Phase 11 closure evidence) against the ISOLATED Neon test branch. No mocks
  * except the Supabase session user (the only mocked boundary, matching the
@@ -11,6 +11,7 @@
  * 4. Unknown operationId: not_found.
  */
 import { describe, it, expect, afterAll, beforeEach, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/lib/db/schema";
 import {
@@ -29,7 +30,6 @@ vi.mock("@/lib/supabase/server", () => ({
     getUser: vi.fn(),
 }));
 
-const OPERATION_ID = "live-res-status-1";
 const todayUtc = () => new Date().toISOString().slice(0, 10);
 
 async function seed(): Promise<void> {
@@ -53,12 +53,13 @@ afterAll(async () => {
 describe("LIVE: getAIReservationStatus on isolated branch (Phase 11)", () => {
     it("returns the full authoritative snapshot of a reserved operation to its owner", async () => {
         await seed();
+        const operationId = "live-res-" + randomUUID();
         const reserved = await reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
-            operationId: OPERATION_ID,
+            operationId,
         });
         expect(reserved.reserved).toBe(true);
 
-        const status = await getAIReservationStatus(OPERATION_ID);
+        const status = await getAIReservationStatus(operationId);
         expect(status.found).toBe(true);
         if (!status.found) throw new Error("expected found=true");
         expect(status.status).toBe("reserved");
@@ -71,10 +72,16 @@ describe("LIVE: getAIReservationStatus on isolated branch (Phase 11)", () => {
 
     it("reflects the committed transition after commitAIReservation", async () => {
         await seed();
-        const commit = await commitAIReservation(OPERATION_ID);
+        const operationId = "live-res-" + randomUUID();
+        const reserved = await reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
+            operationId,
+        });
+        expect(reserved.reserved).toBe(true);
+
+        const commit = await commitAIReservation(operationId);
         expect(commit.committed).toBe(true);
 
-        const status = await getAIReservationStatus(OPERATION_ID);
+        const status = await getAIReservationStatus(operationId);
         expect(status.found).toBe(true);
         if (!status.found) throw new Error("expected found=true");
         expect(status.status).toBe("committed");
@@ -83,14 +90,20 @@ describe("LIVE: getAIReservationStatus on isolated branch (Phase 11)", () => {
 
     it("denies a cross-user read: another session user gets not_found", async () => {
         await seed();
+        const operationId = "live-res-" + randomUUID();
+        const reserved = await reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
+            operationId,
+        });
+        expect(reserved.reserved).toBe(true);
+
         vi.mocked(getUser).mockResolvedValueOnce({ id: OTHER_USER_ID } as never);
 
-        const status = await getAIReservationStatus(OPERATION_ID);
+        const status = await getAIReservationStatus(operationId);
         expect(status).toEqual({ found: false, reason: "not_found" });
     });
 
     it("returns not_found for an unknown operationId", async () => {
-        const status = await getAIReservationStatus("live-res-status-does-not-exist");
+        const status = await getAIReservationStatus("live-res-status-does-not-exist-" + randomUUID());
         expect(status).toEqual({ found: false, reason: "not_found" });
     });
 });

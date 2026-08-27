@@ -75,6 +75,15 @@ describe("Phase 2: TipTap Replacement & Markdown Editor Tooling Integration", ()
             expect(content).not.toContain("@tiptap");
             expect(content).toContain("EditorAdapter");
         });
+
+        it("src/hooks/use-ai-stream.ts must have ZERO @tiptap imports", () => {
+            const aiStreamPath = path.resolve(process.cwd(), "src/hooks/use-ai-stream.ts");
+            const content = fs.readFileSync(aiStreamPath, "utf-8");
+
+            expect(content).not.toContain("@tiptap");
+            expect(content).not.toContain("from \"@tiptap/react\"");
+            expect(content).toContain("EditorAdapter");
+        });
     });
 
     describe("2. Multi-Range Transaction (replaceAll) & Overlap Immunity", () => {

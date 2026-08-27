@@ -322,10 +322,7 @@ export class ConflictResolver {
             return { success: true, content: localContent, hasOverlaps: false };
         }
 
-        // Tokenize by lines / HTML blocks
-        const isHtml = baseContent.includes('<p>') || baseContent.includes('<div>') || localContent.includes('<p>') || remoteContent.includes('<p>');
-        const delimiter = isHtml ? '\n' : '\n';
-
+        // Tokenize raw Markdown lines
         const baseTokens = this.tokenizeContent(baseContent);
         const localTokens = this.tokenizeContent(localContent);
         const remoteTokens = this.tokenizeContent(remoteContent);

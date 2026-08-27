@@ -170,7 +170,7 @@ const blob = new Blob([cleanText], {
 **Functions**:
 
 ##### `htmlToPlainText(html)`
-Converts HTML from TipTap to plain text:
+Converts HTML to plain text:
 - Converts `<p>`, `<br>` to newlines
 - Converts `<h1-6>`, `<li>` to text
 - Removes all HTML tags
@@ -199,7 +199,7 @@ import { exportContent, downloadBlob } from '@/lib/exporters';
 
 // In any component
 async function handleExport(format: 'md' | 'txt') {
-    const content = editor.getHTML(); // From TipTap
+    const content = adapter.getValue(); // Raw Markdown from EditorAdapter
     const result = await exportContent(content, 'my-document', format);
     
     if (result.success && result.blob) {

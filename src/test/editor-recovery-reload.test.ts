@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @vitest-environment jsdom
  *
  * Phase 11 closure tests: hard-reload recovery semantics for AI operations.
@@ -15,9 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
-import { Editor } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
-import { StreamingGhostExtension } from "@/lib/extensions/streaming-ghost-extension";
+import type { EditorAdapter } from "@/components/editor/markdown/types";
 import { useAIStream } from "@/hooks/use-ai-stream";
 
 const STORE_KEY = "textai_pending_ai_operations";
@@ -50,7 +48,48 @@ vi.mock("@/lib/ai/stream-handler", () => ({
 }));
 let captured: ConsumeCallbacks;
 
-const initialContent = "<p>The quick brown fox jumps over the lazy dog.</p>";
+const initialContent = "The quick brown fox jumps over the lazy dog.";
+
+function createMockAdapter(initial = ""): EditorAdapter {
+    let content = initial;
+    let sel = { from: 0, to: 0 };
+    return {
+        getValue: () => content,
+        setValue: (newContent: string) => { content = newContent; },
+        getSelection: () => sel,
+        setSelection: (from: number, to = from) => { sel = { from, to }; },
+        replaceRange: (from: number, to: number, insert: string) => {
+            content = content.slice(0, from) + insert + content.slice(to);
+        },
+        replaceRanges: (changes) => {
+            const sorted = [...changes].sort((a, b) => b.from - a.from);
+            for (const c of sorted) {
+                content = content.slice(0, c.from) + c.insert + content.slice(c.to);
+            }
+        },
+        getSelectedText: () => content.slice(sel.from, sel.to),
+        insertMarkdown: vi.fn(),
+        setEditable: vi.fn(),
+        focus: vi.fn(),
+        blur: vi.fn(),
+        hasFocus: vi.fn().mockReturnValue(true),
+        undo: vi.fn().mockReturnValue(true),
+        redo: vi.fn().mockReturnValue(true),
+        canUndo: vi.fn().mockReturnValue(true),
+        canRedo: vi.fn().mockReturnValue(false),
+        getWordCount: () => content.split(/\s+/).filter(Boolean).length,
+        getCharCount: () => content.length,
+        getLineCount: () => content.split("\n").length,
+        getHeadingCount: () => (content.match(/^#{1,6}\s/gm) || []).length,
+        getMode: () => "live",
+        setMode: vi.fn(),
+        destroy: vi.fn(),
+        startStreamingGhost: vi.fn(),
+        updateStreamingGhost: vi.fn(),
+        clearStreamingGhost: vi.fn(),
+        getGhostRange: vi.fn().mockReturnValue(null),
+    };
+}
 
 function seedRecord(record: { operationId: string; fileId: string; phase: string }): void {
     const raw = window.sessionStorage.getItem(STORE_KEY);
@@ -65,7 +104,7 @@ function readRecords(): Record<string, { operationId: string; phase: string }> {
 }
 
 describe("Phase 11: hard-reload recovery of pending AI operations", () => {
-    let editor: Editor;
+    let editor: EditorAdapter;
 
     beforeEach(() => {
         window.sessionStorage.clear();
@@ -74,10 +113,7 @@ describe("Phase 11: hard-reload recovery of pending AI operations", () => {
         mockRefundAIReservation.mockResolvedValue({ refunded: true });
         captured = {} as ConsumeCallbacks;
 
-        editor = new Editor({
-            extensions: [StarterKit, StreamingGhostExtension],
-            content: initialContent,
-        });
+        editor = createMockAdapter(initialContent);
 
         mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
             captured = options;
@@ -119,7 +155,7 @@ describe("Phase 11: hard-reload recovery of pending AI operations", () => {
         // The abandoned preview was NEVER applied to the document or UI state
         expect(result.current.previewText).toBe("");
         expect(result.current.status).toBe("idle");
-        expect(editor.getHTML()).toBe(initialContent);
+        expect(editor.getValue()).toBe(initialContent);
     });
 
     it("reload during generation: refunds the lost reservation as reload_recovery", async () => {
@@ -217,6 +253,6 @@ describe("Phase 11: hard-reload recovery of pending AI operations", () => {
         );
         await waitFor(() => expect(Object.keys(readRecords())).toHaveLength(0));
         // Document pristine: preview was parked, never applied
-        expect(editor.getHTML()).toBe(initialContent);
+        expect(editor.getValue()).toBe(initialContent);
     });
 });

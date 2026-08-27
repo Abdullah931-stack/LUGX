@@ -7,7 +7,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { sanitizeHtml } from "@/lib/sanitize.server";
-import { smartConvertToHTML } from "@/lib/parsers/text-to-html.server";
 import { convertTextToHTML, convertMarkdownToHTML } from "@/lib/parsers/text-to-html";
 
 // Minimal set of DOMPurify's official XSS corpus vectors — the canonical
@@ -53,14 +52,6 @@ describe("sanitizeHtml chokepoint", () => {
 });
 
 describe("converter output is safe (stored-XSS via imports)", () => {
-    it("smartConvertToHTML strips XSS from raw HTML input", () => {
-        const payload = "<p>Hi</p><script>alert(1)</script><img src=x onerror=alert(1)>";
-        const out = smartConvertToHTML(payload, "txt");
-        expect(out).toContain("<p>Hi</p>");
-        expect(out).not.toContain("onerror");
-        expect(out).not.toContain("<script");
-    });
-
     it("convertTextToHTML output is XSS-proof (already escaped, re-sanitized)", () => {
         const out = convertTextToHTML("Line 1\nLine 2<script>x</script>");
         expect(out).not.toContain("<script>");

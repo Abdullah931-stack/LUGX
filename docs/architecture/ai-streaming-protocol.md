@@ -6,7 +6,7 @@ This specification details the end-to-end NDJSON (Newline-Delimited JSON) Stream
 - **Server Stream Handler**: `src/app/api/ai/stream/route.ts`
 - **Client Protocol Parser**: `src/lib/ai/stream-handler.ts`
 - **Session State Machine & Integrity**: `src/lib/ai/stream-session.ts`
-- **Ephemeral Preview & Editor Extension**: `src/lib/ai/preview-buffer.ts` & `src/lib/extensions/streaming-ghost-extension.ts`
+- **Ephemeral Preview & Editor Plugin**: `src/lib/ai/preview-buffer.ts` & `src/components/editor/markdown/streaming-ghost.ts`
 - **React Consumer Hook**: `src/hooks/use-ai-stream.ts`
 
 ### Architectural Guarantees
@@ -115,9 +115,11 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 - **Risk**: Upstream proxy or malformed source streaming megabytes of text without a newline (`\n`), causing unbounded `lineBuffer` expansion and browser Heap Out-Of-Memory (OOM).
 - **Protection**: `stream-handler.ts` enforces `MAX_LINE_BUFFER_CHARS = 256 * 1024` (256KB). If buffer length exceeds ceiling without `\n`, it terminates the stream with `stream_buffer_overflow` and releases reader locks.
 
-### 4.2 Dynamic Selection Range Mapping (`codeMirrorStreamingGhostField`)
-- **Risk**: User typing elsewhere in the document during streaming causing position drift between original selection bounds and actual document coordinates at commit time.
-- **Protection**: `codeMirrorStreamingGhostField` uses `tr.changes.mapPos(from, 1)` and `mapPos(to, -1)` to dynamically shift the ghost preview decoration and queryable range in CodeMirror 6, guaranteeing zero coordinate drift and preventing `RangeError`.
+### 4.2 Collision-Aware Dynamic Selection Range Mapping (`codeMirrorStreamingGhostField`)
+- **Risk**: User typing elsewhere in the document during streaming causing position drift between original selection bounds and actual document coordinates at commit time, or user editing directly into the generation slice causing text corruption.
+- **Protection**: `codeMirrorStreamingGhostField` inspects every transaction via `tr.changes.iterChanges`:
+  - **Non-colliding edits** (edits occurring outside `[from, to]`): dynamically shift the ghost preview decoration and queryable range via `tr.changes.mapPos(from, 1)` and `mapPos(to, -1)`, allowing the user to type elsewhere in the document without aborting AI generation.
+  - **Colliding edits** (direct mutations overlapping the target range): dismiss the ghost decoration and trigger `onStop()` to safely abort generation and prevent document corruption.
 
 ### 4.3 High-Frequency Streaming Performance (`updateDOM` at 60fps)
 - **Risk**: High-speed token stream (50+ tokens/sec) causing DOM destruction and recreation on every chunk, leading to layout thrashing and stutter.
@@ -131,9 +133,9 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 - **Risk**: User clicking Cancel while `commitAIFileOperation` is in-flight on the server database, leading to server-commit success but client-side rollback (causing version desynchronization and HTTP 412 conflicts).
 - **Protection**: `stopStream()` strictly locks and suppresses cancellations once the session enters `committing` state.
 
-### 4.6 DOM XSS Immunity in Ghost Extension
+### 4.6 DOM XSS Immunity in Ghost Widget
 - **Risk**: Dynamic operation names interpolated into `innerHTML` leading to DOM injection.
-- **Protection**: `StreamingGhostExtension` builds widget header nodes and buttons exclusively via DOM APIs (`document.createElement`, `textContent`) and sanitized SVG nodes with strict event isolation (`ignoreEvent: () => true`).
+- **Protection**: `CMStreamingGhostWidget` builds widget header nodes and buttons exclusively via DOM APIs (`document.createElement`, `textContent`) and sanitized SVG nodes with strict event isolation (`ignoreEvent: () => true`).
 
 ### 4.7 Single Terminal Callback Guarantee
 - **Risk**: Concurrent abort and reader cancellation exceptions causing `onError` or `onComplete` to fire multiple times.

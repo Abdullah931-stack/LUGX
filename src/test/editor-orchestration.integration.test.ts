@@ -100,19 +100,29 @@ vi.mock("@/lib/sync", async (importOriginal) => {
 function createMockAdapter(initialContent = ""): EditorAdapter {
     let content = initialContent;
     let sel = { from: 0, to: 0 };
+    let ghostRange: { from: number; to: number } | null = null;
     return {
         getValue: () => content,
         setValue: (newContent: string) => {
             content = newContent;
+            ghostRange = null;
         },
         getSelection: () => sel,
         setSelection: (from: number, to = from) => {
             sel = { from, to };
         },
         replaceRange: (from: number, to: number, insert: string) => {
+            if (ghostRange) {
+                if (ghostRange.from === ghostRange.to) {
+                    if (from <= ghostRange.from && to >= ghostRange.from) ghostRange = null;
+                } else {
+                    if (from < ghostRange.to && to > ghostRange.from) ghostRange = null;
+                }
+            }
             content = content.slice(0, from) + insert + content.slice(to);
         },
         replaceRanges: (changes) => {
+            ghostRange = null;
             const sorted = [...changes].sort((a, b) => b.from - a.from);
             for (const c of sorted) {
                 content = content.slice(0, c.from) + c.insert + content.slice(c.to);
@@ -134,6 +144,14 @@ function createMockAdapter(initialContent = ""): EditorAdapter {
         getHeadingCount: () => (content.match(/^#{1,6}\s/gm) || []).length,
         getMode: () => "live",
         setMode: vi.fn(),
+        startStreamingGhost: (opts) => {
+            ghostRange = { from: opts.from, to: opts.to };
+        },
+        updateStreamingGhost: vi.fn(),
+        clearStreamingGhost: () => {
+            ghostRange = null;
+        },
+        getGhostRange: () => ghostRange,
         destroy: vi.fn(),
     };
 }
@@ -377,8 +395,9 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         });
         await waitFor(() => expect(result.current.isStreaming).toBe(true));
 
-        // Trigger manual edit while stream is running
+        // Trigger manual edit while stream is running (replaces document -> clears ghost)
         act(() => {
+            adapter.setValue("User interrupts AI generation");
             result.current.handleEditorChange("User interrupts AI generation");
         });
 
