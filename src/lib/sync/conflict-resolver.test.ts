@@ -211,7 +211,7 @@ describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
             expect(result.content).toBe('Identical Modification');
         });
 
-        it('should handle HTML and TipTap paragraph blocks cleanly', () => {
+        it('should handle multi-line paragraph blocks cleanly', () => {
             const base = '<p>Paragraph 1</p>\n<p>Paragraph 2</p>\n<p>Paragraph 3</p>';
             const local = '<p>Paragraph 1 modified</p>\n<p>Paragraph 2</p>\n<p>Paragraph 3</p>';
             const remote = '<p>Paragraph 1</p>\n<p>Paragraph 2</p>\n<p>Paragraph 3 added remote</p>';

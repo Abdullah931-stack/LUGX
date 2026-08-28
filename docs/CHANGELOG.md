@@ -2,6 +2,19 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.17.0] - 2026-08-28 (Complete Dead Code & HTML Converter Purge, TipTap Legacy Style Elimination)
+
+### Removed - Complete Dead Code & HTML Converter Elimination
+- **Deleted Dead HTML & Sanitizer Files:** Completely removed `src/lib/parsers/text-to-html.ts` (124 lines), `src/lib/sanitize-client.ts` (66 lines), `src/lib/sanitize.server.ts` (57 lines), and `src/lib/sanitize.test.ts` (72 lines).
+- **Purged Unused HTML Converter Functions:** Removed `formatStreamOutputToHTML` and `sanitizePreviewChunk` from `src/lib/parsers/stream-markdown.ts`, and `htmlToPlainText` from `src/lib/exporters/utils/markdown-stripper.ts`.
+- **Eliminated Dead CSS Styles (`src/app/globals.css`):** Removed 123 lines of legacy `.tiptap-editor` and `.ProseMirror` style declarations and obsolete text-direction utility classes.
+- **Uninstalled Dead Dependency (`dompurify`):** Removed `dompurify` from `package.json` and cleaned up `serverExternalPackages: ["jsdom"]` from `next.config.ts`.
+- **Cleaned Stream Hook (`src/hooks/use-ai-stream.ts`):** Removed unused `formatStreamOutputToHTML` import and dead `safeHtml` variable assignment.
+
+### Changed - Test Modernization & Documentation Synchronization
+- **Stream Parser Test Modernization (`src/test/ai-stream-parser.test.ts`):** Focused test suite strictly on `validateStreamMarkdownOutput` and NDJSON wire protocol framing.
+- **Synchronized Documentation (`README.md`, `docs/`):** Updated technical stack tables, security definitions, and exporter guides to reflect pure UTF-8 Markdown single source of truth.
+
 ## [1.16.0] - 2026-08-27 (AI Stream Collision Guard, Non-Colliding Edit Tolerance & Clean Documentation Sync)
 
 ### Added - AI Stream Collision Guard & Dynamic Range Shifting

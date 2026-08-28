@@ -73,21 +73,16 @@ Endpoint-level details: [`../reference/SYNC_API.md`](../reference/SYNC_API.md).
 
 ---
 
-## 3. Content Sanitization & Markdown Normalization (Data Safety & XSS Defense)
+## 3. Content Safety & Markdown Normalization
 
-Documents in LUGX are stored and processed as pure UTF-8 Markdown text (`MarkdownSource`). Content integrity and safety are enforced at both the Markdown normalization layer and the HTML sanitization defense-in-depth layer.
+Documents in LUGX are stored and processed exclusively as pure UTF-8 Markdown text (`MarkdownSource`). Content integrity and safety are enforced through strict Unicode normalization and client-safe rendering avoiding HTML injection vectors.
 
 ### 3.1 Markdown Source Normalization (`src/lib/sync/etag-generator.ts`)
 - **Universal Normalization (`normalizeMarkdownSource`)**: Canonical normalization converting `\r\n` and `\r` to LF (`\n`), applying Unicode NFC normalization, and stripping null bytes (`\0`) to guarantee PostgreSQL text encoding safety and deterministic cross-platform ETag generation.
 
-### 3.2 Server Sanitization Chokepoint (`src/lib/sanitize.server.ts`)
-- DOMPurify running against a jsdom window; used by AI preview formatting, live preview rendering, and exporter pipelines.
-- Allow-listed tags (`SANITIZE_ALLOWED_TAGS`): `p, br, h1–h6, strong, em, u, s, strike, ul, ol, li, blockquote, code, pre, hr, a, img, table, thead, tbody, tr, th, td, div, span`.
-- Allowed attributes (`SANITIZE_ALLOWED_ATTR`): `href, src, alt, title, class, id, target, rel`.
-- `style` attributes are **deliberately excluded** — inline styles can smuggle `javascript:` URIs that DOMPurify does not reliably strip; any inline styling from imports/previews is discarded (fail-safe).
-
-### 3.3 Browser Path (`src/lib/sanitize-client.ts`)
-Same sanitization semantics using the native browser DOM (no jsdom in the client bundle). Package exports map `@/lib/sanitize` to the correct implementation per environment.
+### 3.2 Pure Markdown Content Security & Elimination of HTML Injection Vectors
+- **Zero HTML Storage Invariant**: The storage layer (PostgreSQL and IndexedDB) persists pure Markdown text without HTML wrapping or translation.
+- **Client-Safe Native Rendering**: The CodeMirror 6 editor and streaming preview surfaces operate directly on Markdown strings and AST token decorations, completely eliminating `dangerouslySetInnerHTML` and legacy HTML sanitizers (`sanitize.server.ts`, `sanitize-client.ts`, `dompurify`).
 
 ---
 

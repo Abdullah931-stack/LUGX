@@ -67,7 +67,7 @@
 | **Frontend Framework** | Next.js 16 (App Router) · React 19 (Server & Client Components) |
 | **Language & Typings** | TypeScript 5 (Strict Mode) |
 | **Styling & Design** | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons |
-| **Rich Text Editor** | Tiptap Editor (ProseMirror Toolkit) · DOMPurify Sanitizer |
+| **Markdown Editor** | Standalone CodeMirror 6 (Engine-Agnostic Adapter) · Live Preview & Source Modes |
 | **Database & ORM** | PostgreSQL (Neon / Supabase / Local) · Drizzle ORM (Migrations 0001–0004) |
 | **Authentication** | Supabase Auth (SSR Edge Proxy Session Validation) |
 | **AI LLM Engine** | Google Gemini SDK (`@google/generative-ai`) · Tier-based Model Routing · Multi-Key Rotation |
@@ -107,7 +107,6 @@ lugx/
 │   │   ├── db/                    # Drizzle schema definitions & client initialization
 │   │   ├── sync/                  # Concurrency manager, ETag engine, bounded worker pool
 │   │   ├── rate-limit.ts          # Sliding window rate limiters (Auth / API / AI)
-│   │   ├── sanitize.server.ts     # JSDOM + DOMPurify server-side HTML sanitizer
 │   │   └── storage/               # Browser IndexedDB storage client
 │   ├── server/actions/            # Authenticated Next.js Server Actions (file-ops, ai-ops)
 │   ├── test/                      # Database integration test harnesses & fixtures
@@ -291,7 +290,7 @@ User Request ──► [reserveTodayUsage (Atomic SQL UPDATE)]
 
 | Security Layer | Technical Implementation |
 |---|---|
-| **XSS Sanitization** | Server-side DOMPurify (via JSDOM in `sanitize.server.ts`) cleans all incoming HTML content; client-side output escaping prevents injection. |
+| **Content Model Security** | Pure UTF-8 Markdown single source of truth; zero HTML storage, with client-safe rendering avoiding unsafe DOM injection. |
 | **Authentication & Route Protection** | Supabase SSR session token validation in `src/proxy.ts` with sliding-window brute-force rate limiting (20 attempts / 15 mins per normalized email). |
 | **API Rate Limiting** | Sliding window rate limiting on file sync routes and streaming AI endpoints. |
 | **Webhook Security** | Cryptographic HMAC signature verification (`stripe.webhooks.constructEvent`) with replay attack mitigation. |

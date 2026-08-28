@@ -6,7 +6,7 @@ import { FEATURES } from "@/config/features.config";
  * In-memory buffer keyed by session ID for storing streaming chunks safely.
  *
  * Guarantees:
- * 1. Isolated from ProseMirror document model and IndexedDB storage.
+ * 1. Isolated from CodeMirror document model and IndexedDB storage.
  * 2. Bounded by PREVIEW_BUFFER_MAX_CHARS to protect memory.
  * 3. Deterministic teardown and memory reclamation.
  */

@@ -12,7 +12,7 @@ import {
 } from '@/lib/ai/stream-session';
 import { previewBuffer } from '@/lib/ai/preview-buffer';
 import { consumeAIStream, AIOperationType } from '@/lib/ai/stream-handler';
-import { formatStreamOutputToHTML, validateStreamMarkdownOutput } from '@/lib/parsers/stream-markdown';
+import { validateStreamMarkdownOutput } from '@/lib/parsers/stream-markdown';
 import { commitAIFileOperation, refundAIReservation } from '@/server/actions/ai-commit';
 import { commitAIReservation, getAIReservationStatus } from '@/server/actions/ai-ops';
 import {
@@ -62,7 +62,6 @@ interface PendingPreview {
     selectionStart: number;
     selectionEnd: number;
     resultMarkdown: string;
-    safeHtml: string;
 }
 
 export function useAIStream(options: UseAIStreamOptions = {}) {
@@ -330,7 +329,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             fileId,
             operation,
             originalMarkdown: originalContent,
-            originalHtml: originalContent,
             originalText: textToProcess,
             selection: { from: selectionStart, to: selectionEnd },
             expectedVersion,
@@ -411,8 +409,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         throw new Error('AI produced an empty or invalid response');
                     }
 
-                    // Format ephemeral HTML for UI preview badge if requested
-                    const { html: safeHtml } = formatStreamOutputToHTML(finalRawText);
 
                     // Check session integrity before preparing preview decision
                     const integrity = assertSessionIntegrity(session, editorGeneration, expectedVersion);
@@ -445,7 +441,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         selectionStart,
                         selectionEnd,
                         resultMarkdown: validatedMarkdown,
-                        safeHtml,
                     };
                 },
                 onError: (err) => {
@@ -526,7 +521,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             selectionStart,
             selectionEnd,
             resultMarkdown,
-            safeHtml,
         } = pending;
 
         transitionSession(session, 'committing');
@@ -570,7 +564,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 expectedVersion: effectiveExpectedVersion,
                 expectedETag: effectiveExpectedETag || undefined,
                 resultContent: finalDocumentMarkdown,
-                originalContent: session.originalMarkdown || session.originalHtml || undefined,
+                originalContent: session.originalMarkdown || undefined,
             });
 
             // Check if session was aborted during network commit

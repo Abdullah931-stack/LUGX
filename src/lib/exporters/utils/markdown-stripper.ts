@@ -81,50 +81,5 @@ export function stripMarkdownSyntax(text: string): string {
     return cleanText;
 }
 
-/**
- * Convert HTML to plain text (for TipTap editor content)
- * @param html - HTML content from TipTap editor
- * @returns Plain text without HTML tags
- */
-export function htmlToPlainText(html: string): string {
-    if (!html || html.trim().length === 0) {
-        return '';
-    }
 
-    let text = html;
 
-    // Convert <p> tags to newlines
-    text = text.replace(/<\/p>/gi, '\n');
-    text = text.replace(/<p[^>]*>/gi, '');
-
-    // Convert <br> to newlines
-    text = text.replace(/<br\s*\/?>/gi, '\n');
-
-    // Convert headings to text with newlines
-    text = text.replace(/<\/h[1-6]>/gi, '\n');
-    text = text.replace(/<h[1-6][^>]*>/gi, '');
-
-    // Convert list items
-    text = text.replace(/<\/li>/gi, '\n');
-    text = text.replace(/<li[^>]*>/gi, '');
-
-    // Remove all other HTML tags
-    text = text.replace(/<[^>]+>/g, '');
-
-    // Decode HTML entities
-    text = text.replace(/&nbsp;/g, ' ');
-    text = text.replace(/&amp;/g, '&');
-    text = text.replace(/&lt;/g, '<');
-    text = text.replace(/&gt;/g, '>');
-    text = text.replace(/&quot;/g, '"');
-    text = text.replace(/&#39;/g, "'");
-
-    // Clean up whitespace
-    text = text.replace(/\n{3,}/g, '\n\n');
-    text = text.replace(/[ \t]{2,}/g, ' ');
-
-    // Trim
-    text = text.trim();
-
-    return text;
-}

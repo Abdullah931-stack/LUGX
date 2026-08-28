@@ -55,7 +55,7 @@ export class ExportError extends Error {
 export interface IExporter {
     /**
      * Export content to the specified format
-     * @param content - The content to export (HTML format from TipTap editor)
+     * @param content - The content to export (Raw UTF-8 Markdown format)
      * @param filename - Desired filename (without extension)
      * @returns Promise with export result
      */

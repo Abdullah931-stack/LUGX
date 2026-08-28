@@ -109,7 +109,7 @@ const exporter = ExporterFactory.create('md');
 #### `exportContent(content, filename, format)`
 Facade for the entire system
 ```typescript
-const result = await exportContent(html, 'doc', 'txt');
+const result = await exportContent(markdown, 'doc', 'txt');
 ```
 
 #### `downloadBlob(blob, filename)`
@@ -123,14 +123,13 @@ downloadBlob(result.blob, result.filename);
 #### Markdown Exporter (`strategies/markdown-exporter.ts`)
 
 **Behavior**:
-1. Converts HTML to plain text
-2. Preserves all Markdown marks
+1. Preserves raw Markdown content exactly as-is
+2. Creates safe filename with `.md` extension
 3. MIME type: `text/markdown;charset=utf-8`
 
 **Core Logic**:
 ```typescript
-const plainText = htmlToPlainText(content);
-const blob = new Blob([plainText], {
+const blob = new Blob([content], {
     type: 'text/markdown;charset=utf-8'
 });
 ```
@@ -138,15 +137,13 @@ const blob = new Blob([plainText], {
 #### Text Exporter (`strategies/text-exporter.ts`)
 
 **Behavior**:
-1. Converts HTML to plain text
-2. Strips all Markdown marks
-3. Produces 100% clean text
-4. MIME type: `text/plain;charset=utf-8`
+1. Strips all Markdown syntax from content
+2. Produces 100% clean plain text
+3. MIME type: `text/plain;charset=utf-8`
 
 **Core Logic**:
 ```typescript
-let plainText = htmlToPlainText(content);
-const cleanText = stripMarkdownSyntax(plainText);
+const cleanText = stripMarkdownSyntax(content);
 const blob = new Blob([cleanText], {
     type: 'text/plain;charset=utf-8'
 });
@@ -168,13 +165,6 @@ const blob = new Blob([cleanText], {
 #### Markdown Stripper (`utils/markdown-stripper.ts`)
 
 **Functions**:
-
-##### `htmlToPlainText(html)`
-Converts HTML to plain text:
-- Converts `<p>`, `<br>` to newlines
-- Converts `<h1-6>`, `<li>` to text
-- Removes all HTML tags
-- Decodes HTML entities
 
 ##### `stripMarkdownSyntax(text)`
 Removes all Markdown marks:

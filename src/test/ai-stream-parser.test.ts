@@ -1,38 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { consumeAIStream } from '@/lib/ai/stream-handler';
-import {
-    formatStreamOutputToHTML,
-    sanitizePreviewChunk,
-    validateStreamMarkdownOutput,
-} from '@/lib/parsers/stream-markdown';
+import { validateStreamMarkdownOutput } from '@/lib/parsers/stream-markdown';
 
-describe('AI Stream Parser & Sanitizer (Phase 7 / Gate G8)', () => {
-    describe('Stream Markdown Sanitizer', () => {
-        it('should safely escape raw preview text', () => {
-            const raw = '<script>alert("xss")</script> & <b>bold</b>';
-            const sanitized = sanitizePreviewChunk(raw);
-            expect(sanitized).toBe('&lt;script&gt;alert("xss")&lt;/script&gt; &amp; &lt;b&gt;bold&lt;/b&gt;');
-            expect(sanitized).not.toContain('<script>');
-        });
-
-        it('should format clean markdown to sanitized HTML without dangerous scripts', () => {
-            const md = '# Header\nThis is **bold** text with an [example link](https://example.com) and <img src=x onerror=alert(1)>';
-            const { html, isEmpty } = formatStreamOutputToHTML(md);
-
-            expect(isEmpty).toBe(false);
-            expect(html).toContain('<h1>Header</h1>');
-            expect(html).toContain('<strong>bold</strong>');
-            expect(html).toContain('<a href="https://example.com"');
-            expect(html).not.toContain('<img');
-            expect(html).toContain('&lt;img');
-        });
-
-        it('should detect empty or whitespace-only stream outputs', () => {
-            const result = formatStreamOutputToHTML('   \n\n\t   ');
-            expect(result.isEmpty).toBe(true);
-            expect(result.html).toBe('');
-        });
-
+describe('AI Stream Parser & Validator (Phase 7 / Gate G8)', () => {
+    describe('Stream Markdown Validator', () => {
         it('should validate pure markdown stream outputs without HTML serialization', () => {
             const md = '# Title\n\n- Item 1\n- Item 2\n\n```js\nconsole.log(42);\n```';
             const validResult = validateStreamMarkdownOutput(md);
