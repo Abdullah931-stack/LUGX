@@ -1,0 +1,276 @@
+name: CI — Multi-Stage Quality, Concurrency & Database Isolation
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+    inputs:
+      run_live_smoke:
+        description: 'Execute Live Provider Smoke Tests (requires real AI / DB secrets)'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: test
+  CI: "true"
+
+jobs:
+  # =========================================================================
+  # Stage 1: Quality Gate (Linting, TypeScript Strictness, Security Audit)
+  # =========================================================================
+  quality-gate:
+    name: 1. Quality & Security Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run TypeScript Strict Typecheck
+        run: npx tsc --noEmit
+
+      - name: Dependency Security Audit
+        run: npm audit --audit-level=high
+
+  # =========================================================================
+  # Stage 2: Pure Unit & Deterministic Contract Tests (Zero DB / Network)
+  # =========================================================================
+  unit-contracts:
+    name: 2. Pure Unit & Algorithmic Contracts
+    needs: quality-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Unit & Contract Tests
+        run: npm run test
+
+  # =========================================================================
+  # Stage 3: Database Migration Integrity & Schema Drift Validation
+  # =========================================================================
+  migration-integrity:
+    name: 3. Schema & Migration Integrity
+    needs: quality-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lugx_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify and Apply SQL Migrations Sequentially
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+        run: node scripts/verify-migrations.mjs
+
+      - name: Validate Drizzle Schema Sync
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+        run: npx drizzle-kit push --config drizzle.config.test.ts --force
+
+  # =========================================================================
+  # Stage 4: Concurrency Integrity & Database Isolation (Fail-Closed)
+  # =========================================================================
+  concurrency-and-db-isolation:
+    name: 4. Concurrency Integrity & Database Isolation
+    needs: [unit-contracts, migration-integrity]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lugx_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Initialize Database Schema
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+        run: node scripts/verify-migrations.mjs
+
+      - name: Run Concurrency & Database Isolation Test Suites
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+          TEST_DB_FORBIDDEN_HOSTS: ep-main-branch.neon.tech,production.neon.tech
+          UPSTASH_REDIS_REST_URL: http://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN: mock-test-token
+          NEXT_PUBLIC_SUPABASE_URL: https://mock-project.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: mock-anon-key-ci-test
+          SUPABASE_SERVICE_ROLE_KEY: mock-service-role-key-ci-test
+          STRIPE_SECRET_KEY: sk_test_mock_ci_key
+          STRIPE_WEBHOOK_SECRET: whsec_test_mock_ci_secret
+        run: npm run test:live
+
+  # =========================================================================
+  # Stage 5: Production Build & Asset Verification
+  # =========================================================================
+  build-verification:
+    name: 5. Next.js Production Build
+    needs: concurrency-and-db-isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('**.[jt]s', '**.[jt]sx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
+
+      - name: Build Next.js Application
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://mock-project.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: mock-anon-key
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_mock
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
+          NEXT_PUBLIC_APP_URL: https://lugx.app
+        run: npm run build
+
+  # =========================================================================
+  # Stage 6: Live Provider Smoke Tests (Gated & Protected)
+  # =========================================================================
+  live-provider-smoke:
+    name: 6. Live Provider Smoke (Gated)
+    needs: build-verification
+    if: ${{ github.event.inputs.run_live_smoke == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Execute Live Smoke Tests if Secrets Configured
+        env:
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL || vars.TEST_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.TEST_DATABASE_URL || vars.TEST_DATABASE_URL }}
+          GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 || vars.GEMINI_KEY_1 }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY || vars.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET || vars.STRIPE_WEBHOOK_SECRET }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL || vars.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN || vars.UPSTASH_REDIS_REST_TOKEN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || vars.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || vars.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$TEST_DATABASE_URL" ] || [ -z "$GEMINI_KEY_1" ]; then
+            echo "Skipping live cloud smoke tests: TEST_DATABASE_URL or GEMINI_KEY_1 not configured in repository secrets."
+          else
+            echo "Running live e2e tests against isolated cloud environment..."
+            npx vitest run src/test/ai-live-e2e.test.ts --config vitest.live.config.ts
+          fi

@@ -101,11 +101,25 @@ export function assertSafeTestDatabaseUrl(
         );
     }
 
+    const rawEndpoint = extractNeonEndpointId(dbHost);
+    const normalizedEndpoint = rawEndpoint ? rawEndpoint.replace(/-pooler$/i, "") : null;
+
     const forbidden = (ctx.forbiddenHosts ?? "")
         .split(",")
         .map((h) => h.trim().toLowerCase())
         .filter(Boolean);
-    if (forbidden.includes(dbHost)) {
+
+    const isForbidden = forbidden.some((fHost) => {
+        if (dbHost === fHost) return true;
+        const fEndpoint = extractNeonEndpointId(fHost);
+        const normFEndpoint = fEndpoint ? fEndpoint.replace(/-pooler$/i, "") : null;
+        if (normalizedEndpoint && normFEndpoint && normalizedEndpoint === normFEndpoint) {
+            return true;
+        }
+        return false;
+    });
+
+    if (isForbidden) {
         throw new Error(
             `[test-db] Refusing to boot: '${dbHost}' matches ` +
                 "TEST_DB_FORBIDDEN_HOSTS (the production main branch was " +
@@ -113,7 +127,7 @@ export function assertSafeTestDatabaseUrl(
         );
     }
 
-    return { host: dbHost, endpointId: extractNeonEndpointId(dbHost) ?? "" };
+    return { host: dbHost, endpointId: rawEndpoint ?? "" };
 }
 
 /**

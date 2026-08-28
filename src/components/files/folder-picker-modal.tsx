@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Folder } from "lucide-react";
 import { getUserFiles } from "@/server/actions/file-ops";
 
@@ -33,14 +33,7 @@ export function FolderPickerModal({
     const [folders, setFolders] = useState<FileItem[]>([]);
     const [loading, setLoading] = useState(true);
 
-    // Load folders when modal opens
-    useEffect(() => {
-        if (isOpen) {
-            loadFolders();
-        }
-    }, [isOpen]);
-
-    async function loadFolders() {
+    const loadFolders = useCallback(async () => {
         setLoading(true);
         const result = await getUserFiles();
         if (result.success && result.data) {
@@ -51,7 +44,14 @@ export function FolderPickerModal({
             setFolders(folderList);
         }
         setLoading(false);
-    }
+    }, [currentFileId]);
+
+    // Load folders when modal opens
+    useEffect(() => {
+        if (isOpen) {
+            loadFolders();
+        }
+    }, [isOpen, loadFolders]);
 
     function handleSelect(folderId: string | null) {
         onSelect(folderId);

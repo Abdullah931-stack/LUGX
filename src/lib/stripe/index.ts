@@ -7,20 +7,20 @@
 
 import Stripe from 'stripe';
 
-// Validate environment variables
-if (!process.env.STRIPE_SECRET_KEY) {
-    throw new Error('STRIPE_SECRET_KEY is not defined in environment variables');
-}
-
-if (!process.env.STRIPE_WEBHOOK_SECRET) {
-    throw new Error('STRIPE_WEBHOOK_SECRET is not defined in environment variables');
-}
-
-// Initialize Stripe instance with secret key
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+// Initialize Stripe instance with secret key or build-safe placeholder for static analysis
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder', {
     apiVersion: '2025-12-15.clover',
     typescript: true,
 });
+
+/**
+ * Validate that STRIPE_SECRET_KEY is configured at runtime before dispatching operations.
+ */
+function ensureStripeSecretKey(): void {
+    if (!process.env.STRIPE_SECRET_KEY) {
+        throw new Error('STRIPE_SECRET_KEY is not defined in environment variables');
+    }
+}
 
 /**
  * Create or retrieve a Stripe customer
@@ -33,6 +33,7 @@ export async function getOrCreateStripeCustomer(
     email: string,
     name?: string
 ): Promise<string> {
+    ensureStripeSecretKey();
     try {
         // Search for existing customer by metadata
         const existingCustomers = await stripe.customers.list({
@@ -74,6 +75,7 @@ export async function createCheckoutSession(
     userId: string,
     tier: 'pro' | 'ultra'
 ): Promise<Stripe.Checkout.Session> {
+    ensureStripeSecretKey();
     try {
         let appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
         if (appUrl.includes('localhost') && appUrl.startsWith('https://')) {
@@ -121,9 +123,12 @@ export function constructWebhookEvent(
     payload: string | Buffer,
     signature: string
 ): Stripe.Event {
-    try {
-        const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+        throw new Error('STRIPE_WEBHOOK_SECRET is not defined in environment variables');
+    }
 
+    try {
         const event = stripe.webhooks.constructEvent(
             payload,
             signature,
@@ -145,6 +150,7 @@ export function constructWebhookEvent(
 export async function getStripeCustomer(
     customerId: string
 ): Promise<Stripe.Customer | null> {
+    ensureStripeSecretKey();
     try {
         const customer = await stripe.customers.retrieve(customerId);
         if (customer.deleted) {
@@ -165,6 +171,7 @@ export async function getStripeCustomer(
 export async function cancelStripeSubscription(
     subscriptionId: string
 ): Promise<Stripe.Subscription> {
+    ensureStripeSecretKey();
     try {
         const subscription = await stripe.subscriptions.cancel(subscriptionId);
         return subscription;

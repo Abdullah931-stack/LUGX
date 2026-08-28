@@ -7,7 +7,8 @@ let poolInstance: Pool | null = null;
 function getPool(): Pool {
     if (!poolInstance) {
         poolInstance = new Pool({
-            connectionString: process.env.DATABASE_URL || "",
+            connectionString:
+                process.env.DATABASE_URL || "postgresql://placeholder:placeholder@localhost:5432/placeholder",
             max: 5,
             connectionTimeoutMillis: 10_000,
             idleTimeoutMillis: 30_000,

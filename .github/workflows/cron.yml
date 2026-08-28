@@ -6,9 +6,9 @@
 #
 # Setup:
 #   1. Generate a secret: openssl rand -base64 32
-#   2. Add CRON_SECRET to this repository's Actions secrets (Settings >
-#      Secrets and variables > Actions).
-#   3. Add DEPLOY_URL to the same place (e.g. https://your-app.vercel.app).
+#   2. Add CRON_SECRET to this repository's Actions Secrets (Settings >
+#      Secrets and variables > Actions > Secrets).
+#   3. Add DEPLOY_URL to Actions Secrets or Variables (e.g. https://your-app.vercel.app).
 #
 # The workflow never fails the whole pipeline on cron issues: cron jobs are
 # operationally important but non-blocking for development, so errors are
@@ -33,11 +33,11 @@ jobs:
       - name: Run purge cron endpoint
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
+          DEPLOY_URL: ${{ secrets.DEPLOY_URL || vars.DEPLOY_URL }}
         run: |
           if [ -z "$CRON_SECRET" ] || [ -z "$DEPLOY_URL" ]; then
-            echo "ERROR: CRON_SECRET or DEPLOY_URL secret not configured."
-            echo "Add them in repository Settings > Secrets and variables > Actions."
+            echo "ERROR: CRON_SECRET or DEPLOY_URL not configured."
+            echo "Add CRON_SECRET to repository Secrets, and DEPLOY_URL to Secrets or Variables (Settings > Secrets and variables > Actions)."
             exit 1
           fi
 

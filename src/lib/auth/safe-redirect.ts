@@ -64,7 +64,6 @@ export function resolveSafeRedirectPath(
     }
 
     // 4. Strip all ASCII control characters (0x00-0x1F, 0x7F) and trim whitespace
-    // eslint-disable-next-line no-control-regex
     const cleanTarget = normalized.trim().replace(/[\x00-\x1F\x7F]/g, "");
     if (!cleanTarget || !cleanTarget.startsWith("/")) {
         return safeFallback;
@@ -89,7 +88,6 @@ export function resolveSafeRedirectPath(
     }
 
     // Re-check for backslashes, control characters or homographs in decoded payload
-    // eslint-disable-next-line no-control-regex
     if (decoded.includes("\\") || /[\x00-\x1F\x7F\uFF0F\uFE68\uFF3C\u200B-\u200D\uFEFF\u2028\u2029]/.test(decoded)) {
         return safeFallback;
     }

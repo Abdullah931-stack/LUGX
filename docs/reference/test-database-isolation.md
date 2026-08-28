@@ -36,7 +36,7 @@ remain in place as a **second layer of defense**, not a substitute.
 | `npm run test:live` | The 14 LIVE suites against the isolated Neon branch (+ live AI keys for the e2e smoke). |
 | `npm run test:all` | Both, sequentially. |
 
-LIVE suites currently registered in `vitest.live.config.ts`:
+LIVE suites currently registered in `vitest.live.config.ts` (16 suites):
 
 1. `src/app/api/files/[id]/route.putguard.test.ts`
 2. `src/server/actions/ai-ops.integrity.test.ts`
@@ -51,7 +51,9 @@ LIVE suites currently registered in `vitest.live.config.ts`:
 11. `src/test/ai-server-atomic-commit.live.test.ts`
 12. `src/test/editor-orchestration.live.test.ts`
 13. `src/test/ai-preview-decision.live.test.ts`
-14. `src/app/api/stripe/webhook/route.live.test.ts`
+14. `src/test/ai-reservation-status.live.test.ts`
+15. `src/app/api/stripe/webhook/route.live.test.ts`
+16. `src/test/cross-user-ownership.test.ts`
 
 ### Formerly-mocked suites — LIVE twins now implemented (post Phase 10 follow-up)
 
@@ -80,7 +82,7 @@ The Pool is never created unless **all** of the following hold:
 2. The effective `DATABASE_URL` equals `TEST_DATABASE_URL` exactly.
 3. The target host is not listed in the optional comma-separated denylist
    `TEST_DB_FORBIDDEN_HOSTS` (defense against pasting the main-branch URL as
-   the test URL).
+   the test URL; automatically normalizes `-pooler` connection endpoints).
 
 Every vitest run prints the mandatory identity line, e.g.:
 
@@ -112,16 +114,9 @@ to a live URL; push failures surface immediately).
 
 ## 5. Evidence of isolation
 
-- **Phase 10 closure run (2026-08-24, dated record):** default `npx vitest run`
-  then measured **28 files / 334 tests — all passed**, zero LIVE files included.
-  *(Current counts live in the 2026-08-25 update bullet below.)*
-  - **Update (2026-08-25, post Phase 11):** default bucket now **29 files /
-    349 tests, all passed** (hydration-lifecycle + reload-recovery suites added;
-    `npm run test` runs once via `vitest run` — `test:watch` available).
-- Live run (`npm run test:live`) on the isolated branch: **14/14 files / 62 tests
-  passed** — including all five live twins of formerly-mocked suites (see §2.1).
-- Guard unit tests → 7/7 passed (main-branch refusal, missing-URL refusal,
-  mismatch refusal, loader leak prevention, shell-value precedence).
+- **Unit test suite (`npx vitest run`):** **37 files / 488 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Guard unit tests (`src/test/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
+- **Live run (`npm run test:live`):** 16 registered suites executed against isolated PostgreSQL container / Neon branch.
 - Mandatory identity line printed at the start of every live run:
   `[test-db] Isolated test branch identity — endpointId: 'ep-soft-glade-b1hdcbwm-pooler' host: 'ep-soft-glade-b1hdcbwm-pooler.c-5.eu-central-1.aws.neon.tech'`
 - Main-branch row counts before/after a full live run (2026-08-24, operator
@@ -164,3 +159,17 @@ const p = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUn
   updating it to target the branch explicitly belongs to a separate cleanup.
 - TD-01 in `docs/TECHNICAL_DEBT_REGISTER.md` must be rewritten (decision
   reversal) in a dedicated documentation session per the roadmap.
+
+## 7. Multi-Stage CI/CD Pipeline Automation (`.github/workflows/ci.yml`)
+
+The repository runs a deterministic multi-stage CI pipeline on GitHub Actions configured to strictly enforce concurrency integrity and database isolation across every pull request and branch push:
+
+| Stage | Job Name | Isolation & Execution Guarantees |
+|---|---|---|
+| **1. Quality Gate** | `quality-gate` | Pure static verification: ESLint 9, TypeScript strictness (`tsc --noEmit`), and dependency vulnerability audits (`npm audit`). |
+| **2. Pure Unit Contracts** | `unit-contracts` | Runs `npm run test` strictly excluding `LIVE_TEST_FILES` (zero database or network dependencies, < 20s runtime). |
+| **3. Schema Integrity** | `migration-integrity` | Ephemeral `postgres:16-alpine` service container verifies sequential migration application (`scripts/verify-migrations.mjs`) and Drizzle schema sync (`drizzle-kit push --config drizzle.config.test.ts --force`). |
+| **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | Runs `npm run test:live` against isolated PostgreSQL 16 + Redis 7 service containers with `TEST_DB_FORBIDDEN_HOSTS` configured to reject production hosts, verifying lost-update guards, AI quota idempotency, and Stripe ledger deduplication. |
+| **5. Production Build** | `build-verification` | Full Next.js 16 production build (`npm run build`) with asset compilation and route validation. |
+| **6. Live Smoke (Gated)** | `live-provider-smoke` | Gated provider live smoke (`src/test/ai-live-e2e.test.ts`) executed only on `main` push or manual `workflow_dispatch`. |
+

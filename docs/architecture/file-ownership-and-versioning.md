@@ -101,4 +101,4 @@ When recursively collecting descendant file/folder IDs for cascading deletion or
 - `src/app/api/files/[id]/route.putguard.test.ts`: Verifies lost-update mitigation and atomic ETag/version updates.
 - `src/server/actions/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments.
 - `src/server/actions/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job.
-- Full suite execution: 31 test suites, 384 tests passing (100% pass rate).
+- Full suite execution: 37 test files, 488 tests passing (100% pass rate).

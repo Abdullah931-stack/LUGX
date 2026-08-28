@@ -2,6 +2,25 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.21.0] - 2026-08-28 (Multi-Stage CI Pipeline Architecture, Database Isolation & Concurrency Integrity Verification)
+
+### Added - CI/CD Pipeline & Database Isolation Automation
+- **Multi-Stage GitHub Actions CI Pipeline (`.github/workflows/ci.yml`):** Engineered a 6-stage GitHub Actions CI workflow partitioned into Quality Gate (`quality-gate`: ESLint 9, TypeScript strict `tsc --noEmit`, `npm audit`), Unit Contracts (`unit-contracts`: deterministic unit tests with zero network/DB dependencies), Schema Migration Integrity (`migration-integrity`: PostgreSQL 16 container verifying sequential SQL migrations and Drizzle schema sync), Concurrency Integrity & DB Isolation (`concurrency-and-db-isolation`: isolated PostgreSQL 16 + Redis 7 service containers running `npm run test:live` with `TEST_DB_FORBIDDEN_HOSTS` protection), Production Build (`build-verification`: Next.js 16 build verification with cached artifacts), and Gated Live Smoke (`live-provider-smoke`: protected cloud AI/webhook test execution).
+- **Migration & Schema Verification Automation (`scripts/verify-migrations.mjs`):** Implemented an automated verification script that boots a database connection, applies raw SQL migrations (`0001` through `0007`) sequentially, and verifies the existence of all core tables, enums, unique indexes, and constraints.
+- **ESLint & Static Quality Tuning (`eslint.config.mjs`):** Optimized flat ESLint configuration to tune TypeScript rules, exclude test helper any-types, and clean up React 19 callback and effect declaration orders in `search-replace.tsx` and `folder-picker-modal.tsx`.
+- **Documentation Master Index & Isolation Architecture Updates:** Synchronized `docs/README.md` and `docs/reference/test-database-isolation.md` to document the CI multi-stage workflow, execution commands, and service container isolation guarantees.
+
+## [1.20.0] - 2026-08-28 (Build Phase Decoupling from Runtime Secrets & Complete Live Integration Test Isolation)
+
+### Changed - Build & Static Analysis Decoupling
+- **Decoupled Stripe Client Initialization (`src/lib/stripe/index.ts`):** Removed module top-level throwing validations (`throw new Error`) on missing `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Initialized Stripe instance with build-safe fallback placeholder (`sk_test_placeholder`), deferring strict fail-closed key validation checks (`ensureStripeSecretKey()`) to runtime invocation within operations (`getOrCreateStripeCustomer`, `createCheckoutSession`, `constructWebhookEvent`, etc.).
+- **Safe Database & Neon Pool Initializers (`src/lib/db/index.ts` & `src/lib/db/transactional.ts`):** Provided fallback dummy PostgreSQL connection strings for Neon client and Neon serverless Pool initialization during static analysis and module tracing, preventing module evaluation throws when `DATABASE_URL` is omitted during CI builds.
+- **Resilient Supabase Client Creation (`src/lib/supabase/client.ts`, `src/lib/supabase/server.ts`, `src/proxy.ts`):** Added fallback URL (`https://placeholder.supabase.co`) and anon key strings for browser, server, and Next.js middleware client creation to ensure static page generation and route compilation succeed in clean environments without `.env` or `.env.local`.
+- **Zero-Secret CI & PR Verification:** Verified that `next build` and `npm run build` succeed with exit code `0` in completely clean environments devoid of `.env` or `.env.local` files, generating all 13 routes and performing full TypeScript type-checking without requiring production credentials.
+
+### Fixed - Live Test Suite Isolation
+- **Isolated Cross-User Ownership Integration Tests (`vitest.live.config.ts`):** Added `src/test/cross-user-ownership.test.ts` to `LIVE_TEST_FILES` in `vitest.live.config.ts`, ensuring all 16 live integration suites requiring real external databases run exclusively via `npm run test:live` and are 100% excluded from standard unit tests (`npm test`), achieving 37 passing unit suites (487 tests passed).
+
 ## [1.19.0] - 2026-08-28 (Editor Interaction & Coordinate Drift Fix, Zero-Layout-Shift Delimiter System, Adversarial Hardening)
 
 ### Fixed - Editor Interaction & Vertical Navigation Stability

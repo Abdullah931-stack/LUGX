@@ -53,6 +53,19 @@ describe("test-db-guard", () => {
         ).toThrow(/forbidden|TEST_DB_FORBIDDEN_HOSTS/i);
     });
 
+    it("REFUSES production main branch when connection string uses pooled endpoint (-pooler)", () => {
+        const POOLED_MAIN_URL =
+            "postgresql://prod_user:secret@ep-main-branch-000000-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require";
+        expect(() =>
+            assertSafeTestDatabaseUrl({
+                databaseUrl: POOLED_MAIN_URL,
+                testDatabaseUrl: POOLED_MAIN_URL,
+                forbiddenHosts: "ep-main-branch-000000.us-east-2.aws.neon.tech",
+                ci: false,
+            })
+        ).toThrow(/forbidden|TEST_DB_FORBIDDEN_HOSTS/i);
+    });
+
     it("REFUSES when effective DATABASE_URL differs from TEST_DATABASE_URL", () => {
         expect(() =>
             assertSafeTestDatabaseUrl({

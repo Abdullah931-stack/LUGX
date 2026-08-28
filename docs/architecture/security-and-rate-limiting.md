@@ -119,9 +119,9 @@ user-facing deletions are tombstones
 ## 6. Verification
 
 ```bash
-npx vitest run src/test/auth-redirect.test.ts                  # open redirect & OAuth security
-npx vitest run src/test/cross-user-ownership.test.ts           # cross-user isolation & atomic sync
-npx vitest run src/app/api/files/[id]/route.putguard.test.ts   # auth + rate-limit + version guards
-npx vitest run src/server/actions/file-ops.ownership.test.ts   # ownership isolation
-npx tsc --noEmit                                               # type safety gate
+npx vitest run src/test/auth-redirect.test.ts                                                      # open redirect & OAuth security
+npx vitest run --config vitest.live.config.ts src/test/cross-user-ownership.test.ts               # cross-user isolation & atomic sync (live DB)
+npx vitest run --config vitest.live.config.ts src/app/api/files/[id]/route.putguard.test.ts       # auth + rate-limit + version guards (live DB)
+npx vitest run --config vitest.live.config.ts src/server/actions/file-ops.ownership.test.ts       # ownership isolation (live DB)
+npx tsc --noEmit                                                                                   # type safety gate
 ```

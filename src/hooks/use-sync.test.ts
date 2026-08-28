@@ -234,13 +234,12 @@ describe('useSync hook', () => {
             serverEtag: undefined,
         };
 
-        let transformedConflict: Record<string, unknown> | undefined;
         await act(async () => {
             await registeredCb(syncConflict);
         });
 
         expect(onConflict).toHaveBeenCalledTimes(1);
-        transformedConflict = onConflict.mock.calls[0][0];
+        const transformedConflict = onConflict.mock.calls[0][0] as Record<string, unknown> | undefined;
         expect(transformedConflict?.fileId).toBe('file-abc');
         expect((transformedConflict?.localVersion as { content: string })?.content).toBe('a');
         expect((transformedConflict?.serverVersion as { content: string })?.content).toBe('b');

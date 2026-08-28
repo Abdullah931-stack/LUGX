@@ -28,6 +28,21 @@ export function SearchReplace({ adapter, editor, isOpen, onClose }: SearchReplac
     const searchInputRef = useRef<HTMLInputElement>(null);
     const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+    // Highlight specific match using exact document offsets
+    const highlightMatch = useCallback(
+        (match: { from: number; to: number }) => {
+            if (!currentAdapter) return;
+
+            try {
+                currentAdapter.setSelection(match.from, match.to);
+                currentAdapter.focus();
+            } catch (error) {
+                console.error("[SearchReplace] Highlight error:", error);
+            }
+        },
+        [currentAdapter]
+    );
+
     // Find all matches in the editor Markdown content using exact UTF-16 offsets
     const findMatches = useCallback(() => {
         if (!currentAdapter || !searchQuery) {
@@ -70,22 +85,7 @@ export function SearchReplace({ adapter, editor, isOpen, onClose }: SearchReplac
             console.error("[SearchReplace] Search error:", error);
             setMatches([]);
         }
-    }, [currentAdapter, searchQuery, caseSensitive]);
-
-    // Highlight specific match using exact document offsets
-    const highlightMatch = useCallback(
-        (match: { from: number; to: number }) => {
-            if (!currentAdapter) return;
-
-            try {
-                currentAdapter.setSelection(match.from, match.to);
-                currentAdapter.focus();
-            } catch (error) {
-                console.error("[SearchReplace] Highlight error:", error);
-            }
-        },
-        [currentAdapter]
-    );
+    }, [currentAdapter, searchQuery, caseSensitive, highlightMatch]);
 
     // Navigate to next match
     const goToNextMatch = useCallback(() => {

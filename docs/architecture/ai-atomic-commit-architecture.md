@@ -86,8 +86,7 @@ sequenceDiagram
 The atomic commit guarantees are verified across the following automated test suites:
 - `src/test/ai-atomic-commit.integration.test.ts`: **Real PostgreSQL Integration Test** executing the actual production actions (`commitAIFileOperation`, `refundAIReservation`) against real PostgreSQL tables, enforcing foreign keys, live interactive transactions, and rollback verification.
 - `src/test/ai-server-atomic-commit.test.ts`: Covers auth verification, parameter validation, file-reservation association, idempotent retries, ETag/version conflict guards, production transaction requirement, and transactional execution/rollback.
-- `src/lib/ai-transaction.test.ts`: Verifies ephemeral ghost decoration isolation, single-action undo invariants, and server-first confirmation.
-- `src/test/editor-atomic-commit.test.ts`: Verifies partial and full replacement single undo invariants, conflict rollbacks, and pristine document preservation upon server failure.
+- `src/test/editor-atomic-commit.test.ts`: Verifies partial and full replacement single undo invariants, conflict rollbacks, ephemeral ghost preview isolation, and pristine document preservation upon server failure.
 - `src/test/ai-quota-idempotency.test.ts` & `src/server/actions/ai-ops.refund.test.ts` & `src/server/actions/ai-ops.integrity.test.ts`: Verifies quota reservation state machine, cross-midnight resilience, and concurrency idempotency.
 
 ---

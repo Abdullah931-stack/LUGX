@@ -23,6 +23,7 @@ export const LIVE_TEST_FILES = [
     'src/test/ai-preview-decision.live.test.ts',
     'src/test/ai-reservation-status.live.test.ts',
     'src/app/api/stripe/webhook/route.live.test.ts',
+    'src/test/cross-user-ownership.test.ts',
 ];
 
 export default defineConfig({
