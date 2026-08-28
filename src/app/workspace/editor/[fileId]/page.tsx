@@ -7,6 +7,7 @@ import {
     type EditorAdapter,
     type EditorMode,
     type EditorSelection,
+    type DirectionSettings,
 } from "@/components/editor/markdown";
 import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
@@ -30,6 +31,50 @@ export default function EditorPage() {
     const [selectedText, setSelectedText] = useState("");
     const [editorMode, setEditorMode] = useState<EditorMode>("live");
     const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
+    const [directionSettings, setDirectionSettings] = useState<DirectionSettings>({
+        mode: "auto",
+        lockCodeBlocksLTR: true,
+    });
+
+    // Load persisted direction preferences from localStorage on mount
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem("lugx_editor_direction_pref");
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (parsed && typeof parsed === "object") {
+                    setDirectionSettings((prev) => ({
+                        mode: ["auto", "rtl", "ltr"].includes(parsed.mode) ? parsed.mode : prev.mode,
+                        lockCodeBlocksLTR:
+                            typeof parsed.lockCodeBlocksLTR === "boolean"
+                                ? parsed.lockCodeBlocksLTR
+                                : prev.lockCodeBlocksLTR,
+                    }));
+                }
+            }
+        } catch {
+            // Ignore localStorage errors (e.g. privacy mode / SSR)
+        }
+    }, []);
+
+    // Update direction settings callback
+    const handleDirectionSettingsChange = useCallback(
+        (updated: Partial<DirectionSettings>) => {
+            setDirectionSettings((prev) => {
+                const next = { ...prev, ...updated };
+                try {
+                    localStorage.setItem("lugx_editor_direction_pref", JSON.stringify(next));
+                } catch {
+                    // Ignore storage errors
+                }
+                if (adapter) {
+                    adapter.setDirectionSettings(next);
+                }
+                return next;
+            });
+        },
+        [adapter]
+    );
 
     // Stabilized navigation callback
     const handleNavigate = useCallback((path: string) => router.push(path), [router]);
@@ -104,14 +149,30 @@ export default function EditorPage() {
         checkQuota();
     }, []);
 
-    // Keyboard shortcuts (Ctrl+F for search, Escape for stopping AI generation)
+    // Keyboard shortcuts (Ctrl+F for search, Escape for stopping AI generation, Ctrl+Alt+D for direction cycle)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+            if ((e.ctrlKey || e.metaKey) && e.key === "f" && !e.altKey) {
                 e.preventDefault();
                 setIsSearchOpen(true);
             } else if (e.key === "Escape" && isAIActive) {
                 stopAIOperation();
+            } else if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key.toLowerCase() === "d" || e.code === "KeyD")) {
+                if (e.repeat) return;
+                e.preventDefault();
+                setDirectionSettings((prev) => {
+                    const nextMode = prev.mode === "auto" ? "rtl" : prev.mode === "rtl" ? "ltr" : "auto";
+                    const next = { ...prev, mode: nextMode };
+                    try {
+                        localStorage.setItem("lugx_editor_direction_pref", JSON.stringify(next));
+                    } catch {
+                        // Ignore storage errors
+                    }
+                    if (adapter) {
+                        adapter.setDirectionSettings(next);
+                    }
+                    return next;
+                });
             }
         };
 
@@ -120,7 +181,7 @@ export default function EditorPage() {
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
         };
-    }, [isAIActive, stopAIOperation]);
+    }, [isAIActive, stopAIOperation, adapter]);
 
     // Copy raw Markdown to clipboard with safe fallback
     const handleCopy = useCallback(async () => {
@@ -220,6 +281,8 @@ export default function EditorPage() {
                 onFormat={handleFormat}
                 mode={editorMode}
                 onToggleMode={handleToggleMode}
+                directionSettings={directionSettings}
+                onDirectionSettingsChange={handleDirectionSettingsChange}
                 canUndo={adapter?.canUndo() || false}
                 canRedo={adapter?.canRedo() || false}
                 isLoading={isAIActive}
@@ -317,6 +380,9 @@ export default function EditorPage() {
                             }}
                             mode={editorMode}
                             onModeChange={setEditorMode}
+                            dir={directionSettings.mode}
+                            lockCodeBlocksLTR={directionSettings.lockCodeBlocksLTR}
+                            onDirectionChange={handleDirectionSettingsChange}
                             placeholder="ابدأ الكتابة بصيغة Markdown..."
                             className="min-h-[70vh] text-zinc-300"
                         />

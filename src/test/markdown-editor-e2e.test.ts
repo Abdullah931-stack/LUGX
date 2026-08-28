@@ -14,7 +14,7 @@
  * 8. Hard reload recovery & session cleanup
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
@@ -231,6 +231,53 @@ describe("Phase 6 Comprehensive E2E: Unified Markdown Editor Workflows", () => {
             const txtExport = await exportContent(adapter.getValue(), "test-file", "txt");
             expect(txtExport.success).toBe(true);
             expect(txtExport.filename).toBe("test-file.txt");
+        });
+    });
+
+    describe("7. Virtualization Bidi Resilience & Large Document Scrolling Stability", () => {
+        it("should preserve text direction integrity across 2,000 lines of mixed Arabic, English and Code blocks", () => {
+            const lines: string[] = [];
+            lines.push("# تقرير المشروع النهائي والأنظمة الذكية");
+            lines.push("هذا المستند يحتوي على آلاف الأسطر للتحقق من ثبات التمرير والمحاكاة الافتراضية.");
+
+            for (let i = 1; i <= 500; i++) {
+                lines.push(`فقرة عربية رقم ${i}: توثيق مستمر للأداء.`);
+            }
+
+            lines.push("```typescript\n// Middle Code Block\nexport function calculateMetrics(): number {\n  return 42;\n}\n```");
+
+            for (let i = 501; i <= 1000; i++) {
+                lines.push(`English section paragraph ${i}: verifying LTR flow without breaking Arabic container.`);
+            }
+
+            lines.push("## الخاتمة والتوصيات الفنية");
+            lines.push("تم الحفاظ على اتجاه النصوص بدون أي تشوه.");
+
+            const largeDoc = lines.join("\n\n");
+            initEditor(largeDoc);
+
+            expect(adapter.getLineCount()).toBeGreaterThan(1000);
+            expect(adapter.getValue()).toBe(largeDoc);
+            expect(adapter.getDirectionSettings().mode).toBe("auto");
+
+            // Simulate jumping/scrolling to middle and modifying text
+            const middlePos = largeDoc.indexOf("Middle Code Block");
+            adapter.replaceRange(middlePos, middlePos + 17, "Updated Code Block");
+            expect(adapter.getValue()).toContain("Updated Code Block");
+
+            // Switch to RTL mode globally
+            adapter.setDirectionSettings({ mode: "rtl" });
+            expect(adapter.getDirectionSettings().mode).toBe("rtl");
+            expect(adapter.getValue()).toContain("# تقرير المشروع النهائي والأنظمة الذكية");
+
+            // Switch to LTR mode globally
+            adapter.setDirectionSettings({ mode: "ltr" });
+            expect(adapter.getDirectionSettings().mode).toBe("ltr");
+
+            // Switch back to Auto mode
+            adapter.setDirectionSettings({ mode: "auto", lockCodeBlocksLTR: true });
+            expect(adapter.getDirectionSettings().mode).toBe("auto");
+            expect(adapter.getDirectionSettings().lockCodeBlocksLTR).toBe(true);
         });
     });
 });

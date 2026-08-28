@@ -4,13 +4,16 @@ import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { placeholder as cmPlaceholder } from "@codemirror/view";
-import { MarkdownEditorProps, EditorAdapter } from "./types";
+import { MarkdownEditorProps, EditorAdapter, DirectionSettings } from "./types";
 import {
     createMarkdownExtensions,
     modeCompartment,
     readOnlyCompartment,
     placeholderCompartment,
     directionCompartment,
+    directionSettingsState,
+    setDirectionSettingsEffect,
+    resolveDirectionExtension,
     livePreviewPlugin,
 } from "./markdown-extensions";
 import { createEditorAdapter, CodeMirrorEditorAdapter } from "./editor-adapter";
@@ -29,6 +32,8 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
         autoFocus = false,
         className = "",
         dir = "auto",
+        lockCodeBlocksLTR = true,
+        onDirectionChange,
     },
     ref
 ) {
@@ -38,16 +43,18 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
 
     // Keep callback refs stable to avoid restarting extensions on re-render
     const onChangeRef = useRef(onChange);
-    onChangeRef.current = onChange;
-
     const onSelectionChangeRef = useRef(onSelectionChange);
-    onSelectionChangeRef.current = onSelectionChange;
-
     const onAdapterReadyRef = useRef(onAdapterReady);
-    onAdapterReadyRef.current = onAdapterReady;
-
     const onModeChangeRef = useRef(onModeChange);
-    onModeChangeRef.current = onModeChange;
+    const onDirectionChangeRef = useRef(onDirectionChange);
+
+    useEffect(() => {
+        onChangeRef.current = onChange;
+        onSelectionChangeRef.current = onSelectionChange;
+        onAdapterReadyRef.current = onAdapterReady;
+        onModeChangeRef.current = onModeChange;
+        onDirectionChangeRef.current = onDirectionChange;
+    });
 
     // Expose EditorAdapter via ref
     useImperativeHandle(ref, () => ({
@@ -73,12 +80,18 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
         getHeadingCount: () => adapterRef.current?.getHeadingCount() ?? 0,
         getMode: () => adapterRef.current?.getMode() ?? "live",
         setMode: (m) => adapterRef.current?.setMode(m),
+        getDirectionSettings: () =>
+            adapterRef.current?.getDirectionSettings() ?? {
+                mode: dir,
+                lockCodeBlocksLTR,
+            },
+        setDirectionSettings: (settings) => adapterRef.current?.setDirectionSettings(settings),
         startStreamingGhost: (opts) => adapterRef.current?.startStreamingGhost?.(opts),
         updateStreamingGhost: (text, isStreaming) => adapterRef.current?.updateStreamingGhost?.(text, isStreaming),
         clearStreamingGhost: () => adapterRef.current?.clearStreamingGhost?.(),
         getGhostRange: () => adapterRef.current?.getGhostRange?.() ?? null,
         destroy: () => adapterRef.current?.destroy(),
-    }), []);
+    }), [dir, lockCodeBlocksLTR]);
 
     // Initialize CodeMirror 6 EditorView on mount
     useEffect(() => {
@@ -91,6 +104,13 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
             placeholder,
             readOnly,
             dir,
+            lockCodeBlocksLTR,
+            initialDoc,
+            onDirectionChange: (settings: DirectionSettings) => {
+                if (onDirectionChangeRef.current) {
+                    onDirectionChangeRef.current(settings);
+                }
+            },
             onUpdate: (update) => {
                 if (update.docChanged) {
                     const newDoc = update.state.doc.toString();
@@ -167,7 +187,7 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
 
         if (adapterRef.current instanceof CodeMirrorEditorAdapter) {
             // Internal state sync
-            (adapterRef.current as any).currentMode = mode;
+            (adapterRef.current as unknown as { currentMode: EditorMode }).currentMode = mode;
         }
 
         if (onModeChangeRef.current) {
@@ -195,21 +215,28 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
         });
     }, [placeholder]);
 
-    // Synchronize `dir`
+    // Synchronize direction settings (`dir` & `lockCodeBlocksLTR`)
     useEffect(() => {
         const view = viewRef.current;
         if (!view) return;
 
-        view.dispatch({
-            effects: directionCompartment.reconfigure(
-                dir === "rtl"
-                    ? EditorView.contentAttributes.of({ dir: "rtl" })
-                    : dir === "ltr"
-                      ? EditorView.contentAttributes.of({ dir: "ltr" })
-                      : EditorView.contentAttributes.of({ dir: "auto" })
-            ),
-        });
-    }, [dir]);
+        const currentSettings = view.state.field(directionSettingsState, false);
+        if (
+            currentSettings &&
+            (currentSettings.mode !== dir || currentSettings.lockCodeBlocksLTR !== lockCodeBlocksLTR)
+        ) {
+            const nextSettings: DirectionSettings = {
+                mode: dir,
+                lockCodeBlocksLTR,
+            };
+            view.dispatch({
+                effects: [
+                    setDirectionSettingsEffect.of(nextSettings),
+                    directionCompartment.reconfigure(resolveDirectionExtension(dir, view.state.doc.toString())),
+                ],
+            });
+        }
+    }, [dir, lockCodeBlocksLTR]);
 
     return (
         <div

@@ -137,12 +137,52 @@ describe("Phase 1: Standalone Markdown Editor & Adapter Contract", () => {
         });
     });
 
-    describe("4. RTL & Arabic Text Support with Decoration Delimiter Policy", () => {
+    describe("4. RTL, Bidi & Text Direction Modes (auto / rtl / ltr)", () => {
         it("should detect Arabic RTL text direction accurately", () => {
             expect(detectMarkdownDirection("مرحبا بالعالم")).toBe("rtl");
             expect(detectMarkdownDirection("# عنوان باللغة العربية")).toBe("rtl");
             expect(detectMarkdownDirection("Hello world")).toBe("ltr");
             expect(detectMarkdownDirection("### English heading")).toBe("ltr");
+        });
+
+        it("should default to auto mode with code blocks locked to LTR", () => {
+            initEditor("# عنوان رئيسي عربي\n\n```js\nconst code = 1;\n```");
+            const settings = adapter.getDirectionSettings();
+            expect(settings.mode).toBe("auto");
+            expect(settings.lockCodeBlocksLTR).toBe(true);
+        });
+
+        it("should update direction settings dynamically via adapter contract", () => {
+            initEditor("# وثيقة جديدة");
+            expect(adapter.getDirectionSettings().mode).toBe("auto");
+
+            adapter.setDirectionSettings({ mode: "rtl" });
+            expect(adapter.getDirectionSettings().mode).toBe("rtl");
+
+            adapter.setDirectionSettings({ mode: "ltr" });
+            expect(adapter.getDirectionSettings().mode).toBe("ltr");
+
+            adapter.setDirectionSettings({ lockCodeBlocksLTR: false });
+            expect(adapter.getDirectionSettings().lockCodeBlocksLTR).toBe(false);
+            expect(adapter.getDirectionSettings().mode).toBe("ltr");
+        });
+
+        it("should dynamically toggle code block direction when lockCodeBlocksLTR changes in RTL mode", () => {
+            const doc = "# تقرير عربي\n\n```js\nconsole.log('test');\n```";
+            initEditor(doc);
+
+            // 1. Force RTL with lockCodeBlocksLTR = true (default)
+            adapter.setDirectionSettings({ mode: "rtl", lockCodeBlocksLTR: true });
+            expect(adapter.getDirectionSettings().mode).toBe("rtl");
+            expect(adapter.getDirectionSettings().lockCodeBlocksLTR).toBe(true);
+
+            // 2. Unlock code blocks in RTL mode
+            adapter.setDirectionSettings({ lockCodeBlocksLTR: false });
+            expect(adapter.getDirectionSettings().lockCodeBlocksLTR).toBe(false);
+
+            // 3. Re-lock code blocks
+            adapter.setDirectionSettings({ lockCodeBlocksLTR: true });
+            expect(adapter.getDirectionSettings().lockCodeBlocksLTR).toBe(true);
         });
 
         it("should preserve Arabic text with markdown symbols at the beginning without direction reversal", () => {
@@ -230,10 +270,10 @@ describe("Phase 1: Standalone Markdown Editor & Adapter Contract", () => {
         it("should not import or invoke any TipTap, HTML serializer, or network methods", () => {
             initEditor("# Standalone LUGX Editor");
             // Verify adapter has no TipTap methods
-            expect((adapter as any).getHTML).toBeUndefined();
-            expect((adapter as any).setContent).toBeUndefined();
-            expect((adapter as any).schema).toBeUndefined();
-            expect((adapter as any).commands).toBeUndefined();
+            expect((adapter as unknown as Record<string, unknown>).getHTML).toBeUndefined();
+            expect((adapter as unknown as Record<string, unknown>).setContent).toBeUndefined();
+            expect((adapter as unknown as Record<string, unknown>).schema).toBeUndefined();
+            expect((adapter as unknown as Record<string, unknown>).commands).toBeUndefined();
         });
     });
 });

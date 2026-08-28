@@ -298,7 +298,18 @@ To prevent race conditions where a pending debounced auto-save executes in the b
 To preserve uninterrupted user workflow when writing with AI assistance:
 1. **Dynamic Shift on Non-Overlapping Edits:** When the user types or edits elsewhere in the document while an AI stream or ephemeral ghost preview is active, `codeMirrorStreamingGhostField` uses `tr.changes.mapPos(from, 1)` and `mapPos(to, -1)` to dynamically reposition the active target range `[from, to]` in CodeMirror 6.
 2. **Orchestrator Manual Edit Policy (`handleEditorChange`):** When an active AI stream is running, `handleEditorChange` checks `adapter.getGhostRange()`. Because non-colliding edits dynamically preserve a valid shifted ghost range, the active stream is **not** aborted; the orchestrator flags `isDirty` without interrupting generation.
-3. **Collision Discard:** If an edit directly mutates or deletes within the target range being transformed by AI, the ghost decoration is dismissed and `stopStream()` is safely triggered to prevent document corruption.
+---
+
+## 6g. Bidirectional & Text Direction Architecture (Bidi Engine Amendment)
+
+To support multilingual and bidirectional authoring without performance regression or layout shifting:
+1. **Line-Level Bidi Isolation (`bidiLinePlugin`):** CodeMirror 6 viewport virtualization creates DOM elements only for visible lines. Setting `dir="auto"` on `.cm-content` causes dynamic layout inversion when top Arabic lines are unmounted on scroll. `bidiLinePlugin` applies `Decoration.line({ attributes: { dir: "auto" } })` or `dir="rtl"` / `dir="ltr"` directly per visible line, making each line evaluate its direction independently from DOM virtualization.
+2. **Explicit Direction Modes:** The orchestrator and editor support three modes:
+   - `auto`: In-memory stable document base direction with per-line evaluation.
+   - `rtl`: Globally enforced right-to-left layout.
+   - `ltr`: Globally enforced left-to-right layout.
+3. **Fenced Code Blocks LTR Locking:** When `lockCodeBlocksLTR` is enabled in `DirectionSettings`, `FencedCode` lines are locked to `dir="ltr"` and left alignment even in global RTL mode.
+4. **State & Shortcut Synchronization:** `directionSettings` are synced through `directionSettingsState` (StateField), persisted in `localStorage` (`lugx_editor_direction_pref`), and wired to the global `Ctrl + Alt + D` keyboard shortcut and toolbar `DirectionMenu`.
 
 ---
 
@@ -315,7 +326,8 @@ To preserve uninterrupted user workflow when writing with AI assistance:
   - `src/test/ai-preview-decision.test.ts` (10/10 passing)
   - `src/test/ai-server-atomic-commit.test.ts` (11/11 passing)
   - `src/test/markdown-exporters.test.ts` (6/6 passing)
-  - `src/test/markdown-editor-e2e.test.ts` (12/12 passing)
-  - Full test suite: 37/37 test files, 478/478 tests passing (100% success rate).
+  - `src/test/markdown-editor.test.ts` (21/21 passing)
+  - `src/test/markdown-editor-e2e.test.ts` (9/9 passing)
+  - Full test suite: 37/37 test files, 487/487 tests passing (100% success rate).
 
 

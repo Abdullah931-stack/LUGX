@@ -17,6 +17,15 @@ export interface EditorSnapshot {
     isDirty: boolean;
 }
 
+export type TextDirectionMode = "auto" | "rtl" | "ltr";
+
+export interface DirectionSettings {
+    /** Text direction mode: 'auto' (smart bidi per-line + doc memory), 'rtl' (forced right-to-left), or 'ltr' (forced left-to-right) */
+    mode: TextDirectionMode;
+    /** Enforce LTR direction on fenced code blocks regardless of document mode */
+    lockCodeBlocksLTR: boolean;
+}
+
 /**
  * EditorAdapter interface
  * Provides an engine-agnostic abstraction over CodeMirror 6.
@@ -67,6 +76,10 @@ export interface EditorAdapter {
     getMode(): EditorMode;
     /** Toggle rendering mode */
     setMode(mode: EditorMode): void;
+    /** Get active direction settings */
+    getDirectionSettings(): DirectionSettings;
+    /** Update direction settings */
+    setDirectionSettings(settings: Partial<DirectionSettings>): void;
     /** Start streaming ghost preview at range [from, to] */
     startStreamingGhost?(options: {
         from: number;
@@ -112,6 +125,10 @@ export interface MarkdownEditorProps {
     autoFocus?: boolean;
     /** Additional CSS class for the container */
     className?: string;
-    /** Base text direction: 'auto' | 'rtl' | 'ltr' */
-    dir?: "auto" | "rtl" | "ltr";
+    /** Base text direction mode: 'auto' | 'rtl' | 'ltr' */
+    dir?: TextDirectionMode;
+    /** Enforce LTR on code blocks regardless of document mode (defaults to true) */
+    lockCodeBlocksLTR?: boolean;
+    /** Direction settings change callback */
+    onDirectionChange?: (settings: DirectionSettings) => void;
 }

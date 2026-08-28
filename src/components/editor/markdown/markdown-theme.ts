@@ -12,7 +12,11 @@ export const markdownDarkTheme = EditorView.theme(
         "&": {
             color: "#e4e4e7",
             backgroundColor: "transparent",
-            fontFamily: "var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif)",
+            fontFamily: "var(--font-ibm-plex-arabic), var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+            fontWeight: "400",
+            fontSynthesis: "none",
+            WebkitFontSmoothing: "antialiased",
+            MozOsxFontSmoothing: "grayscale",
             fontSize: "1rem",
             lineHeight: "1.75",
             outline: "none",
@@ -21,6 +25,7 @@ export const markdownDarkTheme = EditorView.theme(
         ".cm-content": {
             caretColor: "#818cf8",
             fontFamily: "inherit",
+            fontWeight: "400",
             padding: "1.5rem 1rem",
             minHeight: "350px",
             whiteSpace: "pre-wrap",
@@ -28,6 +33,7 @@ export const markdownDarkTheme = EditorView.theme(
         },
         ".cm-line": {
             padding: "0 0.25rem",
+            fontWeight: "400",
         },
         "&.cm-focused": {
             outline: "none",
@@ -126,9 +132,18 @@ export const markdownDarkTheme = EditorView.theme(
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
             backgroundColor: "rgba(18, 18, 22, 0.95)",
             color: "#e4e4e7",
+            unicodeBidi: "isolate",
+            borderRadius: "0.375rem",
+        },
+        ".cm-bidi-ltr": {
             direction: "ltr",
             textAlign: "left",
-            borderRadius: "0.375rem",
+            unicodeBidi: "isolate",
+        },
+        ".cm-bidi-rtl": {
+            direction: "rtl",
+            textAlign: "right",
+            unicodeBidi: "isolate",
         },
         ".cm-md-blockquote": {
             borderLeft: "3px solid #6366f1",
@@ -136,7 +151,7 @@ export const markdownDarkTheme = EditorView.theme(
             color: "#a1a1aa",
             fontStyle: "italic",
         },
-        "[dir='rtl'] .cm-md-blockquote, .cm-rtl .cm-md-blockquote": {
+        "[dir='rtl'] .cm-md-blockquote, .cm-rtl .cm-md-blockquote, .cm-line[dir='rtl'] .cm-md-blockquote, .cm-bidi-rtl.cm-md-blockquote": {
             borderLeft: "none",
             borderRight: "3px solid #6366f1",
             paddingLeft: "0",
@@ -154,7 +169,7 @@ export const markdownDarkTheme = EditorView.theme(
             verticalAlign: "middle",
             marginRight: "0.5rem",
         },
-        "[dir='rtl'] .cm-md-task-checkbox, .cm-rtl .cm-md-task-checkbox": {
+        "[dir='rtl'] .cm-md-task-checkbox, .cm-rtl .cm-md-task-checkbox, .cm-line[dir='rtl'] .cm-md-task-checkbox, .cm-bidi-rtl .cm-md-task-checkbox": {
             marginRight: "0",
             marginLeft: "0.5rem",
         },

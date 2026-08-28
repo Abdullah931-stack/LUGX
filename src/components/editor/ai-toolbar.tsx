@@ -1,9 +1,10 @@
 "use client";
 
 import { ExportButton } from "@/components/editor/export-button";
+import { DirectionMenu } from "@/components/editor/direction-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { EditorMode } from "@/components/editor/markdown/types";
+import { EditorMode, DirectionSettings } from "@/components/editor/markdown/types";
 import {
     Undo2,
     Redo2,
@@ -43,6 +44,8 @@ interface AIToolbarProps {
     onFormat?: (prefix: string, suffix?: string, placeholder?: string) => void;
     mode?: EditorMode;
     onToggleMode?: () => void;
+    directionSettings?: DirectionSettings;
+    onDirectionSettingsChange?: (settings: Partial<DirectionSettings>) => void;
     canUndo: boolean;
     canRedo: boolean;
     isLoading: boolean;
@@ -65,6 +68,8 @@ export function AIToolbar({
     onFormat,
     mode = "live",
     onToggleMode,
+    directionSettings,
+    onDirectionSettingsChange,
     canUndo,
     canRedo,
     isLoading,
@@ -260,6 +265,13 @@ export function AIToolbar({
 
             {/* Mode & Export Controls */}
             <div className="flex items-center gap-1 ml-auto flex-shrink-0">
+                {directionSettings && onDirectionSettingsChange && (
+                    <DirectionMenu
+                        settings={directionSettings}
+                        onSettingsChange={onDirectionSettingsChange}
+                        disabled={isLoading}
+                    />
+                )}
                 {onToggleMode && (
                     <Button
                         variant="ghost"

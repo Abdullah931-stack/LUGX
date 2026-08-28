@@ -1,4 +1,4 @@
-import { Compartment, Extension, RangeSetBuilder, EditorState } from "@codemirror/state";
+import { Compartment, Extension, RangeSetBuilder, EditorState, StateField, StateEffect, Prec } from "@codemirror/state";
 import {
     EditorView,
     Decoration,
@@ -8,6 +8,7 @@ import {
     WidgetType,
     placeholder as cmPlaceholder,
     keymap,
+    KeyBinding,
 } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
@@ -20,7 +21,7 @@ import {
 } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { GFM } from "@lezer/markdown";
-import { EditorMode } from "./types";
+import { EditorMode, TextDirectionMode, DirectionSettings } from "./types";
 import { markdownThemeExtension } from "./markdown-theme";
 import { codeMirrorStreamingGhostField } from "./streaming-ghost";
 
@@ -29,6 +30,31 @@ export const modeCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
 export const placeholderCompartment = new Compartment();
 export const directionCompartment = new Compartment();
+
+/**
+ * State Effect for dynamically updating text direction settings
+ */
+export const setDirectionSettingsEffect = StateEffect.define<DirectionSettings>();
+
+/**
+ * StateField tracking active DirectionSettings
+ */
+export const directionSettingsState = StateField.define<DirectionSettings>({
+    create() {
+        return {
+            mode: "auto",
+            lockCodeBlocksLTR: true,
+        };
+    },
+    update(value, tr) {
+        for (const effect of tr.effects) {
+            if (effect.is(setDirectionSettingsEffect)) {
+                return effect.value;
+            }
+        }
+        return value;
+    },
+});
 
 /**
  * Interactive Task Checkbox Widget
@@ -99,6 +125,14 @@ const lineDecorations = {
     codeBlock: Decoration.line({ class: "cm-md-code-block" }),
     blockquote: Decoration.line({ class: "cm-md-blockquote" }),
     hr: Decoration.line({ class: "cm-md-hr" }),
+};
+
+// Line-level bidi decorations cache
+const bidiLineDecorations = {
+    auto: Decoration.line({ attributes: { dir: "auto" } }),
+    rtl: Decoration.line({ attributes: { dir: "rtl" }, class: "cm-bidi-rtl" }),
+    ltr: Decoration.line({ attributes: { dir: "ltr" }, class: "cm-bidi-ltr" }),
+    codeLTR: Decoration.line({ attributes: { dir: "ltr" }, class: "cm-bidi-ltr" }),
 };
 
 /**
@@ -291,8 +325,8 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
         if (a.from !== b.from) return a.from - b.from;
         if (a.isLine && !b.isLine) return -1;
         if (!a.isLine && b.isLine) return 1;
-        const sideA = (a.deco as any).startSide ?? 0;
-        const sideB = (b.deco as any).startSide ?? 0;
+        const sideA = (a.deco as unknown as { startSide?: number }).startSide ?? 0;
+        const sideB = (b.deco as unknown as { startSide?: number }).startSide ?? 0;
         if (sideA !== sideB) return sideA - sideB;
         return b.to - a.to;
     });
@@ -342,7 +376,109 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
 );
 
 /**
+ * Build line-level direction decorations to ensure robust bidi isolation
+ * that is immune to CodeMirror 6 viewport virtualization.
+ */
+function buildBidiLineDecorations(view: EditorView): DecorationSet {
+    const builder = new RangeSetBuilder<Decoration>();
+    const doc = view.state.doc;
+    const settings = view.state.field(directionSettingsState, false) ?? {
+        mode: "auto" as TextDirectionMode,
+        lockCodeBlocksLTR: true,
+    };
+    const { mode, lockCodeBlocksLTR } = settings;
+
+    // Collect fenced code line ranges if code block LTR locking is enabled
+    const fencedLines = new Set<number>();
+    if (lockCodeBlocksLTR) {
+        const tree = syntaxTree(view.state);
+        for (const { from, to } of view.visibleRanges) {
+            tree.iterate({
+                from,
+                to,
+                enter(node) {
+                    if (node.name === "FencedCode") {
+                        const startLine = doc.lineAt(node.from).number;
+                        const endLine = doc.lineAt(node.to).number;
+                        const visibleStart = Math.max(startLine, doc.lineAt(from).number);
+                        const visibleEnd = Math.min(endLine, doc.lineAt(to).number);
+                        for (let l = visibleStart; l <= visibleEnd; l++) {
+                            fencedLines.add(doc.line(l).from);
+                        }
+                    }
+                },
+            });
+        }
+    }
+
+    const processedLines = new Set<number>();
+
+    for (const { from, to } of view.visibleRanges) {
+        const startLine = doc.lineAt(from).number;
+        const endLine = doc.lineAt(to).number;
+
+        for (let l = startLine; l <= endLine; l++) {
+            const line = doc.line(l);
+            if (processedLines.has(line.from)) continue;
+            processedLines.add(line.from);
+
+            let deco = bidiLineDecorations.auto;
+            if (lockCodeBlocksLTR && fencedLines.has(line.from)) {
+                deco = bidiLineDecorations.codeLTR;
+            } else if (mode === "rtl") {
+                deco = bidiLineDecorations.rtl;
+            } else if (mode === "ltr") {
+                deco = bidiLineDecorations.ltr;
+            } else {
+                deco = bidiLineDecorations.auto;
+            }
+
+            builder.add(line.from, line.from, deco);
+        }
+    }
+
+    return builder.finish();
+}
+
+/**
+ * Line-level Bidi Isolation ViewPlugin
+ * Active in both Live Preview and Source modes to ensure line directions are never lost on scroll.
+ */
+export const bidiLinePlugin = ViewPlugin.fromClass(
+    class {
+        decorations: DecorationSet;
+
+        constructor(view: EditorView) {
+            this.decorations = buildBidiLineDecorations(view);
+        }
+
+        update(update: ViewUpdate) {
+            if (update.view.composing) {
+                return;
+            }
+
+            const settingsChanged =
+                update.transactions.some((tr) => tr.effects.some((e) => e.is(setDirectionSettingsEffect))) ||
+                update.startState.field(directionSettingsState, false) !==
+                    update.state.field(directionSettingsState, false);
+
+            if (
+                update.docChanged ||
+                update.viewportChanged ||
+                settingsChanged
+            ) {
+                this.decorations = buildBidiLineDecorations(update.view);
+            }
+        }
+    },
+    {
+        decorations: (v) => v.decorations,
+    }
+);
+
+/**
  * Detect text direction helper
+ * Scans leading characters to determine if text is primarily RTL or LTR
  */
 export function detectMarkdownDirection(content: string): "rtl" | "ltr" {
     const rtlRegex = /[\u0591-\u07FF\uFB1D-\uFDFD\uFE70-\uFEFC]/;
@@ -354,8 +490,64 @@ export function detectMarkdownDirection(content: string): "rtl" | "ltr" {
         if (rtlRegex.test(char)) return "rtl";
         if (ltrRegex.test(char)) return "ltr";
     }
-    return "ltr";
+    return "rtl"; // Default to RTL for empty/neutral markdown in bilingual context
 }
+
+/**
+ * Resolve stable EditorView.contentAttributes extension from direction mode and document text
+ */
+export function resolveDirectionExtension(mode: TextDirectionMode, docString?: string): Extension {
+    if (mode === "rtl") {
+        return EditorView.contentAttributes.of({ dir: "rtl" });
+    }
+    if (mode === "ltr") {
+        return EditorView.contentAttributes.of({ dir: "ltr" });
+    }
+    // "auto" mode: compute stable document base direction from in-memory doc (not virtualized DOM)
+    const baseDir = docString ? detectMarkdownDirection(docString.slice(0, 2000)) : "rtl";
+    return EditorView.contentAttributes.of({ dir: baseDir });
+}
+
+function performToggleDirection(view: EditorView, onToggle?: (newMode: TextDirectionMode) => void): boolean {
+    const current = view.state.field(directionSettingsState, false) ?? {
+        mode: "auto" as TextDirectionMode,
+        lockCodeBlocksLTR: true,
+    };
+    const nextMode: TextDirectionMode =
+        current.mode === "auto" ? "rtl" : current.mode === "rtl" ? "ltr" : "auto";
+
+    const nextSettings: DirectionSettings = {
+        ...current,
+        mode: nextMode,
+    };
+
+    view.dispatch({
+        effects: [
+            setDirectionSettingsEffect.of(nextSettings),
+            directionCompartment.reconfigure(resolveDirectionExtension(nextMode, view.state.doc.toString())),
+        ],
+    });
+
+    if (onToggle) {
+        onToggle(nextMode);
+    }
+    return true;
+}
+
+/**
+ * Direction Toggle Keybinding
+ * Cycles through auto -> rtl -> ltr -> auto
+ */
+export const toggleDirectionKeymap = (onToggle?: (newMode: TextDirectionMode) => void): KeyBinding[] => [
+    {
+        key: "Mod-Alt-d",
+        run: (view: EditorView) => performToggleDirection(view, onToggle),
+    },
+    {
+        key: "Mod-Alt-D",
+        run: (view: EditorView) => performToggleDirection(view, onToggle),
+    },
+];
 
 /**
  * Configuration options for assembling all CodeMirror extensions
@@ -364,7 +556,10 @@ export interface EditorExtensionOptions {
     mode?: EditorMode;
     placeholder?: string;
     readOnly?: boolean;
-    dir?: "auto" | "rtl" | "ltr";
+    dir?: TextDirectionMode;
+    lockCodeBlocksLTR?: boolean;
+    initialDoc?: string;
+    onDirectionChange?: (settings: DirectionSettings) => void;
     onUpdate?: (update: ViewUpdate) => void;
 }
 
@@ -376,6 +571,13 @@ export function createMarkdownExtensions(options: EditorExtensionOptions = {}): 
     const initialReadOnly = options.readOnly ?? false;
     const initialPlaceholder = options.placeholder ?? "Start writing in Markdown...";
     const initialDir = options.dir ?? "auto";
+    const initialLockCodeBlocks = options.lockCodeBlocksLTR ?? true;
+    const initialDoc = options.initialDoc ?? "";
+
+    const initialSettings: DirectionSettings = {
+        mode: initialDir,
+        lockCodeBlocksLTR: initialLockCodeBlocks,
+    };
 
     return [
         // 1. Markdown Language with GFM
@@ -384,29 +586,41 @@ export function createMarkdownExtensions(options: EditorExtensionOptions = {}): 
             extensions: [GFM],
         }),
 
-        // 2. Bidi & Direction Support
-        directionCompartment.of(
-            initialDir === "rtl"
-                ? EditorView.contentAttributes.of({ dir: "rtl" })
-                : initialDir === "ltr"
-                  ? EditorView.contentAttributes.of({ dir: "ltr" })
-                  : EditorView.contentAttributes.of({ dir: "auto" })
-        ),
+        // 2. Direction State & Line-Level Bidi Isolation Plugin (Always Active)
+        directionSettingsState.init(() => initialSettings),
+        bidiLinePlugin,
 
-        // 3. Theme & Styling
+        // 3. Stable Document Direction Compartment (No DOM virtualization jumping)
+        directionCompartment.of(resolveDirectionExtension(initialDir, initialDoc)),
+
+        // 4. Theme & Styling
         markdownThemeExtension,
         highlightSelectionMatches(),
 
-        // 4. Mode Compartment (Live Preview vs Source Mode)
+        // 5. Mode Compartment (Live Preview vs Source Mode)
         modeCompartment.of(initialMode === "live" ? [livePreviewPlugin] : []),
 
-        // 5. Read-Only Compartment
+        // 6. Read-Only Compartment
         readOnlyCompartment.of(EditorState.readOnly.of(initialReadOnly)),
 
-        // 6. Placeholder Compartment
+        // 7. Placeholder Compartment
         placeholderCompartment.of(cmPlaceholder(initialPlaceholder)),
 
-        // 7. History & Keymaps
+        // 8. Highest Priority Direction Keymap
+        Prec.highest(
+            keymap.of(
+                toggleDirectionKeymap((newMode) => {
+                    if (options.onDirectionChange) {
+                        options.onDirectionChange({
+                            mode: newMode,
+                            lockCodeBlocksLTR: initialLockCodeBlocks,
+                        });
+                    }
+                })
+            )
+        ),
+
+        // 9. Standard History & Keymaps
         history(),
         keymap.of([
             ...defaultKeymap,
@@ -416,13 +630,13 @@ export function createMarkdownExtensions(options: EditorExtensionOptions = {}): 
             indentWithTab,
         ]),
 
-        // 8. Line Wrapping
+        // 10. Line Wrapping
         EditorView.lineWrapping,
 
-        // 9. Streaming Ghost Extension (Dynamic AI Preview Layer)
+        // 11. Streaming Ghost Extension (Dynamic AI Preview Layer)
         codeMirrorStreamingGhostField,
 
-        // 10. Update Listener
+        // 12. Update Listener
         EditorView.updateListener.of((update) => {
             if (options.onUpdate) {
                 options.onUpdate(update);

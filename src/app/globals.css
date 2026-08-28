@@ -111,7 +111,9 @@ p {
 
 /* Arabic text support */
 [dir="rtl"] {
-  font-family: var(--font-ibm-plex-arabic), system-ui, sans-serif;
+  font-family: var(--font-ibm-plex-arabic), var(--font-geist-sans), system-ui, sans-serif;
+  font-weight: 400;
+  font-synthesis: none;
 }
 
 /* Custom Scrollbar - Subtle */

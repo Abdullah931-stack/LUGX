@@ -2,6 +2,22 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.18.0] - 2026-08-28 (CodeMirror 6 Text Direction & Bidi Engine Architecture, Toolbar Direction Menu & Unified Typography)
+
+### Added - Text Direction & Bidi Engine Architecture
+- **Line-Level Bidi Isolation Extension (`bidiLinePlugin` in `src/components/editor/markdown/markdown-extensions.ts`):** Resolved the viewport virtualization direction inversion bug where scrolling unmounted top Arabic lines caused the browser to flip the container to LTR. Applied `Decoration.line` with dynamic `dir` attributes (`dir="auto"`, `dir="rtl"`, or `dir="ltr"`) directly to individual DOM lines.
+- **Three Dedicated Direction Modes:** Built explicit support for `auto` (smart content recommendation with stable in-memory document root direction), `rtl` (force global right-to-left layout), and `ltr` (force global left-to-right layout).
+- **Code Blocks LTR Locking (`lockCodeBlocksLTR`):** Added a configuration option to lock `FencedCode` lines to `dir="ltr"` and left text alignment even when the parent document is in `rtl` mode, dynamically togglable from the UI.
+- **Toolbar Direction Menu (`src/components/editor/direction-menu.tsx`):** Designed a Radix UI dropdown menu in the editor toolbar (`AIToolbar`) with status badges, mode selection radio items, code block LTR toggle switch, and keyboard shortcut hints.
+- **Global Keyboard Shortcut (`Ctrl + Alt + D` / `Cmd + Alt + D`):** Registered a window-level key listener in `src/app/workspace/editor/[fileId]/page.tsx` with `e.repeat` throttling for smooth circular mode cycling (`auto` ➔ `rtl` ➔ `ltr` ➔ `auto`).
+- **LocalStorage Preference Persistence:** Stored user text direction preferences under `lugx_editor_direction_pref` to restore previous settings upon file navigation.
+- **Extended `EditorAdapter` Contracts:** Added `getDirectionSettings()` and `setDirectionSettings()` methods to `EditorAdapter` and `CodeMirrorEditorAdapter`.
+
+### Changed - Unified Typography & Weight Consistency
+- **Unified Font Stack (`src/components/editor/markdown/markdown-theme.ts` & `src/app/globals.css`):** Combined `var(--font-ibm-plex-arabic)` and `var(--font-geist-sans)` into a single unified font stack, eliminating font switching jumps when toggling direction modes.
+- **Explicit Weight & Smoothing Stabilization:** Enforced `fontWeight: "400"`, `fontSynthesis: "none"`, and `unicodeBidi: "isolate"` across editor theme styles to prevent browser faux-bold artifacting on Arabic glyphs in RTL mode.
+- **Test Hardening (`src/test/markdown-editor.test.ts` & `src/test/markdown-editor-e2e.test.ts`):** Added 5 unit and E2E tests validating bidi isolation, dynamic code block locking, adapter direction mutations, and virtualization stability across 2,000+ lines (total 37 test files, 487 passed).
+
 ## [1.17.0] - 2026-08-28 (Complete Dead Code & HTML Converter Purge, TipTap Legacy Style Elimination)
 
 ### Removed - Complete Dead Code & HTML Converter Elimination

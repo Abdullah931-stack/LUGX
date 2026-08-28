@@ -2,8 +2,16 @@ import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
 import { syntaxTree } from "@codemirror/language";
-import { EditorAdapter, EditorMode, EditorSelection } from "./types";
-import { livePreviewPlugin, modeCompartment, readOnlyCompartment } from "./markdown-extensions";
+import { EditorAdapter, EditorMode, EditorSelection, DirectionSettings } from "./types";
+import {
+    livePreviewPlugin,
+    modeCompartment,
+    readOnlyCompartment,
+    directionSettingsState,
+    setDirectionSettingsEffect,
+    directionCompartment,
+    resolveDirectionExtension,
+} from "./markdown-extensions";
 import {
     startGhostEffect,
     updateGhostEffect,
@@ -236,6 +244,30 @@ export class CodeMirrorEditorAdapter implements EditorAdapter {
         this.view.dispatch({
             effects: modeCompartment.reconfigure(mode === "live" ? [livePreviewPlugin] : []),
         });
+    }
+
+    getDirectionSettings(): DirectionSettings {
+        return (
+            this.view.state.field(directionSettingsState, false) ?? {
+                mode: "auto",
+                lockCodeBlocksLTR: true,
+            }
+        );
+    }
+
+    setDirectionSettings(settings: Partial<DirectionSettings>): void {
+        const current = this.getDirectionSettings();
+        const next: DirectionSettings = {
+            mode: settings.mode ?? current.mode,
+            lockCodeBlocksLTR: settings.lockCodeBlocksLTR ?? current.lockCodeBlocksLTR,
+        };
+
+        const effects = [
+            setDirectionSettingsEffect.of(next),
+            directionCompartment.reconfigure(resolveDirectionExtension(next.mode, this.view.state.doc.toString())),
+        ];
+
+        this.view.dispatch({ effects });
     }
 
     startStreamingGhost(options: CMStreamingGhostOptions): void {

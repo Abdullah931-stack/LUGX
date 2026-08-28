@@ -55,7 +55,7 @@ docs/
 | [phase-12-auth-ownership-closure.md](./reference/phase-12-auth-ownership-closure.md) | Phase 12 closure: Open Redirect elimination, OAuth callback hardening, 404 anti-enumeration error mapping, atomic user sync |
 | [phase-13-stripe-webhooks-subscriptions-closure.md](./reference/phase-13-stripe-webhooks-subscriptions-closure.md) | Phase 13 closure: Durable idempotency ledger (`subscription_events`), atomic ACID transitions, terminal state protection, accurate period calculation |
 | [phase-14-supabase-storage-removal-closure.md](./reference/phase-14-supabase-storage-removal-closure.md) | Phase 14 closure: Dead-code elimination of unused Supabase Storage, database schema drop of `storage_path`, test fixtures clean-up |
-| [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Arabic/RTL safe decorations, live preview/source modes |
+| [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Bidi Line Plugin, 3 Direction Modes, Arabic/RTL safe decorations, live preview/source modes |
 | [phase-2-editor-replacement-tooling-closure.md](./reference/phase-2-editor-replacement-tooling-closure.md) | Phase 2 closure: TipTap replacement on editor page, EditorAdapter tooling integration, Multi-Range Search & Replace |
 | [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |
 | [phase-4-sync-diff3-conflict-closure.md](./reference/phase-4-sync-diff3-conflict-closure.md) | Phase 4 closure: Markdown-native Diff3 3-way conflict resolution engine, syntax boundary protection |
@@ -78,7 +78,7 @@ docs/
 | [STRIPE_INTEGRATION.md](./guides/STRIPE_INTEGRATION.md) | Payment flow, library functions, API routes, troubleshooting |
 | [AI_MODELS_CONFIG.md](./guides/AI_MODELS_CONFIG.md) | Decoupled Gemini model/hyperparameter configuration via `models.config.json` |
 | [Search_Replace_Feature.md](./guides/Search_Replace_Feature.md) | Editor search/replace behavior, debounce logic, shortcuts |
-| [Editor_UI_Enhancements.md](./guides/Editor_UI_Enhancements.md) | UI restructuring, copy/move file ops, dynamic statistics |
+| [Editor_UI_Enhancements.md](./guides/Editor_UI_Enhancements.md) | UI restructuring, copy/move file ops, dynamic statistics, text direction management menu, code block LTR locking, unified typography |
 
 ### Records (`records/`) — immutable dated history
 

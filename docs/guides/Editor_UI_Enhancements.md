@@ -31,8 +31,32 @@
   - **Default:** Total Words | Total Chars
   - **On Selection:** "Selected: [count] words | [count] chars" (highlighted)
 
+## 5. Text Direction Management & Bidi Settings
+**Goal:** Seamless bidirectional (Arabic/English) editing, viewport virtualization resilience, and explicit user direction controls.
+- **Three Direction Modes:**
+  1. **`auto` (Default):** Smart automatic line-by-line direction evaluation based on character analysis with stable in-memory document root direction (`bidiLinePlugin`).
+  2. **`rtl` (Right-to-Left):** Globally forces right-to-left layout and alignment across document lines.
+  3. **`ltr` (Left-to-Right):** Globally forces left-to-right layout and alignment across document lines.
+- **Fenced Code Blocks LTR Locking:**
+  - `lockCodeBlocksLTR` option in `DirectionSettings`: Keeps code block lines (`FencedCode`) locked to `LTR` and left-aligned even when the document is in `RTL` mode.
+  - Dynamically togglable via the UI without reloading or state loss.
+- **Direction Settings Dropdown Menu (`DirectionMenu`):**
+  - Sleek Radix UI dropdown in the editor toolbar (`AIToolbar`) with visual badges, mode indicators, and a toggle switch for code block LTR locking.
+  - Persists preference across sessions via `localStorage` (`lugx_editor_direction_pref`).
+- **Global Keyboard Shortcut (`Ctrl + Alt + D` / `Cmd + Alt + D`):**
+  - Window-level key listener with `e.repeat` throttling allowing instant circular mode switching (`auto` ➔ `rtl` ➔ `ltr` ➔ `auto`).
+- **Unified Typography & Weight Consistency:**
+  - Integrated font stack combining `IBM Plex Sans Arabic` and `Geist Sans` (`var(--font-ibm-plex-arabic), var(--font-geist-sans)`).
+  - Explicit `fontWeight: "400"`, `fontSynthesis: "none"`, and `unicodeBidi: "isolate"` ensuring identical, crisp stroke weights across all direction modes with zero weight jumping.
+
 ## Key Files
+- `src/components/editor/direction-menu.tsx`: Direction settings dropdown component.
+- `src/components/editor/ai-toolbar.tsx`: Toolbar integration with `DirectionMenu`.
+- `src/components/editor/markdown/markdown-extensions.ts`: Line-level `bidiLinePlugin`, direction compartments, and keymaps.
+- `src/components/editor/markdown/markdown-theme.ts`: Unified font stack, bidi isolation classes, and dark theme tokens.
+- `src/components/editor/markdown/types.ts`: `TextDirectionMode`, `DirectionSettings`, and `EditorAdapter` direction methods.
+- `src/components/editor/markdown/editor-adapter.ts`: CodeMirror 6 adapter direction management implementation.
 - `src/server/actions/file-ops.ts`: Core logic for `copyFile` (Deep Copy).
 - `src/components/files/folder-picker-modal.tsx`: New folder selection UI.
-- `src/app/workspace/editor/[fileId]/page.tsx`: Editor UI integration & stats logic.
+- `src/app/workspace/editor/[fileId]/page.tsx`: Editor UI integration, global shortcuts, and stats logic.
 - `src/components/layout/sidebar.tsx`: Refresh logic implementation.
