@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
     let supabaseResponse = NextResponse.next({
         request,
     });
@@ -42,7 +42,7 @@ export async function middleware(request: NextRequest) {
         const { data } = await supabase.auth.getUser();
         user = data?.user || null;
     } catch (err) {
-        console.warn('[Middleware] supabase.auth.getUser error (network/offline):', err);
+        console.warn('[Proxy] supabase.auth.getUser error (network/offline):', err);
     }
 
     // Protected routes - require authentication
@@ -62,9 +62,10 @@ export async function middleware(request: NextRequest) {
             });
         }
         // Redirect to login for page navigation
+        const redirectTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
         const url = request.nextUrl.clone();
         url.pathname = "/login";
-        const redirectTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+        url.search = "";
         url.searchParams.set("redirectTo", redirectTarget);
         return NextResponse.redirect(url);
     }
@@ -73,6 +74,7 @@ export async function middleware(request: NextRequest) {
     if (user && request.nextUrl.pathname === "/login") {
         const url = request.nextUrl.clone();
         url.pathname = "/dashboard";
+        url.search = "";
         return NextResponse.redirect(url);
     }
 

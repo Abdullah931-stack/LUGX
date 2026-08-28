@@ -69,7 +69,7 @@
 | **Styling & Design** | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons |
 | **Rich Text Editor** | Tiptap Editor (ProseMirror Toolkit) · DOMPurify Sanitizer |
 | **Database & ORM** | PostgreSQL (Neon / Supabase / Local) · Drizzle ORM (Migrations 0001–0004) |
-| **Authentication** | Supabase Auth (SSR Middleware Session Validation) |
+| **Authentication** | Supabase Auth (SSR Edge Proxy Session Validation) |
 | **AI LLM Engine** | Google Gemini SDK (`@google/generative-ai`) · Tier-based Model Routing · Multi-Key Rotation |
 | **Payment Gateway** | Stripe SDK · Webhook Signature Verification · Idempotency Guard |
 | **Rate Limiting** | Sliding Window Algorithm (In-Memory Fallback & Upstash Redis) |
@@ -111,7 +111,7 @@ lugx/
 │   │   └── storage/               # Browser IndexedDB storage client
 │   ├── server/actions/            # Authenticated Next.js Server Actions (file-ops, ai-ops)
 │   ├── test/                      # Database integration test harnesses & fixtures
-│   └── middleware.ts              # Route protection and Supabase session validation
+│   └── proxy.ts                   # Route protection and Supabase session validation (Next.js 16 Edge Proxy)
 ├── vitest.config.ts                # Default test runner (unit/contract only)
 ├── vitest.live.config.ts           # LIVE integration runner (isolated Neon branch)
 └── package.json
@@ -292,7 +292,7 @@ User Request ──► [reserveTodayUsage (Atomic SQL UPDATE)]
 | Security Layer | Technical Implementation |
 |---|---|
 | **XSS Sanitization** | Server-side DOMPurify (via JSDOM in `sanitize.server.ts`) cleans all incoming HTML content; client-side output escaping prevents injection. |
-| **Authentication & Route Protection** | Supabase SSR session token validation in `middleware.ts` with sliding-window brute-force rate limiting (20 attempts / 15 mins per normalized email). |
+| **Authentication & Route Protection** | Supabase SSR session token validation in `src/proxy.ts` with sliding-window brute-force rate limiting (20 attempts / 15 mins per normalized email). |
 | **API Rate Limiting** | Sliding window rate limiting on file sync routes and streaming AI endpoints. |
 | **Webhook Security** | Cryptographic HMAC signature verification (`stripe.webhooks.constructEvent`) with replay attack mitigation. |
 | **Secrets Isolation** | Strict `.gitignore` policy isolating `.env` secrets while providing tracked `.env.example` templates. |

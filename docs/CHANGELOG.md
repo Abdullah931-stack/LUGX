@@ -5,11 +5,13 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.16.0] - 2026-08-27 (AI Stream Collision Guard, Non-Colliding Edit Tolerance & Clean Documentation Sync)
 
 ### Added - AI Stream Collision Guard & Dynamic Range Shifting
+
 - **Collision-Aware Dynamic Selection Shifting (`src/components/editor/markdown/streaming-ghost.ts`):** `codeMirrorStreamingGhostField` tracks all document mutations via `tr.changes.iterChanges`. Non-overlapping edits occurring elsewhere in the document dynamically shift the AI generation bounds `[from, to]` via `mapPos(from, 1)` and `mapPos(to, -1)`, allowing the user to write and edit freely without interrupting AI generation.
 - **Direct Collision Abort Protection:** Direct edits overlapping with the target generation range dismiss the ghost decoration and safely trigger `onStop()` to prevent text corruption.
 - **Orchestrator Manual Edit Policy (`src/hooks/use-editor-orchestrator.ts`):** Updated `handleEditorChange` to query `adapter.getGhostRange()`, preserving active streaming sessions on non-colliding manual edits.
 
 ### Changed - Code Hygiene & Test Setup Modernization
+
 - **Dead Code Elimination (`src/lib/sync/conflict-resolver.ts`):** Removed obsolete HTML tag scanning (`isHtml`) from the pure Markdown three-way merge tokenizer.
 - **Centralized JSDOM CodeMirror Polyfills (`vitest.setup.ts`):** Centralized `Range.prototype.getClientRects` and `Range.prototype.getBoundingClientRect` polyfills in the central setup file for unified CodeMirror 6 testing reliability.
 - **Documentation Modernization (`docs/`):** Purged obsolete TipTap and HTML references across `docs/architecture/` and `docs/specs/` to guarantee 100% synchronization with the source code.
@@ -17,15 +19,18 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.15.0] - 2026-08-27 (Markdown Migration Phase 6: Complete TipTap Purge & Final Verification Closure)
 
 ### Removed - Complete TipTap & ProseMirror Dependency Purge
+
 - **Uninstalled 4 `@tiptap/*` packages:** Completely removed `@tiptap/core`, `@tiptap/react`, `@tiptap/pm`, `@tiptap/starter-kit`, and `@tiptap/extension-placeholder` from `package.json` and `package-lock.json` (63 packages removed).
 - **Deleted Legacy TipTap Extensions:** Deleted `src/lib/extensions/direction-extension.ts` and `src/lib/extensions/streaming-ghost-extension.ts` along with the `src/lib/extensions` directory.
 - **Deleted Obsolete HTML Server Converter:** Deleted `src/lib/parsers/text-to-html.server.ts`.
 
 ### Added - Standalone CodeMirror 6 Plugins & Comprehensive E2E Tests
+
 - **Standalone Streaming Ghost Plugin (`src/components/editor/markdown/streaming-ghost.ts`):** Encapsulated CodeMirror 6 `StateField`, `WidgetType`, `StateEffect`, and dynamic range tracking with zero external/TipTap dependencies.
 - **Comprehensive Markdown Editor E2E Test Suite (`src/test/markdown-editor-e2e.test.ts`):** Established comprehensive test suite covering file hydration (NFC/LF), rapid typing, remote pull cursor preservation, offline caching & 3-way merge resolution, AI streaming preview & explicit decision flow, and pure Markdown/Text import/export fidelity.
 
 ### Changed - Type Modernization & Test Hardening
+
 - **Enforced `EditorAdapter` Across AI Stream Hook (`src/hooks/use-ai-stream.ts`):** Removed all `@tiptap/react` imports and ProseMirror transaction branches; unified `EditorInstance` on `EditorAdapter`.
 - **Modernized Legacy Test Suites:** Upgraded `editor-recovery-reload.test.ts`, `editor-atomic-commit.test.ts`, `ai-preview-decision.test.ts`, `ai-preview-decision.live.test.ts`, and `ai-transaction.test.ts` to pure `EditorAdapter` and CodeMirror 6.
 - **Fixed Live Test Database Isolation:** Fixed user seeding and file title collision handling in `src/test/editor-orchestration.live.test.ts` and `src/test/ai-reservation-status.live.test.ts`.
@@ -34,6 +39,7 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.14.0] - 2026-08-27 (Markdown Migration Phase 5: Markdown AI Streaming, Direct Exporters & Unified Inline Preview)
 
 ### Added - Unified Inline Interactive Streaming Widget & CodeMirror 6 StateField
+
 - **Unified Inline Interactive Preview Card (`CMStreamingGhostWidget` in `src/lib/extensions/streaming-ghost-extension.ts`):** Redesigned the inline ghost widget into a cohesive, high-performance Dark Glassmorphism interactive card (`bg-zinc-900/95 border-emerald-500/40`) positioned at the exact document mutation offset.
 - **Embedded Decision Controls:** Embedded interactive action buttons directly inside the inline card header: `Stop Generation` during active streaming, and the 3 decision buttons (`Accept / Apply`, `Reject`, `Retry`) upon stream completion (`preview_ready`).
 - **Layout Thrashing Elimination (`updateDOM` at 60fps):** Implemented `updateDOM(dom)` on `CMStreamingGhostWidget` to update text and action states in-place, eliminating DOM destruction/recreation overhead during rapid token streaming.
@@ -43,6 +49,7 @@ All notable changes to the LUGX project will be documented in this file.
 - **Live Version Reading at Commit (`src/hooks/use-ai-stream.ts`):** Supported `getLatestVersion` and `getLatestETag` getters in `useAIStream` to query live orchestrator versions at commit time.
 
 ### Changed - Streaming Pipeline & Exporters
+
 - **Eliminated Top Static Preview Panel (`src/app/workspace/editor/[fileId]/page.tsx`):** Permanently removed the redundant top fixed `<AIStreamPreview />` panel to eliminate UI duplication and focus distraction.
 - **Pure Markdown AI Streaming Model (`src/lib/ai/stream-session.ts` & `src/lib/parsers/stream-markdown.ts`):** Converted session FSM and validator to operate on `originalMarkdown` and `resultMarkdown`. Added `validateStreamMarkdownOutput`.
 - **Pure Markdown Exporters (`src/lib/exporters/`):**
@@ -54,6 +61,7 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.13.0] - 2026-08-26 (Markdown Migration Phase 4: Markdown Sync, Diff3 Syntax Integrity & 3-Way Conflict Resolution)
 
 ### Added - Markdown-Native Diff3 Engine & Conflict Handling
+
 - **Pure Markdown 3-Way Merge (`src/lib/sync/reconciliation.ts` & `conflict-resolver.ts`):** Migrated 3-way conflict resolution engine to operate natively on Markdown text via line-based Diff3 algorithms, eliminating HTML serialization artifacts.
 - **Markdown Structural Boundary Preservation:** Diff3 syntax integrity guards preserve Markdown list numbering, table rows, and fenced code block delimiters during merges.
 - **Reconciliation Policy Matrix:** Standardized cold-start and background reconciliation policies (`bootstrap_server`, `apply`, `adopt_metadata`, `keep_local`) on raw Markdown baseline snapshots.
@@ -61,12 +69,14 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.12.0] - 2026-08-26 (Markdown Migration Phase 3: Content Model, Storage & Internal Import Transformation)
 
 ### Added - Universal Markdown Normalization & ETag Determinism
+
 - **Unified Normalization Function (`normalizeMarkdownSource` in `src/lib/sync/etag-generator.ts`):** Canonical normalization converting `\r\n` / `\r` to LF (`\n`), stripping null bytes (`\0`) for PostgreSQL text safety, and applying Unicode NFC normalization before ETag hashing and storage. Prevents spurious 412 Precondition Failed conflicts across operating systems (Windows/macOS/Linux) and Unicode composite encodings.
 - **Deterministic ETag Hashing (`generateETag` / `generateETagSync`):** Integrated `normalizeMarkdownSource` into both asynchronous and synchronous ETag generators to guarantee identical SHA-256 digests across platforms.
 - **Exported `MarkdownSource` Type Definition (`src/lib/sync/idb-types.ts` & `src/lib/sync/index.ts`):** Defined `MarkdownSource` type representing canonical UTF-8 Markdown text across client hooks, IndexedDB layers, operations log, and API payloads.
 - **Dedicated Import Test Suite (`src/server/actions/import-file.test.ts`):** Created 9 automated tests validating pure Markdown extraction for MD, TXT, and PDF files, correct word counting, ETag stability, parent folder checks, 10MB payload size limit rejection, and single-query title collision resolution.
 
 ### Changed - Storage & Import Pipeline
+
 - **Purged HTML Conversion from File Imports (`src/server/actions/import-file.ts`):** Removed `smartConvertToHTML`. MD and TXT imports decode base64 directly to normalized Markdown. PDF text extraction applies linear text extraction policy without artificial HTML conversion.
 - **Collision-Free File Import (`import-file.ts`):** Implemented single-query in-memory title deduplication (`Title (1)`, `Title (2)`) preventing database `23505 unique_violation` exceptions on live partial unique index `idx_files_user_parent_title_live`. Added defense-in-depth base64 payload size validation.
 - **Normalized Server Actions & REST API Updates (`file-ops.ts` & `/api/files/[id]/route.ts`):** `createFile`, `updateFileContent`, and `PUT /api/files/[id]` apply `normalizeMarkdownSource` before optimistic locking checks, ETag generation, and PostgreSQL persistence.
@@ -172,13 +182,13 @@ errors, client exceptions, 412 conflicts). Any **user-driven outcome** settles t
 reservation as consumed via idempotent `commitAIReservation(operationId)` ‚Äî no document
 write, pinned against the TTL sweeper and stray refunds (`already_committed`):
 
-| Outcome | Quota action |
-|---|---|
-| Stream failure / startup error / exception / 412 conflict | Refund |
-| Reject completed preview | Settle as consumed |
-| Retry (old session; new session reserves fresh quota) | Settle as consumed |
-| Stop a running generation (`stopStream`) | Settle as consumed BEFORE abort |
-| Teardown/unmount while preview awaits decision | Settle as consumed |
+| Outcome                                                   | Quota action                    |
+| --------------------------------------------------------- | ------------------------------- |
+| Stream failure / startup error / exception / 412 conflict | Refund                          |
+| Reject completed preview                                  | Settle as consumed              |
+| Retry (old session; new session reserves fresh quota)     | Settle as consumed              |
+| Stop a running generation (`stopStream`)                  | Settle as consumed BEFORE abort |
+| Teardown/unmount while preview awaits decision            | Settle as consumed              |
 
 Key ordering guarantee: `stopStream` awaits the settlement round-trip **before**
 aborting the fetch, so the server-side disconnect refund handler (`cancel()` in
@@ -284,6 +294,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
 ### Added - Centralized Editor Orchestration & Authoritative Write Controller
 
 #### Core Architecture & Controller
+
 - **Centralized Editor Orchestrator Hook** (`src/hooks/use-editor-orchestrator.ts`)
   - Decomposes editor state into 6 isolated state slices: Document, Preview, Dirty, Server Version, Conflict, and Write State.
   - Acts as the single authoritative write gateway for manual saves, AI commits, conflict resolutions, and sync replays.
@@ -303,6 +314,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
   - Full architectural specifications, state slicing, AutoSave suspension invariants, and target-scoped manual edit policy.
 
 #### Automated Integration Test Suite (48 Tests Passing, 100% Rate)
+
 - `src/test/editor-orchestration.integration.test.ts` (7 Integration tests)
 - `src/test/editor-atomic-commit.test.ts` (4 Editor Atomic Commit tests)
 - `src/hooks/use-sync.test.ts` (13 Sync Hook tests)
@@ -317,6 +329,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
 ### Added - AI Atomic Commit Architecture & Real PostgreSQL Verification
 
 #### Core Transactional Architecture
+
 - **Transactional Database Client** (`src/lib/db/transactional.ts`)
   - WebSocket-enabled Neon Serverless Pool for interactive SQL transactions (`BEGIN` / `COMMIT` / `ROLLBACK`).
   - Hardened connection limits and timeout boundaries (`max: 5`, `connectionTimeoutMillis: 10_000`, `idleTimeoutMillis: 30_000`) preventing orphaned reservations.
@@ -336,6 +349,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
   - Comprehensive specification of invariants, sequence diagram, test suites, and technical debt.
 
 #### Automated Test Suite (44 Tests Passing, 100% Rate)
+
 - `src/test/ai-atomic-commit.integration.test.ts` (6 Real PostgreSQL integration tests)
 - `src/test/ai-server-atomic-commit.test.ts` (10 Unit / Contract tests)
 - `src/lib/ai-transaction.test.ts` (5 Editor Unit tests)
@@ -351,6 +365,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
 ### Added - AI NDJSON Streaming & Finite State Machine
 
 #### Core Streaming Architecture
+
 - **Resilient NDJSON Stream Parser** (`src/lib/ai/stream-handler.ts`)
   - Canonical event framing: `start`, `chunk`, `metadata`, `done`, `error`, `cancelled`.
   - Multi-byte UTF-8 boundary preservation via `TextDecoder({ stream: true })`.
@@ -385,6 +400,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
   - Comprehensive specification of NDJSON framing, state transitions, adversarial edge cases, and quota lifecycle.
 
 #### Automated Test Suite
+
 - `src/test/ai-stream-parser.test.ts` (11 unit tests passed)
 - `src/test/ai-stream-session.test.ts` (12 unit tests passed)
 
@@ -395,6 +411,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
 ### Added - Stripe Integration
 
 #### Core Infrastructure
+
 - **Stripe Library Wrapper** (`src/lib/stripe/index.ts`)
   - Customer management functions
   - Checkout session creation
@@ -406,6 +423,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
   - Tier validation utilities
 
 #### API Routes
+
 - **Create Checkout Endpoint** (`src/app/api/stripe/create-checkout/route.ts`)
   - User authentication and validation
   - Tier upgrade validation
@@ -421,6 +439,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
   - Comprehensive error logging
 
 #### Server Actions
+
 - **Subscription Actions** (`src/server/actions/subscription-actions.ts`)
   - `updateUserTier()` - Updates user subscription tier
   - `updateUserStripeCustomerId()` - Links Stripe customer to user
@@ -428,6 +447,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
   - `cancelUserSubscription()` - Handles subscription cancellation
 
 #### UI Components
+
 - **UpgradeButton Component** (`src/components/subscription/upgrade-button.tsx`)
   - Interactive upgrade button with loading states
   - Error handling with toast notifications
@@ -435,6 +455,7 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
   - Auto-redirect to Stripe Checkout
 
 #### Documentation
+
 - `STRIPE_SETUP.md` - Complete setup guide
 - `FINAL_DOCUMENTATION.md` - Comprehensive technical documentation
 - `CHANGELOG.md` - This file
@@ -456,17 +477,20 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
 ### Fixed
 
 #### Fix #1: Non-functional Upgrade Button
+
 - **Issue**: Upgrade buttons had no event handlers
 - **Solution**: Created complete Stripe integration with API routes and webhook handling
 - **Status**: ‚úÖ Resolved
 
 #### Fix #2: Webhook Configuration
+
 - **Issue**: Webhooks not reaching correct endpoint
 - **Root Cause**: Stripe CLI forwarding to wrong path (`/api/webhooks/stripe` instead of `/api/stripe/webhook`)
 - **Solution**: Corrected Stripe CLI command and added detailed logging
 - **Status**: ‚úÖ Resolved
 
 #### Fix #3: Tier Upgrade Flow
+
 - **Issue**: Pro users unable to upgrade to Ultra
 - **Root Causes**:
   - Restrictive disabled logic in UpgradeButton
@@ -490,11 +514,13 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
 ### Supported Upgrade Paths
 
 #### Allowed ‚úÖ
+
 - Free ‚Üí Pro ($0 ‚Üí $12/month)
 - Free ‚Üí Ultra ($0 ‚Üí $120/month)
 - Pro ‚Üí Ultra ($12 ‚Üí $120/month)
 
 #### Blocked ‚ùå
+
 - Same tier upgrades (Pro ‚Üí Pro, Ultra ‚Üí Ultra)
 - Downgrades (Ultra ‚Üí Pro, Ultra ‚Üí Free, Pro ‚Üí Free)
 
@@ -503,11 +529,13 @@ Full policy specification in `docs/architecture/editor-sync-orchestration.md` (¬
 ## Testing
 
 ### Test Mode Setup Required
+
 1. Create Products in Stripe Dashboard (Test Mode)
 2. Update Price IDs in `.env`
 3. Run Stripe CLI: `stripe listen --forward-to http://localhost:3000/api/stripe/webhook`
 
 ### Test Card
+
 - Number: 4242 4242 4242 4242
 - Expiry: Any future date
 - CVC: Any 3 digits

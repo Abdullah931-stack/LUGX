@@ -7,9 +7,9 @@ the current source files referenced inline.
 
 ---
 
-## 1. Request Authentication (`src/middleware.ts`)
+## 1. Request Authentication (`src/proxy.ts`)
 
-The Next.js middleware runs on every route except static assets (see its
+The Next.js 16 Edge proxy runs on every route except static assets (see its
 `config.matcher`). Behavior:
 
 | Concern | Implementation |
@@ -18,7 +18,7 @@ The Next.js middleware runs on every route except static assets (see its
 | Server Actions & API routes | Under the same protected paths, an unauthenticated request receives a **JSON `401 Unauthorized`** instead of an HTML redirect (an HTML redirect breaks the Server Action client runtime) |
 | Logged-in access control | Authenticated users hitting `/login` are redirected to `/dashboard` |
 | OAuth code interception | Any request carrying an OAuth `code` query param is redirected to `/auth/callback`, unless it already targets that path |
-| Session refresh | The middleware refreshes the Supabase session cookie on every matched request |
+| Session refresh | The proxy refreshes the Supabase session cookie on every matched request |
 
 ### 1.1. Open Redirect & Host Header Injection Hardening (`src/lib/auth/safe-redirect.ts`)
 
@@ -35,7 +35,7 @@ All redirect parameters entering the authentication pipeline are strictly valida
 
 To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `file-ops.ts`, `import-file.ts`, and `stream/route.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed.
 
-Defense-in-depth note: middleware gating complements — never replaces — the
+Defense-in-depth note: proxy gating complements — never replaces — the
 per-route `getUser()` checks performed inside every API route and server action
 (see [`file-ownership-and-versioning.md`](./file-ownership-and-versioning.md) and [`../reference/phase-12-auth-ownership-closure.md`](../reference/phase-12-auth-ownership-closure.md)).
 
