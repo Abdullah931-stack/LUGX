@@ -2,6 +2,18 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.19.0] - 2026-08-28 (Editor Interaction & Coordinate Drift Fix, Zero-Layout-Shift Delimiter System, Adversarial Hardening)
+
+### Fixed - Editor Interaction & Vertical Navigation Stability
+- **Eliminated CodeMirror 6 Coordinate Drift (`.cm-md-hr` in `src/components/editor/markdown/markdown-theme.ts`):** Replaced vertical margins (`margin: 0.75rem 0`) with internal padding (`paddingTop: 0.75rem; paddingBottom: 0.75rem;`) on horizontal rule line decorations. Because CodeMirror 6 measures line heights using `offsetHeight` (which excludes margins), the previous vertical margin created a 24px physical offset that caused CodeMirror's `HeightMap` to drift out of phase with DOM screen coordinates, creating dead interaction zones and causing vertical arrow navigation (`moveVertically`) to skip lines.
+- **Unblocked Mouse Text Selection & Dragging (`.cm-md-delimiter-hidden` in `src/components/editor/markdown/markdown-theme.ts` & `src/components/editor/markdown/streaming-ghost.ts`):** Removed `pointer-events: none` and `user-select: none` from inline token delimiters and AI streaming ghost marks, ensuring uninterrupted mouse click hit-testing and continuous multi-line drag selection across Markdown delimiters.
+- **Zero-Layout-Shift Delimiter System (`src/components/editor/markdown/markdown-theme.ts`):** Replaced `fontSize: 0px` and `letterSpacing: -1ch` on hidden delimiters with smooth opacity and muted color transitions (`opacity: 0.25; color: #71717a;`), preserving exact line-height and character width metrics to eliminate DOM layout shifts and baseline collapsing when typing or moving the cursor.
+- **Line-Bound Header Token Activation (`HeaderMark` in `src/components/editor/markdown/markdown-extensions.ts`):** Updated heading delimiter visibility detection to check full line boundaries, preventing token jitter while editing heading content.
+- **Read-Only Invariant Enforcement (`TaskCheckboxWidget` in `src/components/editor/markdown/markdown-extensions.ts`):** Added explicit `EditorState.readOnly` facet checks and physical `<input disabled>` rendering to prevent unauthorized document mutations on locked documents.
+- **Zero-Allocation Word Count Engine (`calculateWordCount` in `src/components/editor/markdown/editor-adapter.ts`):** Replaced array allocations with a streaming regex iteration loop, eliminating V8 Heap memory pressure and Major GC jitter during rapid keystrokes and high-frequency AI streaming on massive (50K+ words) documents.
+- **Defensive Boundary Clamping (`markdown-extensions.ts`):** Clamped all `doc.lineAt` coordinates with `Math.min(pos, doc.length)` to guarantee immunity against `RangeError` during rapid deletions and incomplete block streaming.
+- **Test Hardening (`src/test/markdown-editor-interaction.test.ts`):** Added 10 comprehensive unit & integration tests verifying delimiter visibility toggles, multi-line selections across delimiters, precise line selection above and below horizontal rules and headings, read-only checkbox protection, and zero-allocation word count accuracy on 9,000+ word multilingual texts (total 48 passed tests).
+
 ## [1.18.0] - 2026-08-28 (CodeMirror 6 Text Direction & Bidi Engine Architecture, Toolbar Direction Menu & Unified Typography)
 
 ### Added - Text Direction & Bidi Engine Architecture

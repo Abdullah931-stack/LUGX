@@ -83,6 +83,8 @@ function createMockAdapter(initial = ""): EditorAdapter {
         getHeadingCount: () => (content.match(/^#{1,6}\s/gm) || []).length,
         getMode: () => "live",
         setMode: vi.fn(),
+        getDirectionSettings: () => ({ mode: "auto", lockCodeBlocksLTR: true }),
+        setDirectionSettings: vi.fn(),
         destroy: vi.fn(),
         startStreamingGhost: vi.fn(),
         updateStreamingGhost: vi.fn(),

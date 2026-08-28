@@ -21,13 +21,17 @@ import {
 } from "./streaming-ghost";
 
 /**
- * Word count helper that reliably handles Unicode, Arabic, and mixed text.
+ * Word count helper that reliably handles Unicode, Arabic, and mixed text
+ * with zero heap allocations on high-frequency typing and AI streaming.
  */
 export function calculateWordCount(text: string): number {
     if (!text || text.trim() === "") return 0;
-    // Match sequences of non-whitespace characters
-    const matches = text.trim().match(/[\p{L}\p{N}\p{M}_-]+/gu);
-    return matches ? matches.length : 0;
+    const regex = /[\p{L}\p{N}\p{M}_-]+/gu;
+    let count = 0;
+    while (regex.test(text)) {
+        count++;
+    }
+    return count;
 }
 
 /**

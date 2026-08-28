@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { placeholder as cmPlaceholder } from "@codemirror/view";
-import { MarkdownEditorProps, EditorAdapter, DirectionSettings } from "./types";
+import { MarkdownEditorProps, EditorAdapter, DirectionSettings, EditorMode } from "./types";
 import {
     createMarkdownExtensions,
     modeCompartment,

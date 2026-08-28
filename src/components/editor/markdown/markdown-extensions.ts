@@ -79,11 +79,23 @@ class TaskCheckboxWidget extends WidgetType {
         input.className = "cm-md-task-checkbox";
         input.setAttribute("aria-label", "Markdown task checkbox");
 
+        const isReadOnly = Boolean(view.state.facet(EditorState.readOnly));
+        if (isReadOnly) {
+            input.disabled = true;
+        }
+
         input.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
 
+            if (view.state.facet(EditorState.readOnly)) {
+                return;
+            }
+
             const from = this.markerPos;
+            const docLength = view.state.doc.length;
+            if (from + 3 > docLength) return;
+
             const docText = view.state.doc.sliceString(from, from + 3);
             if (docText === "[ ]" || docText === "[x]" || docText === "[X]") {
                 const nextMarker = this.checked ? "[ ]" : "[x]";
@@ -156,6 +168,7 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
     const tree = syntaxTree(view.state);
     const selection = view.state.selection;
     const doc = view.state.doc;
+    const docLen = doc.length;
 
     // Track line decorations to prevent applying multiple line decorations to the same line
     const decoratedLines = new Set<number>();
@@ -171,13 +184,16 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
 
     // Traverse the syntax tree
     for (const { from, to } of view.visibleRanges) {
+        const safeVisibleFrom = Math.min(Math.max(0, from), docLen);
+        const safeVisibleTo = Math.min(Math.max(safeVisibleFrom, to), docLen);
+
         tree.iterate({
-            from,
-            to,
+            from: safeVisibleFrom,
+            to: safeVisibleTo,
             enter(node) {
                 const name = node.name;
-                const nodeFrom = node.from;
-                const nodeTo = node.to;
+                const nodeFrom = Math.min(Math.max(0, node.from), docLen);
+                const nodeTo = Math.min(Math.max(nodeFrom, node.to), docLen);
 
                 // 1. Headings (ATXHeading1 to ATXHeading6, SetextHeading1, SetextHeading2)
                 if (name.startsWith("ATXHeading") || name.startsWith("SetextHeading")) {
@@ -197,7 +213,8 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
 
                 // HeaderMark (#, ##, etc.)
                 if (name === "HeaderMark") {
-                    const cursorTouching = isCursorInside(selection, nodeFrom, nodeTo + 1);
+                    const line = doc.lineAt(nodeFrom);
+                    const cursorTouching = isCursorInside(selection, line.from, line.to);
                     if (!cursorTouching) {
                         pending.push({ from: nodeFrom, to: nodeTo, deco: marks.delimiterHidden });
                     } else {
@@ -256,8 +273,8 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
                 if (name === "FencedCode") {
                     const startLine = doc.lineAt(nodeFrom).number;
                     const endLine = doc.lineAt(nodeTo).number;
-                    const visibleStart = Math.max(startLine, doc.lineAt(from).number);
-                    const visibleEnd = Math.min(endLine, doc.lineAt(to).number);
+                    const visibleStart = Math.max(startLine, doc.lineAt(safeVisibleFrom).number);
+                    const visibleEnd = Math.min(endLine, doc.lineAt(safeVisibleTo).number);
                     for (let l = visibleStart; l <= visibleEnd; l++) {
                         const line = doc.line(l);
                         if (!decoratedLines.has(line.from)) {
@@ -271,8 +288,8 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
                 if (name === "Blockquote") {
                     const startLine = doc.lineAt(nodeFrom).number;
                     const endLine = doc.lineAt(nodeTo).number;
-                    const visibleStart = Math.max(startLine, doc.lineAt(from).number);
-                    const visibleEnd = Math.min(endLine, doc.lineAt(to).number);
+                    const visibleStart = Math.max(startLine, doc.lineAt(safeVisibleFrom).number);
+                    const visibleEnd = Math.min(endLine, doc.lineAt(safeVisibleTo).number);
                     for (let l = visibleStart; l <= visibleEnd; l++) {
                         const line = doc.line(l);
                         if (!decoratedLines.has(line.from)) {
@@ -390,18 +407,24 @@ function buildBidiLineDecorations(view: EditorView): DecorationSet {
 
     // Collect fenced code line ranges if code block LTR locking is enabled
     const fencedLines = new Set<number>();
+    const docLen = doc.length;
     if (lockCodeBlocksLTR) {
         const tree = syntaxTree(view.state);
         for (const { from, to } of view.visibleRanges) {
+            const safeVisibleFrom = Math.min(Math.max(0, from), docLen);
+            const safeVisibleTo = Math.min(Math.max(safeVisibleFrom, to), docLen);
+
             tree.iterate({
-                from,
-                to,
+                from: safeVisibleFrom,
+                to: safeVisibleTo,
                 enter(node) {
                     if (node.name === "FencedCode") {
-                        const startLine = doc.lineAt(node.from).number;
-                        const endLine = doc.lineAt(node.to).number;
-                        const visibleStart = Math.max(startLine, doc.lineAt(from).number);
-                        const visibleEnd = Math.min(endLine, doc.lineAt(to).number);
+                        const nodeFrom = Math.min(Math.max(0, node.from), docLen);
+                        const nodeTo = Math.min(Math.max(nodeFrom, node.to), docLen);
+                        const startLine = doc.lineAt(nodeFrom).number;
+                        const endLine = doc.lineAt(nodeTo).number;
+                        const visibleStart = Math.max(startLine, doc.lineAt(safeVisibleFrom).number);
+                        const visibleEnd = Math.min(endLine, doc.lineAt(safeVisibleTo).number);
                         for (let l = visibleStart; l <= visibleEnd; l++) {
                             fencedLines.add(doc.line(l).from);
                         }
@@ -414,8 +437,10 @@ function buildBidiLineDecorations(view: EditorView): DecorationSet {
     const processedLines = new Set<number>();
 
     for (const { from, to } of view.visibleRanges) {
-        const startLine = doc.lineAt(from).number;
-        const endLine = doc.lineAt(to).number;
+        const safeVisibleFrom = Math.min(Math.max(0, from), docLen);
+        const safeVisibleTo = Math.min(Math.max(safeVisibleFrom, to), docLen);
+        const startLine = doc.lineAt(safeVisibleFrom).number;
+        const endLine = doc.lineAt(safeVisibleTo).number;
 
         for (let l = startLine; l <= endLine; l++) {
             const line = doc.line(l);

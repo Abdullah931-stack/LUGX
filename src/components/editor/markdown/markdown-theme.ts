@@ -102,19 +102,16 @@ export const markdownDarkTheme = EditorView.theme(
             lineHeight: "1.25rem",
             color: "#a1a1aa",
         },
-        // Inline token delimiter hidden styling:
-        // Uses opacity: 0 and font-size: 0 without DOM node replacement
-        // to preserve Arabic cursive font shaping and eliminate caret jumping.
+        // Inline token delimiter styling:
+        // Uses subtle opacity transition without DOM node replacement or font-size collapsing
+        // to preserve Arabic cursive font shaping, eliminate caret jumping, and enable continuous selection.
         ".cm-md-delimiter-hidden": {
-            opacity: "0 !important",
-            fontSize: "0px !important",
-            letterSpacing: "-1ch !important",
-            pointerEvents: "none !important",
-            userSelect: "none !important",
+            opacity: "0.25",
+            color: "#71717a",
             display: "inline",
         },
         ".cm-md-delimiter-visible": {
-            opacity: "0.45",
+            opacity: "0.7",
             color: "#a1a1aa",
             fontWeight: "normal",
             fontStyle: "normal",
@@ -177,7 +174,9 @@ export const markdownDarkTheme = EditorView.theme(
             borderBottom: "1px solid #3f3f46",
             display: "block",
             width: "100%",
-            margin: "0.75rem 0",
+            paddingTop: "0.75rem",
+            paddingBottom: "0.75rem",
+            color: "#52525b",
         },
     },
     { dark: true }

@@ -388,7 +388,7 @@ export const codeMirrorStreamingGhostField = StateField.define<StreamingGhostSta
                     from,
                     to,
                     CMDecoration.mark({
-                        class: 'opacity-35 line-through decoration-zinc-500 select-none bg-zinc-800/30 rounded px-0.5 transition-opacity',
+                        class: 'opacity-35 line-through decoration-zinc-500 bg-zinc-800/30 rounded px-0.5 transition-opacity',
                     })
                 );
             }

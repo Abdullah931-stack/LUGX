@@ -8,6 +8,7 @@ import {
     type EditorMode,
     type EditorSelection,
     type DirectionSettings,
+    type TextDirectionMode,
 } from "@/components/editor/markdown";
 import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
@@ -161,8 +162,8 @@ export default function EditorPage() {
                 if (e.repeat) return;
                 e.preventDefault();
                 setDirectionSettings((prev) => {
-                    const nextMode = prev.mode === "auto" ? "rtl" : prev.mode === "rtl" ? "ltr" : "auto";
-                    const next = { ...prev, mode: nextMode };
+                    const nextMode: TextDirectionMode = prev.mode === "auto" ? "rtl" : prev.mode === "rtl" ? "ltr" : "auto";
+                    const next: DirectionSettings = { ...prev, mode: nextMode };
                     try {
                         localStorage.setItem("lugx_editor_direction_pref", JSON.stringify(next));
                     } catch {
