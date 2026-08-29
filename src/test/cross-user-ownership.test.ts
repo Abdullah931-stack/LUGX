@@ -33,8 +33,8 @@ import { syncUserToDatabase } from "@/server/actions/auth-actions";
 import { POST as aiStreamPOST } from "@/app/api/ai/stream/route";
 import { NextRequest } from "next/server";
 
-const USER_A_ID = "11111111-1111-1111-1111-111111111111";
-const USER_B_ID = "22222222-2222-2222-2222-222222222222";
+const USER_A_ID = "13131313-1313-1313-1313-131313131313";
+const USER_B_ID = "14141414-1414-1414-1414-141414141414";
 
 let currentSessionUser: { id: string; email: string; user_metadata?: { full_name?: string; avatar_url?: string } } | null = {
     id: USER_A_ID,
@@ -83,9 +83,15 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
         }
     });
 
-    beforeEach((ctx) => {
+    beforeEach(async (ctx) => {
         if (!dbAvailable && ctx.task.name.startsWith("[DB]")) {
             ctx.skip();
+        }
+        if (dbAvailable) {
+            await testDb.insert(schema.users).values([
+                { id: USER_A_ID, email: "user-a-phase12@example.com", tier: "free" },
+                { id: USER_B_ID, email: "user-b-phase12@example.com", tier: "free" },
+            ]).onConflictDoNothing();
         }
         currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
     });

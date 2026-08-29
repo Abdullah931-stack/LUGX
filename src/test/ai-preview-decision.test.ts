@@ -381,15 +381,20 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             await waitFor(() => expect(result.current.status).toBe('preview_ready'));
 
             // Verify widget DOM exists inside editor
-            const widgetElement = testContainer.querySelector('.cm-ai-ghost-widget');
+            await waitFor(() => {
+                const el = testContainer.querySelector('.cm-ai-ghost-widget');
+                expect(el).not.toBeNull();
+                expect(el?.textContent).toContain('معاينة الذكاء الاصطناعي (translate)');
+            });
+
+            const widgetElement = testContainer.querySelector<HTMLElement>('.cm-ai-ghost-widget');
             expect(widgetElement).not.toBeNull();
-            expect(widgetElement?.textContent).toContain('معاينة الذكاء الاصطناعي (translate)');
 
             // Find interactive buttons
-            const buttons = widgetElement?.querySelectorAll('button');
-            expect(buttons?.length).toBe(3);
+            const buttons = widgetElement!.querySelectorAll<HTMLButtonElement>('button');
+            expect(buttons.length).toBe(3);
 
-            const applyBtn = Array.from(buttons || []).find((b) => b.textContent?.includes('تطبيق التعديل'));
+            const applyBtn = Array.from(buttons).find((b) => b.textContent?.includes('تطبيق التعديل'));
             expect(applyBtn).toBeDefined();
 
             mockCommitAIFileOperation.mockResolvedValueOnce({

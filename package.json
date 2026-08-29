@@ -1,6 +1,6 @@
 {
   "name": "lugx",
-  "version": "1.21.0",
+  "version": "1.22.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -78,5 +78,9 @@
   },
   "optionalDependencies": {
     "@esbuild/linux-x64": "^0.28.2"
+  },
+  "overrides": {
+    "esbuild": "$esbuild"
   }
 }
+

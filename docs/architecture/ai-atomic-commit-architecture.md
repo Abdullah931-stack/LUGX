@@ -25,8 +25,11 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
    - If a true concurrent write from another session occurs, the update yields zero rows, rolling back the transaction and triggering an explicit `412 conflict` response.
    - Conflict responses return minimal metadata (`version`, `etag`, `updatedAt`) without leaking full document payloads across the network.
 
-4. **Connection Pool Bounds & Timeout Protection**:
-   - The transactional WebSocket pool is bounded with explicit resource limits (`max: 5`, `connectionTimeoutMillis: 10_000`, `idleTimeoutMillis: 30_000`) to prevent unhandled connection hangs or orphaned reservations during Neon database network latency.
+4. **Adaptive Multi-Driver Transaction Client & Connection Pool Bounds**:
+   - The transactional client (`src/lib/db/transactional.ts`) adaptively selects the appropriate driver based on the target `DATABASE_URL`:
+     - **Neon Cloud (`neon.tech`)**: Uses `@neondatabase/serverless` WebSocket Pool with bounded resource limits (`max: 5`, `connectionTimeoutMillis: 10_000`, `idleTimeoutMillis: 30_000`) to prevent orphaned transactions under cloud network latency.
+     - **Local & CI PostgreSQL**: Uses `pg.Pool` (`node-postgres`) to execute native ACID transactions without WebSocket overhead or artificial mocks.
+   - Evaluated dynamically via a lazy proxy singleton to support test-environment binding (`TEST_DATABASE_URL`).
 
 5. **Idempotency via `operationId`**:
    - If a commit is retried after a network partition where the reservation was already marked `committed`, the endpoint idempotently returns the current committed version/ETag instead of applying redundant version increments or throwing unhandled errors.

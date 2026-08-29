@@ -110,7 +110,7 @@ vi.mock("@/lib/sync", async (importOriginal) => {
     };
 });
 
-const USER_ID = "55555555-5555-5555-5555-555555555555";
+const USER_ID = "15151515-1515-1515-1515-151515151515";
 let FILE_ID: string;
 
 async function seedFile(): Promise<void> {
@@ -159,7 +159,7 @@ describe("LIVE: editor orchestration single-writer path on isolated branch", () 
     });
 
     afterEach(() => {
-        adapter.destroy();
+        adapter?.destroy?.();
     });
 
     it("initializes from the REAL database row (title/version/etag)", async () => {

@@ -32,11 +32,11 @@ remain in place as a **second layer of defense**, not a substitute.
 
 | Command | Scope |
 |---|---|
-| `npm run test` | Unit/contract tests only (runs ONCE via `vitest run`; `test:watch` exists for watch mode). No DB, no external services. Counts evolve per phase — cite live numbers from the latest run output. |
-| `npm run test:live` | The 14 LIVE suites against the isolated Neon branch (+ live AI keys for the e2e smoke). |
+| `npm run test` | Unit/contract tests only (runs ONCE via `vitest run`; `test:watch` exists for watch mode). No DB, no external services. Fast, hermetic, and completely decoupled from network/cloud. |
+| `npm run test:live` | The 15 hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch. |
 | `npm run test:all` | Both, sequentially. |
 
-LIVE suites currently registered in `vitest.live.config.ts` (16 suites):
+LIVE suites registered in `vitest.live.config.ts` (15 hermetic database suites):
 
 1. `src/app/api/files/[id]/route.putguard.test.ts`
 2. `src/server/actions/ai-ops.integrity.test.ts`
@@ -46,14 +46,15 @@ LIVE suites currently registered in `vitest.live.config.ts` (16 suites):
 6. `src/server/actions/file-ops.softdelete.test.ts`
 7. `src/test/ai-atomic-commit.integration.test.ts`
 8. `src/test/conflict-resolution.integration.test.ts`
-9. `src/test/ai-live-e2e.test.ts`
-10. `src/test/ai-quota-idempotency.live.test.ts`
-11. `src/test/ai-server-atomic-commit.live.test.ts`
-12. `src/test/editor-orchestration.live.test.ts`
-13. `src/test/ai-preview-decision.live.test.ts`
-14. `src/test/ai-reservation-status.live.test.ts`
-15. `src/app/api/stripe/webhook/route.live.test.ts`
-16. `src/test/cross-user-ownership.test.ts`
+9. `src/test/ai-quota-idempotency.live.test.ts`
+10. `src/test/ai-server-atomic-commit.live.test.ts`
+11. `src/test/editor-orchestration.live.test.ts`
+12. `src/test/ai-preview-decision.live.test.ts`
+13. `src/test/ai-reservation-status.live.test.ts`
+14. `src/app/api/stripe/webhook/route.live.test.ts`
+15. `src/test/cross-user-ownership.test.ts`
+
+*(Note: The external cloud integration suite `src/test/ai-live-e2e.test.ts` is explicitly isolated to Stage 6 `live-provider-smoke` and requires live provider API secrets).*
 
 ### Formerly-mocked suites — LIVE twins now implemented (post Phase 10 follow-up)
 
@@ -68,13 +69,22 @@ branch live twins were added and registered in `vitest.live.config.ts`:
 | `src/test/ai-preview-decision.test.ts` | `src/test/ai-preview-decision.live.test.ts` — hook-generated operationId settled against real reservation rows |
 | `src/app/api/stripe/webhook/route.test.ts` | `src/app/api/stripe/webhook/route.live.test.ts` — REAL HMAC signature verification + persisted tier/subscription rows (durable-ledger dedupe deferred to Phase 13) |
 
-jsdom-based live suites route interactive transactions through the pg-backed
-`testDb` (`txDb` mock), since the Neon-serverless WebSocket pool cannot open
-without a WebSocket global — the precedent set by
-`ai-atomic-commit.integration.test.ts`.
+### Smart Hybrid Database Client (`db` & `txDb`)
 
+Database operations across the application and testing harness utilize an intelligent dual-driver architecture:
+- **Standard Client (`db` in `src/lib/db/index.ts`):** Dynamically detects environment hosts:
+  - **Neon Cloud (`neon.tech`):** Uses `@neondatabase/serverless` (`neon-http`) with `drizzle-orm/neon-http` for low-latency serverless HTTP execution.
+  - **Local & CI PostgreSQL Containers (`localhost` / `127.0.0.1` on port 5432):** Automatically connects via `pg.Pool` (`node-postgres`) with `drizzle-orm/node-postgres`, eliminating `ECONNREFUSED ::1:443` port conflicts in Docker and CI runners.
+- **Interactive Transactional Client (`txDb` in `src/lib/db/transactional.ts`):**
+  - **Local & CI PostgreSQL (TCP):** Executes interactive ACID transactions (`BEGIN`, `COMMIT`, `ROLLBACK`) with zero WebSocket overhead.
+  - **Neon Cloud (WebSocket):** Uses `@neondatabase/serverless` WebSocket Pool and `drizzle-orm/neon-serverless`.
+  - **Dynamic Lazy Resolution:** `txDb` evaluates the active `DATABASE_URL` via a lazy proxy singleton, ensuring dynamic binding to `TEST_DATABASE_URL` during test execution without stale module-load bindings.
 
-## 3. Guard rules (fail-closed)
+### Deterministic Namespaced User IDs & Concurrency Isolation
+
+To guarantee 100% isolation when integration test suites run in parallel against a shared test database:
+- Every suite is allocated a deterministic, non-overlapping placeholder UUID range matching `/^(\d{4})\1-\1-\1-\1-\1{3}$/` (e.g. `1111...` for `ai-ops.integrity`, `1313...`/`1414...` for `cross-user-ownership`, `1515...` for `editor-orchestration`, `1616...` for `ai-server-atomic-commit`, `2323...`/`2424...`/`2525...` for `stripe/webhook`).
+- Suites seed their test user rows in `beforeEach` with `onConflictDoNothing()`, preventing cross-suite `CASCADE` deletions when sibling test suites tear down.
 
 The Pool is never created unless **all** of the following hold:
 

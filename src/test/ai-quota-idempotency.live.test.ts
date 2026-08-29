@@ -25,7 +25,7 @@ import {
 } from "@/server/actions/ai-ops";
 
 // Placeholder-pattern UUID so guarded cleanup can never touch a real account.
-const USER_ID = "55555555-5555-5555-5555-555555555555";
+const USER_ID = "17171717-1717-1717-1717-171717171717";
 
 const todayUtc = () => new Date().toISOString().slice(0, 10);
 

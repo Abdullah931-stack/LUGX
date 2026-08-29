@@ -627,8 +627,7 @@ export function useEditorOrchestrator({
         let cancelled = false;
 
         async function loadInitialFile() {
-            if (loadedFileIdRef.current === fileId || pipelineRef.current) return;
-            pipelineRef.current = Promise.resolve();
+            if (loadedFileIdRef.current === fileId) return;
 
             // Freeze the editor surface so nothing can be typed pre-hydration.
             hydratedRef.current = false;

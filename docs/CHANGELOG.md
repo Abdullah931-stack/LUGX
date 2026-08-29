@@ -2,6 +2,33 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.23.0] - 2026-08-29 (Node.js 22 LTS Runtime Upgrade, Smart Hybrid Database Driver, CI Hermeticity & React 19 Hardening)
+
+### Added - Runtime Modernization & Universal Database Driver
+- **Upgraded to Node.js 22 (Active LTS):** Fully aligned the GitHub Actions multi-stage CI pipeline and project dependencies with Node.js 22 LTS across all 6 pipeline stages in `.github/workflows/ci.yml`.
+- **Dependency & Typing Modernization:** Upgraded `@types/node` to `^22` and `@testing-library/jest-dom` to `^7.0.1` (natively satisfying its `node: '>=22'` engine requirement and eliminating all `EBADENGINE` installation warnings).
+- **Smart Hybrid Database Client (`src/lib/db/index.ts`):** Engineered an intelligent hybrid database driver that dynamically selects the optimal connection strategy:
+  - **Neon Cloud (`neon.tech`):** Operates via `@neondatabase/serverless` (`neon-http`) for ultra-low latency serverless query dispatching over HTTPS.
+  - **Local, Docker & CI Containers (`localhost` / `127.0.0.1`):** Connects via standard `pg.Pool` (`drizzle-orm/node-postgres`) over TCP on port `5432`, eliminating `ECONNREFUSED ::1:443` connection errors in CI service containers.
+- **Hermetic CI Stage 4 Test Isolation:**
+  - Separated external cloud integration suite `src/test/ai-live-e2e.test.ts` into the gated Stage 6 (`live-provider-smoke`), excluding it from Stage 4 (`LIVE_TEST_FILES`) and default unit suites.
+  - Hermetically mocked external Stripe SDK network calls (`stripe.subscriptions.retrieve`) in `src/app/api/stripe/webhook/route.live.test.ts`, guaranteeing 100% offline determinism while asserting real HMAC signature verification and ACID database transactions.
+- **React 19 Cascading Render Prevention:** Converted synchronous state setters inside `useEffect` to asynchronous schedules in `src/components/editor/search-replace.tsx`, `src/components/files/folder-picker-modal.tsx`, `src/components/sync/conflict-dialog.tsx`, and `src/hooks/use-sync.ts`, eliminating React 19 cascading render warnings.
+- **Security & Vulnerability Hardening:** Upgraded `next` and `eslint-config-next` to `^16.3.3` and locked dependencies, maintaining 0 high/critical vulnerabilities on `npm audit --audit-level=high`.
+
+## [1.22.0] - 2026-08-29 (Adaptive Multi-Driver Transaction Client, Test UUID Namespace Isolation & CI Concurrency Hardening)
+
+### Fixed - Multi-Environment Database Transactions & CI Stage 4 Hardening
+- **Adaptive Multi-Driver Transactional Client (`src/lib/db/transactional.ts`):** Resolved Stage 4 CI concurrency failures caused by hardcoded `@neondatabase/serverless` WebSocket pool initialization. Replaced static client with an adaptive multi-driver architecture using a lazy proxy singleton:
+  - **Neon Cloud (`neon.tech`):** Automatically initializes `@neondatabase/serverless` WebSocket Pool with `drizzle-orm/neon-serverless`.
+  - **Local, Docker & CI Container (`localhost` / `127.0.0.1` / standard PostgreSQL):** Automatically connects via `pg.Pool` (`node-postgres`) with `drizzle-orm/node-postgres`, executing full ACID transactions (`BEGIN`, `COMMIT`, `ROLLBACK`) with zero WebSocket overhead or artificial mocking.
+  - **Dynamic Lazy URL Binding:** Evaluates `DATABASE_URL` dynamically on invocation, ensuring seamless runtime binding to `TEST_DATABASE_URL` in live integration tests without stale module-load caching.
+- **Deterministic Namespaced Test User UUIDs (`src/test/` & `src/server/actions/`):** Completely decoupled test user identities across integration suites to prevent cross-suite collisions and cascading teardown deletions (`ON DELETE CASCADE`):
+  - Assigned dedicated RFC-4122 repeating blocks: `cross-user-ownership.test.ts` (`1313...`, `1414...`), `editor-orchestration.live.test.ts` (`1515...`), `ai-server-atomic-commit.live.test.ts` (`1616...`), `ai-quota-idempotency.live.test.ts` (`1717...`), `ai-reservation-status.live.test.ts` (`1818...`, `1919...`), and `stripe/webhook/route.live.test.ts` (`2323...`, `2424...`, `2525...`).
+  - Added resilient idempotent user re-seeding (`onConflictDoNothing()`) in `beforeEach` to guarantee complete independence during parallel or serialized execution.
+- **Editor Orchestrator Hydration Pipeline Resilience (`src/hooks/use-editor-orchestrator.ts`):** Removed premature `pipelineRef.current = Promise.resolve()` assignment in `loadInitialFile()`, ensuring `pipelineRef` tracks the true asynchronous lifecycle promise until resolution and resets cleanly on fileId transitions.
+- **Documentation Synchronization:** Updated `docs/reference/test-database-isolation.md` and `docs/architecture/ai-atomic-commit-architecture.md` to document the adaptive transaction driver and namespaced test data isolation.
+
 ## [1.21.0] - 2026-08-28 (Multi-Stage CI Pipeline Architecture, Database Isolation & Concurrency Integrity Verification)
 
 ### Added - CI/CD Pipeline & Database Isolation Automation

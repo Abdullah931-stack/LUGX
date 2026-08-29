@@ -131,11 +131,14 @@ docs/
 ## 4. Verification Commands
 
 ```bash
-npm run test            # unit and contract test suites (mocked boundaries)
-npm run test:live       # live integration suites against isolated Neon branch (TEST_DATABASE_URL)
-npm run test:all        # full suite verification (unit + live)
-npx tsc --noEmit        # type safety gate
-npm run build           # production build gate
+npm run lint            # static analysis & ESLint 9 code quality gate
+npx tsc --noEmit        # strict TypeScript type-checking
+npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
+npm run test            # pure unit and contract test suites (zero DB/network dependencies)
+npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon
+npm run test:all        # full suite execution (unit + live)
+npm run build           # Next.js 16 production bundle compilation
+act push --pull=false   # local containerized execution of the 6-stage CI workflow
 node scripts/verify-migrations.mjs     # test database migration & schema verification
 node scripts/db-testusers-probe.mjs   # test-account hygiene probe
 ```

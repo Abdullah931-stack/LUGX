@@ -50,9 +50,9 @@ process.env.STRIPE_WEBHOOK_SECRET = SECRET;
 const { POST, __resetProcessedEventIds } = await import("./route");
 
 const USERS = {
-    checkout: "12121212-1212-1212-1212-121212121212",
-    unmapped: "34343434-3434-3434-3434-343434343434",
-    deleted: "56565656-5656-5656-5656-565656565656",
+    checkout: "23232323-2323-2323-2323-232323232323",
+    unmapped: "24242424-2424-2424-2424-242424242424",
+    deleted: "25252525-2525-2525-2525-252525252525",
 };
 
 const TEST_EVENTS = [

@@ -22,8 +22,8 @@ import {
 import { getUser } from "@/lib/supabase/server";
 
 const { USER_ID, OTHER_USER_ID } = vi.hoisted(() => ({
-    USER_ID: "66666666-6666-6666-6666-666666666666",
-    OTHER_USER_ID: "77777777-7777-7777-7777-777777777777",
+    USER_ID: "18181818-1818-1818-1818-181818181818",
+    OTHER_USER_ID: "19191919-1919-1919-1919-191919191919",
 }));
 
 vi.mock("@/lib/supabase/server", () => ({

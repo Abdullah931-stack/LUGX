@@ -58,33 +58,39 @@ describe("Markdown Editor: Interaction, Delimiter Visibility & Vertical Navigati
             });
         });
 
-        it("should apply .cm-md-header-1 to heading line and maintain text content", () => {
+        it("should apply .cm-md-header-1 to heading line and maintain text content", async () => {
             const doc = "# Heading One\nNormal Paragraph";
             initEditor(doc, "live");
 
-            const headingLine = parent.querySelector(".cm-md-header-1");
-            expect(headingLine).not.toBeNull();
-            expect(headingLine?.textContent).toContain("#");
-            expect(headingLine?.textContent).toContain("Heading One");
+            await waitFor(() => {
+                const headingLine = parent.querySelector(".cm-md-header-1");
+                expect(headingLine).not.toBeNull();
+                expect(headingLine?.textContent).toContain("#");
+                expect(headingLine?.textContent).toContain("Heading One");
+            });
         });
 
-        it("should smoothly toggle delimiter visibility without destroying DOM nodes", () => {
+        it("should smoothly toggle delimiter visibility without destroying DOM nodes", async () => {
             const doc = "Line 1\n# Heading 1\nLine 3";
             initEditor(doc, "live");
 
             // Initially cursor is at 0 (Line 1), so # is delimiterHidden
-            const hiddenDelimiter = parent.querySelector(".cm-md-delimiter-hidden");
-            expect(hiddenDelimiter).not.toBeNull();
-            expect(hiddenDelimiter?.textContent).toBe("#");
+            await waitFor(() => {
+                const hiddenDelimiter = parent.querySelector(".cm-md-delimiter-hidden");
+                expect(hiddenDelimiter).not.toBeNull();
+                expect(hiddenDelimiter?.textContent).toBe("#");
+            });
 
             // Move cursor to Line 2 (# Heading 1)
             const line2Pos = doc.indexOf("#") + 3;
             view.dispatch({ selection: { anchor: line2Pos } });
 
             // Now # should be delimiterVisible
-            const visibleDelimiter = parent.querySelector(".cm-md-delimiter-visible");
-            expect(visibleDelimiter).not.toBeNull();
-            expect(visibleDelimiter?.textContent).toBe("#");
+            await waitFor(() => {
+                const visibleDelimiter = parent.querySelector(".cm-md-delimiter-visible");
+                expect(visibleDelimiter).not.toBeNull();
+                expect(visibleDelimiter?.textContent).toBe("#");
+            });
         });
     });
 
@@ -140,7 +146,7 @@ describe("Markdown Editor: Interaction, Delimiter Visibility & Vertical Navigati
     });
 
     describe("3. Adversarial Hardening & Stress Invariants", () => {
-        it("should prevent task checkbox mutation in read-only mode and disable input element", () => {
+        it("should prevent task checkbox mutation in read-only mode and disable input element", async () => {
             parent = document.createElement("div");
             document.body.appendChild(parent);
 
@@ -154,16 +160,19 @@ describe("Markdown Editor: Interaction, Delimiter Visibility & Vertical Navigati
             view = new EditorView({ state, parent });
             adapter = createEditorAdapter(view, "live");
 
-            const checkbox = parent.querySelector(".cm-md-task-checkbox") as HTMLInputElement;
-            expect(checkbox).not.toBeNull();
-            expect(checkbox.disabled).toBe(true);
+            let checkbox: HTMLInputElement | null = null;
+            await waitFor(() => {
+                checkbox = parent.querySelector(".cm-md-task-checkbox") as HTMLInputElement;
+                expect(checkbox).not.toBeNull();
+                expect(checkbox?.disabled).toBe(true);
+            });
 
             // Simulate click event
-            checkbox.click();
+            checkbox!.click();
             expect(adapter.getValue()).toBe("- [ ] Locked Task Item");
         });
 
-        it("should toggle task checkbox in editable mode", () => {
+        it("should toggle task checkbox in editable mode", async () => {
             parent = document.createElement("div");
             document.body.appendChild(parent);
 
@@ -177,11 +186,14 @@ describe("Markdown Editor: Interaction, Delimiter Visibility & Vertical Navigati
             view = new EditorView({ state, parent });
             adapter = createEditorAdapter(view, "live");
 
-            const checkbox = parent.querySelector(".cm-md-task-checkbox") as HTMLInputElement;
-            expect(checkbox).not.toBeNull();
-            expect(checkbox.disabled).toBe(false);
+            let checkbox: HTMLInputElement | null = null;
+            await waitFor(() => {
+                checkbox = parent.querySelector(".cm-md-task-checkbox") as HTMLInputElement;
+                expect(checkbox).not.toBeNull();
+                expect(checkbox?.disabled).toBe(false);
+            });
 
-            checkbox.click();
+            checkbox!.click();
             expect(adapter.getValue()).toBe("- [x] Editable Task Item");
         });
 

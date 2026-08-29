@@ -17,7 +17,7 @@ import { reserveAndUpdateUsage } from "@/server/actions/ai-ops";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn() }));
 
-const USER_ID = "66666666-6666-6666-6666-666666666666"; // placeholder pattern
+const USER_ID = "16161616-1616-1616-1616-161616161616"; // unique placeholder pattern
 
 async function seedFileWithReservation(operationId: string): Promise<string> {
     await testDb

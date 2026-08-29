@@ -1,17 +1,19 @@
 // @vitest-environment jsdom
 import React, { createRef } from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, waitFor } from "@testing-library/react";
 import { MarkdownEditor } from "./markdown-editor";
 import { EditorAdapter } from "./types";
 
 describe("MarkdownEditor React Component", () => {
-    it("renders properly with default props", () => {
+    it("renders properly with default props", async () => {
         const { container } = render(
             <MarkdownEditor defaultValue="# Initial Title\n\nSome body text." />
         );
-        expect(container.querySelector(".lugx-markdown-editor")).toBeDefined();
-        expect(container.querySelector(".cm-editor")).toBeDefined();
+        await waitFor(() => {
+            expect(container.querySelector(".lugx-markdown-editor")).not.toBeNull();
+            expect(container.querySelector(".cm-editor")).not.toBeNull();
+        });
     });
 
     it("notifies onAdapterReady callback with valid EditorAdapter", () => {
