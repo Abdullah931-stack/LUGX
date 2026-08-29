@@ -33,25 +33,25 @@ export function FolderPickerModal({
     const [folders, setFolders] = useState<FileItem[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const loadFolders = useCallback(async () => {
-        setLoading(true);
-        const result = await getUserFiles();
-        if (result.success && result.data) {
-            // Filter to only show folders, and exclude the current file
-            const folderList = result.data.filter(
-                (f) => f.isFolder && f.id !== currentFileId
-            );
-            setFolders(folderList);
-        }
-        setLoading(false);
-    }, [currentFileId]);
-
     // Load folders when modal opens
     useEffect(() => {
+        let isMounted = true;
         if (isOpen) {
-            loadFolders();
+            getUserFiles().then((result) => {
+                if (!isMounted) return;
+                if (result.success && result.data) {
+                    const folderList = result.data.filter(
+                        (f) => f.isFolder && f.id !== currentFileId
+                    );
+                    setFolders(folderList);
+                }
+                setLoading(false);
+            });
         }
-    }, [isOpen, loadFolders]);
+        return () => {
+            isMounted = false;
+        };
+    }, [isOpen, currentFileId]);
 
     function handleSelect(folderId: string | null) {
         onSelect(folderId);

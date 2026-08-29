@@ -86,10 +86,12 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 gcRef.current.cleanup();
                 gcRef.current = null;
             }
-            setStatus('stopped');
-            setIsInitialized(false);
-            setPendingCount(0);
-            return;
+            const resetTimer = setTimeout(() => {
+                setStatus('stopped');
+                setIsInitialized(false);
+                setPendingCount(0);
+            }, 0);
+            return () => clearTimeout(resetTimer);
         }
 
         let isCancelled = false;

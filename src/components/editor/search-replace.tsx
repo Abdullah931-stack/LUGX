@@ -157,15 +157,19 @@ export function SearchReplace({ adapter, editor, isOpen, onClose }: SearchReplac
         }
 
         if (!searchQuery) {
-            setMatches([]);
-            setCurrentMatchIndex(0);
-            setShouldSearch(false);
+            searchTimeoutRef.current = setTimeout(() => {
+                setMatches([]);
+                setCurrentMatchIndex(0);
+                setShouldSearch(false);
+            }, 0);
             return;
         }
 
         if (shouldSearch) {
-            findMatches();
-            setShouldSearch(false);
+            searchTimeoutRef.current = setTimeout(() => {
+                findMatches();
+                setShouldSearch(false);
+            }, 0);
             return;
         }
 

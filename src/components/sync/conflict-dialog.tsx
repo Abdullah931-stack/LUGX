@@ -110,22 +110,26 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
 
     // Re-sync state when conflict changes
     useEffect(() => {
-        const result = conflictResolver.attemptThreeWayMerge({
-            base: conflict.baseVersion || null,
-            local: conflict.localVersion,
-            remote: conflict.serverVersion,
-        });
+        const timer = setTimeout(() => {
+            const result = conflictResolver.attemptThreeWayMerge({
+                base: conflict.baseVersion || null,
+                local: conflict.localVersion,
+                remote: conflict.serverVersion,
+            });
 
-        if (isDeleteConflict) {
-            setSelectedStrategy('restore');
-        } else if (result.success) {
-            setSelectedStrategy('merge');
-        } else {
-            setSelectedStrategy('local');
-        }
+            if (isDeleteConflict) {
+                setSelectedStrategy('restore');
+            } else if (result.success) {
+                setSelectedStrategy('merge');
+            } else {
+                setSelectedStrategy('local');
+            }
 
-        setEditableText(result.content || conflict.localVersion.content || "");
-        setSelectedTitle(result.title || conflict.localVersion.title || conflict.serverVersion.title || 'Untitled');
+            setEditableText(result.content || conflict.localVersion.content || "");
+            setSelectedTitle(result.title || conflict.localVersion.title || conflict.serverVersion.title || 'Untitled');
+        }, 0);
+
+        return () => clearTimeout(timer);
     }, [conflict, isDeleteConflict]);
 
     const handleResolveClick = async () => {
