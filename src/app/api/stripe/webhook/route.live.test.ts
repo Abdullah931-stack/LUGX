@@ -28,6 +28,23 @@ vi.mock("next/headers", () => ({
         }) as never,
 }));
 
+import Stripe from "stripe";
+import { stripe } from "@/lib/stripe";
+
+// Mock external Stripe network calls while keeping local HMAC verification and DB transitions real
+vi.spyOn(stripe.subscriptions, "retrieve").mockImplementation(async (subId: string) => ({
+    id: subId,
+    items: {
+        data: [
+            {
+                current_period_start: 1700000000,
+                current_period_end: 1702592000,
+            },
+        ],
+    },
+    latest_invoice: null,
+} as unknown as Stripe.Response<Stripe.Subscription>));
+
 process.env.STRIPE_WEBHOOK_SECRET = SECRET;
 // Dynamic import AFTER env setup
 const { POST, __resetProcessedEventIds } = await import("./route");

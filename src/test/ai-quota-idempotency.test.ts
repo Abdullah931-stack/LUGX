@@ -12,7 +12,7 @@ vi.mock('@/lib/db', () => ({
                 findFirst: vi.fn().mockResolvedValue({ tier: 'pro' }),
             },
             usage: {
-                findFirst: vi.fn().mockImplementation(({ where }: any) => {
+                findFirst: vi.fn().mockImplementation(({ where: _where }: any) => {
                     return Promise.resolve(inMemoryUsage.get('user_usage') || {
                         id: 'usage-1',
                         userId: '00000000-0000-0000-0000-000000000001',
@@ -26,7 +26,7 @@ vi.mock('@/lib/db', () => ({
                 }),
             },
             aiReservations: {
-                findFirst: vi.fn().mockImplementation(({ where }: any) => {
+                findFirst: vi.fn().mockImplementation(({ where: _where }: any) => {
                     for (const res of inMemoryReservations.values()) {
                         return Promise.resolve(res);
                     }
@@ -37,7 +37,7 @@ vi.mock('@/lib/db', () => ({
                 }),
             },
         },
-        insert: vi.fn().mockImplementation((table: any) => ({
+        insert: vi.fn().mockImplementation((_table?: any) => ({
             values: (val: any) => ({
                 onConflictDoNothing: () => Promise.resolve(),
                 returning: () => {
@@ -49,9 +49,9 @@ vi.mock('@/lib/db', () => ({
                 },
             }),
         })),
-        update: vi.fn().mockImplementation((table: any) => ({
-            set: (setVal: any) => ({
-                where: (whereClause: any) => ({
+        update: vi.fn().mockImplementation((_table?: any) => ({
+            set: (_setVal?: any) => ({
+                where: (_whereClause?: any) => ({
                     returning: () => {
                         return Promise.resolve([{ id: 'updated-1' }]);
                     },

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { Trash2, Edit3, Copy, FolderInput, RotateCcw } from "lucide-react";
 import { deleteFile, restoreFile, renameFile, copyFile, moveFile } from "@/server/actions/file-ops";
-import { useRouter } from "next/navigation";
 import { FolderPickerModal } from "./folder-picker-modal";
 
 interface FileContextMenuProps {
@@ -30,7 +29,6 @@ export function FileContextMenu({
     isDeleted = false,
     onRefresh,
 }: FileContextMenuProps) {
-    const router = useRouter();
     const [isRenaming, setIsRenaming] = useState(false);
     const [newName, setNewName] = useState(fileName);
     const [showCopyPicker, setShowCopyPicker] = useState(false);

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ConflictResolver, ResolutionStrategy, validateMarkdownSyntaxIntegrity } from './conflict-resolver';
+import { ConflictResolver, validateMarkdownSyntaxIntegrity } from './conflict-resolver';
 import { IDBFile, SyncConflict } from './idb-types';
 
 describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {

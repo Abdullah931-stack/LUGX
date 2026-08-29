@@ -5,6 +5,17 @@
  */
 
 
+interface PdfParseOutput {
+    text: string;
+    numpages?: number;
+    numrender?: number;
+    info?: Record<string, unknown>;
+    metadata?: unknown;
+    version?: string;
+}
+
+type PdfParseFunction = (buffer: Buffer) => Promise<PdfParseOutput>;
+
 export interface PDFParseResult {
     text: string;
     numPages: number;
@@ -20,10 +31,11 @@ export async function extractPdfText(buffer: Buffer): Promise<PDFParseResult> {
     try {
         // Dynamic import to handle pdf-parse module
         const pdfParseModule = await import('pdf-parse');
-        const parse = (pdfParseModule as any).default || pdfParseModule;
+        const parse = ((pdfParseModule as unknown as { default?: PdfParseFunction }).default ||
+            pdfParseModule) as unknown as PdfParseFunction;
 
         // Call the parser function
-        const data: any = await parse(buffer);
+        const data = await parse(buffer);
 
         // Extract plain text while preserving line breaks and formatting
         let text = data.text || '';

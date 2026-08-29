@@ -6,7 +6,7 @@
  * Scoped hook tests: verifies that the useSync hook creates user-isolated instances,
  * properly manages user lifecycle, ensures clean resource teardown, and handles user switching.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 // ---------- mock the unit modules the hook depends on ----------

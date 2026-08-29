@@ -5,7 +5,7 @@ import { getUser } from "@/lib/supabase/server";
 import { getUserProfile } from "@/server/actions/auth-actions";
 import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, Settings, LogOut, Plus, Sparkles } from "lucide-react";
 import { signOut } from "@/server/actions/auth-actions";
 

@@ -5,7 +5,6 @@ import {
     isValidTransition,
     assertSessionIntegrity,
     isTerminalStatus,
-    AIStreamStatus,
 } from '@/lib/ai/stream-session';
 import { EphemeralPreviewBuffer } from '@/lib/ai/preview-buffer';
 

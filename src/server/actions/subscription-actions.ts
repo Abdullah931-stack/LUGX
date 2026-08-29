@@ -10,6 +10,12 @@ import { users, subscriptions, subscriptionEvents } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { TierName } from '@/config/tiers.config';
 
+export type DbClient = {
+    select: typeof db.select;
+    insert: typeof db.insert;
+    update: typeof db.update;
+};
+
 /**
  * Check if a Stripe webhook event ID has already been recorded in the database.
  * Used as the durable backstop against replay/duplicates across server restarts.
@@ -18,7 +24,7 @@ import type { TierName } from '@/config/tiers.config';
  */
 export async function isSubscriptionEventProcessed(
     eventId: string,
-    client?: any
+    client?: DbClient
 ): Promise<boolean> {
     const targetDb = client || db;
     try {
@@ -48,7 +54,7 @@ export async function recordSubscriptionEvent(
         stripeSubscriptionId?: string | null;
         status?: string;
     },
-    client?: any
+    client?: DbClient
 ): Promise<{ success: boolean; duplicate?: boolean; error?: string }> {
     const targetDb = client || db;
     try {
@@ -62,8 +68,8 @@ export async function recordSubscriptionEvent(
         });
 
         return { success: true };
-    } catch (error: any) {
-        const msg = String(error?.message || error);
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
         if (
             msg.includes('unique') ||
             msg.includes('duplicate key') ||
@@ -85,13 +91,13 @@ export async function recordSubscriptionEvent(
  * Falls back to direct execution if txDb.transaction is not available in test/env.
  */
 export async function executeSubscriptionTransition<T>(
-    operation: (tx: any) => Promise<T>
+    operation: (tx: DbClient) => Promise<T>
 ): Promise<T> {
-    const targetDb = txDb && typeof (txDb as any).transaction === 'function' ? txDb : db;
-    if (typeof (targetDb as any).transaction === 'function') {
-        return (targetDb as any).transaction(operation);
+    const targetDb = txDb && typeof txDb.transaction === 'function' ? txDb : db;
+    if (typeof targetDb.transaction === 'function') {
+        return (targetDb.transaction as unknown as (cb: (tx: DbClient) => Promise<T>) => Promise<T>)(operation);
     }
-    return operation(db);
+    return operation(db as unknown as DbClient);
 }
 
 /**
@@ -104,7 +110,7 @@ export async function executeSubscriptionTransition<T>(
 export async function updateUserTier(
     userId: string,
     tier: TierName,
-    client?: any
+    client?: DbClient
 ): Promise<{ success: boolean; error?: string }> {
     const targetDb = client || db;
     console.log('🔵 [DB] updateUserTier called - userId:', userId, 'tier:', tier);
@@ -141,7 +147,7 @@ export async function updateUserTier(
 export async function updateUserStripeCustomerId(
     userId: string,
     stripeCustomerId: string,
-    client?: any
+    client?: DbClient
 ): Promise<{ success: boolean; error?: string }> {
     const targetDb = client || db;
     try {
@@ -183,7 +189,7 @@ export async function upsertSubscription(
         currentPeriodEnd: Date;
         cancelAtPeriodEnd?: boolean;
     },
-    client?: any
+    client?: DbClient
 ): Promise<{ success: boolean; error?: string }> {
     const targetDb = client || db;
     try {
@@ -231,7 +237,7 @@ export async function upsertSubscription(
  */
 export async function cancelUserSubscription(
     userId: string,
-    client?: any
+    client?: DbClient
 ): Promise<{ success: boolean; error?: string }> {
     const targetDb = client || db;
     try {
@@ -272,7 +278,7 @@ export async function cancelUserSubscription(
  */
 export async function getUserSubscription(
     userId: string,
-    client?: any
+    client?: DbClient
 ): Promise<typeof subscriptions.$inferSelect | null> {
     const targetDb = client || db;
     try {
@@ -288,5 +294,3 @@ export async function getUserSubscription(
         return null;
     }
 }
-
-

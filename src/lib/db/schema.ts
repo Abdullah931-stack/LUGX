@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, boolean, timestamp, date, integer, pgEnum, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, boolean, timestamp, date, integer, pgEnum, uniqueIndex, index, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // Enums
@@ -38,7 +38,7 @@ export const files = pgTable("files", {
     title: varchar("title", { length: 500 }).notNull(),
     /** Normalized UTF-8 Markdown source text (MarkdownSource) */
     content: text("content"),
-    parentFolderId: uuid("parent_folder_id").references((): any => files.id, { onDelete: "set null" }), // Self-referencing FK (deferred at schema level; see migration 0003 for ON DELETE behavior and deferrability)
+    parentFolderId: uuid("parent_folder_id").references((): AnyPgColumn => files.id, { onDelete: "set null" }), // Self-referencing FK (deferred at schema level; see migration 0003 for ON DELETE behavior and deferrability)
     isFolder: boolean("is_folder").notNull().default(false),
     // Sync-related fields
     etag: varchar("etag", { length: 64 }), // SHA-256 hash for change detection

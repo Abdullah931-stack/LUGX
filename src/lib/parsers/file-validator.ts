@@ -35,7 +35,7 @@ export function validateFile(file: File): ValidationResult {
     // Get file extension
     const extension = file.name.toLowerCase().match(/\.[^.]+$/)?.[0];
 
-    if (!extension || !ALLOWED_EXTENSIONS.includes(extension as any)) {
+    if (!extension || !(ALLOWED_EXTENSIONS as readonly string[]).includes(extension)) {
         return {
             isValid: false,
             error: `Invalid file type. Only PDF, MD, and TXT files are allowed.`,

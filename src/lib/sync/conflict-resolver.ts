@@ -5,7 +5,7 @@
  * Implements deterministic Three-Way Merge for text, HTML, metadata, and handles delete/restore conflicts.
  */
 
-import { IDBFile, SyncConflict, ConflictFileState } from './idb-types';
+import { IDBFile, SyncConflict } from './idb-types';
 
 /**
  * Diff operation types
@@ -87,7 +87,7 @@ export class ConflictResolver {
     detectConflict(
         localFile: IDBFile,
         serverEtag: string,
-        serverVersion: number
+        _serverVersion?: number
     ): boolean {
         // Conflict if ETags differ AND local has unsaved changes
         return localFile.isDirty && localFile.etag !== serverEtag;

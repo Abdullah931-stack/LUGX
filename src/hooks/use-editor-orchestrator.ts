@@ -848,7 +848,7 @@ export function useEditorOrchestrator({
             debouncedAutoSaveRef.current?.cancel?.();
 
             await aiStream.startStream({
-                editor: adapterRef.current as any,
+                editor: adapterRef.current,
                 operation,
                 fileId,
                 expectedVersion: fileVersionRef.current,

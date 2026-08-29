@@ -74,7 +74,7 @@ const mockSyncErrorHandler = vi.hoisted(() => ({
         timestamp: Date.now(),
         recoverable: res.status >= 500,
     })),
-    isRetryable: vi.fn((err) => true),
+    isRetryable: vi.fn((_err) => true),
     handle: vi.fn(),
 }));
 
@@ -95,7 +95,7 @@ vi.mock('./rollback', () => ({
 }));
 vi.mock('./error-handler', () => ({
     syncErrorHandler: mockSyncErrorHandler,
-    isRetryableError: vi.fn((err) => true),
+    isRetryableError: vi.fn((_err) => true),
     SyncErrorType: {
         NETWORK_ERROR: 'NETWORK_ERROR',
         CONFLICT_ERROR: 'CONFLICT_ERROR',
@@ -359,7 +359,7 @@ describe('Sync Manager', () => {
             mockIndexedDBManager.getDirtyFiles.mockResolvedValue([]);
 
             let callCount = 0;
-            mockFetch.mockImplementation(async (url) => {
+            mockFetch.mockImplementation(async (_url) => {
                 callCount++;
                 if (callCount === 1) {
                     return {
@@ -550,7 +550,7 @@ describe('Sync Manager', () => {
                 json: async () => ({ files: [], has_more: false, etag: 'new-etag' }),
             });
 
-            const result = await manager.sync();
+            await manager.sync();
 
             // Only the standalone dirty file was pushed
             expect(mockIndexedDBManager.markFileClean).toHaveBeenCalledWith('file-dirty-standalone', 'new-etag');
@@ -618,7 +618,6 @@ describe('Sync Manager', () => {
             });
             mockFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
-            const beforeTime = Date.now();
             const result = await manager.processOperationsQueue();
 
             expect(result.processed).toBe(1);

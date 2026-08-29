@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,7 +93,7 @@ export function Sidebar() {
                     variant: "destructive",
                 });
             }
-        } catch (error) {
+        } catch (_error) {
             toast({
                 title: "Move Error",
                 description: "An error occurred while moving the file",
@@ -201,7 +200,7 @@ export function Sidebar() {
                         variant: "destructive",
                     });
                 }
-            } catch (error) {
+            } catch (_error) {
                 toast({
                     title: "Import Error",
                     description: `Failed to import ${file.name}`,

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from "vitest";
+import { waitFor } from "@testing-library/react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
@@ -46,13 +47,15 @@ describe("Markdown Editor: Interaction, Delimiter Visibility & Vertical Navigati
     });
 
     describe("1. Delimiter Visibility & Line Styling", () => {
-        it("should apply .cm-md-hr with zero vertical margins to avoid HeightMap coordinate drift", () => {
+        it("should apply .cm-md-hr with zero vertical margins to avoid HeightMap coordinate drift", async () => {
             const doc = "First Line\n\n---\n\nSecond Line";
             initEditor(doc, "live");
 
-            const hrLine = parent.querySelector(".cm-md-hr");
-            expect(hrLine).not.toBeNull();
-            expect(hrLine?.classList.contains("cm-line")).toBe(true);
+            await waitFor(() => {
+                const hrLine = parent.querySelector(".cm-md-hr");
+                expect(hrLine).not.toBeNull();
+                expect(hrLine?.classList.contains("cm-line")).toBe(true);
+            });
         });
 
         it("should apply .cm-md-header-1 to heading line and maintain text content", () => {

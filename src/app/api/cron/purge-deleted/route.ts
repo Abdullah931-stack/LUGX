@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, schema } from "@/lib/db";
-import { sql, lte } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 
 /**
  * Purge expired tombstones — 30-day soft-delete retention.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { exportContent, ExporterFactory } from "@/lib/exporters";
+import { exportContent } from "@/lib/exporters";
 import { MarkdownExporter } from "@/lib/exporters/strategies/markdown-exporter";
 import { TextExporter } from "@/lib/exporters/strategies/text-exporter";
 

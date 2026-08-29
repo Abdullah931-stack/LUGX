@@ -15,12 +15,11 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { CodeMirrorEditorAdapter, createEditorAdapter } from "@/components/editor/markdown/editor-adapter";
+import { CodeMirrorEditorAdapter } from "@/components/editor/markdown/editor-adapter";
 import { createMarkdownExtensions } from "@/components/editor/markdown/markdown-extensions";
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/lib/db/schema";
-import { getUser } from "@/lib/supabase/server";
 import { reserveAndUpdateUsage } from "@/server/actions/ai-ops";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER_ID })) }));

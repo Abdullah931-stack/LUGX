@@ -50,7 +50,11 @@ export class SyncPerformanceMonitor {
 
         const duration = performance.now() - startTime;
         this.recordMetric(type, duration, metadata);
-        success ? this.successCount++ : this.failureCount++;
+        if (success) {
+            this.successCount++;
+        } else {
+            this.failureCount++;
+        }
         return duration;
     }
 

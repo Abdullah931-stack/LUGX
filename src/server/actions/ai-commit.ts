@@ -185,17 +185,17 @@ export async function commitAIFileOperation(
         const newEtag = generateETagSync({ id: fileId, content: resultContent, updatedAt: now });
 
         // Enforce transactional safety in production
-        if (process.env.NODE_ENV !== "test" && typeof (txDb as any)?.transaction !== "function") {
+        if (process.env.NODE_ENV !== "test" && typeof txDb?.transaction !== "function") {
             throw new Error("Transactional DB client is unavailable. Atomic commit requires txDb.transaction().");
         }
 
         // 3. Atomically update file and settle reservation in a single transaction
-        const targetDb = txDb && typeof (txDb as any).transaction === "function" ? txDb : db;
+        const targetDb = txDb && typeof txDb.transaction === "function" ? txDb : db;
 
         let updatedFile: typeof currentFile | undefined;
 
-        if (typeof (targetDb as any).transaction === "function") {
-            const txResult = await (targetDb as any).transaction(async (tx: any) => {
+        if (typeof targetDb.transaction === "function") {
+            const txResult = await targetDb.transaction(async (tx) => {
                 const [f] = await tx
                     .update(schema.files)
                     .set({

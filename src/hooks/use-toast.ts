@@ -1,13 +1,15 @@
 import * as React from "react";
 
-export function useToast() {
-    const [toasts, setToasts] = React.useState<any[]>([]);
+export interface ToastProps {
+    title: string;
+    description?: string;
+    variant?: "default" | "destructive";
+}
 
-    const toast = React.useCallback((props: {
-        title: string;
-        description?: string;
-        variant?: "default" | "destructive";
-    }) => {
+export function useToast() {
+    const [toasts] = React.useState<ToastProps[]>([]);
+
+    const toast = React.useCallback((props: ToastProps) => {
         console.log(`[TOAST] ${props.title}: ${props.description || ''}`);
         // Temporary implementation - will be replaced with proper UI toast
         if (props.variant === "destructive") {

@@ -15,7 +15,6 @@ export const LIVE_TEST_FILES = [
     'src/server/actions/file-ops.softdelete.test.ts',
     'src/test/ai-atomic-commit.integration.test.ts',
     'src/test/conflict-resolution.integration.test.ts',
-    'src/test/ai-live-e2e.test.ts',
     // Live twins of previously fully-mocked suites (post Phase 10 follow-up):
     'src/test/ai-quota-idempotency.live.test.ts',
     'src/test/ai-server-atomic-commit.live.test.ts',

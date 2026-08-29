@@ -193,17 +193,18 @@ export function getRequestsPerKey(): number {
 export function extractErrorCode(error: unknown): number {
     if (error === null || error === undefined) return 0;
     if (typeof error === "object" && error !== null) {
-        if ("status" in error && typeof (error as any).status === "number") {
-            return (error as any).status;
+        const errObj = error as Record<string, unknown>;
+        if (typeof errObj.status === "number") {
+            return errObj.status;
         }
-        if ("statusCode" in error && typeof (error as any).statusCode === "number") {
-            return (error as any).statusCode;
+        if (typeof errObj.statusCode === "number") {
+            return errObj.statusCode;
         }
-        if ("code" in error && typeof (error as any).code === "number") {
-            return (error as any).code;
+        if (typeof errObj.code === "number") {
+            return errObj.code;
         }
-        if ("response" in error && typeof (error as any).response === "object" && (error as any).response !== null) {
-            const resp = (error as any).response;
+        if (typeof errObj.response === "object" && errObj.response !== null) {
+            const resp = errObj.response as Record<string, unknown>;
             if (typeof resp.status === "number") return resp.status;
             if (typeof resp.statusCode === "number") return resp.statusCode;
         }

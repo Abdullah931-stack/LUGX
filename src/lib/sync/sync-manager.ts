@@ -6,7 +6,7 @@
  */
 
 import { indexedDBManager, createIndexedDBManager, IndexedDBManager } from './indexeddb';
-import { IDBFile, IDBOperation, IDBSyncMetadata, SyncQueueItem, OperationStatus } from './idb-types';
+import { IDBFile, IDBOperation, SyncQueueItem } from './idb-types';
 import { connectionDetector, withBackoff } from './connection-detector';
 import { concurrencyManager } from './concurrency-manager';
 import { syncRollback, createSyncRollback, SyncRollback } from './rollback';

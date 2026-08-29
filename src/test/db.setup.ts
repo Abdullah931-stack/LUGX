@@ -75,7 +75,7 @@ export async function ensureTestDb() {
         }
 
         ensured = true;
-    } catch (err) {
+    } catch (_err) {
         console.warn("[ensureTestDb] Postgres DB unreachable; skipping integration DB setup.");
     }
 }

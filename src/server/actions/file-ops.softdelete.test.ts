@@ -24,7 +24,7 @@
  * pg-backed test client. The SQL shapes are identical to production.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, and, isNull, isNotNull, lte, sql } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
@@ -239,8 +239,6 @@ describe("soft delete lifecycle", () => {
 
 describe("purge job semantics", () => {
     it("bounded parameterized DELETE only removes rows past the retention window", async () => {
-        const BATCH_LIMIT = 500;
-
         // One row still within the 30-day window (must survive)
         const fresh = fileOf("fresh-tombstone.md");
         await testDb.insert(schema.files).values({

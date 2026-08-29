@@ -54,7 +54,6 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
     let editor: CodeMirrorEditorAdapter;
     let view: EditorView;
     let container: HTMLElement;
-    let capturedCallbacks: ConsumeCallbacks;
     const initialContent = 'The quick brown fox jumps over the lazy dog.';
 
     const renderAIStream = () =>
@@ -102,9 +101,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             });
         }
 
-        capturedCallbacks = {} as ConsumeCallbacks;
         mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
-            capturedCallbacks = options;
             // Default successful stream: meta → chunk → done
             options.onMeta?.({ sessionId: 's', operationId: 'op' });
             options.onChunk?.('Better text', ' text');
@@ -210,7 +207,6 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
     it('stopStream mid-generation settles the reservation as consumed and never refunds', async () => {
         // Stream stays open (never completes) to simulate an active generation
         mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
-            capturedCallbacks = options;
             options.onMeta?.({ sessionId: 's', operationId: 'op' });
             options.onChunk?.('Partial ', 'Partial ');
         });

@@ -13,7 +13,6 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import type { Stripe as StripeTypes } from "stripe";
 
 // next/headers() shim
 vi.mock("next/headers", () => ({
@@ -228,7 +227,7 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
             )
         );
 
-        const resp1 = await POST(makeRequest());
+        await POST(makeRequest());
         const resp2 = await POST(makeRequest());
 
         const calls = mockUpdateTier.mock.calls.filter((c) => c[0] === "user-4");

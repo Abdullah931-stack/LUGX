@@ -99,7 +99,7 @@ vi.mock('./key-rotation', () => ({
 }));
 
 // Import client module after mocks are set up
-import { processWithAI, streamWithAI, getModelPair, MODEL_CONFIG, ROTATION_ERROR_CODES } from './client';
+import { processWithAI, streamWithAI, getModelPair, MODEL_CONFIG } from './client';
 import type { AIOperation } from './prompts';
 
 describe('AI Client (Robust & Fault-Tolerant Execution)', () => {

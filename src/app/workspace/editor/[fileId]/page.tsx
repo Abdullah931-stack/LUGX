@@ -86,8 +86,6 @@ export default function EditorPage() {
         hydration,
 
         aiStatus,
-        previewText,
-        isStreaming,
         isCommitting,
         isAIActive,
         aiError,
@@ -95,9 +93,6 @@ export default function EditorPage() {
         startAIOperation,
         stopAIOperation,
         resetAI,
-        commitAIPreview,
-        rejectAIPreview,
-        retryAIPreview,
 
         isSaving,
         lastSaved,

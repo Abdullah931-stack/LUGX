@@ -7,7 +7,7 @@ import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TIER_LIMITS, getTierDisplayName } from "@/config/tiers.config";
-import { ArrowLeft, User, CreditCard, LogOut, Check, ExternalLink } from "lucide-react";
+import { ArrowLeft, User, CreditCard, LogOut, Check } from "lucide-react";
 import { UpgradeButton } from "@/components/subscription/upgrade-button";
 
 

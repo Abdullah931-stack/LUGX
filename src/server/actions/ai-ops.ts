@@ -157,12 +157,6 @@ export async function checkQuota(
     }
 
     // Check Correct/Improve/Translate limits
-    const operationsMap: Record<string, keyof typeof usage> = {
-        correct: "correctWords",
-        improve: "improveWords",
-        translate: "translateWords",
-    };
-
     if (limits.correctImproveTranslate.period === "weekly") {
         const weeklyUsage = await getWeeklyWordUsage(userId);
         if (weeklyUsage + wordCount > limits.correctImproveTranslate.words) {
@@ -457,7 +451,7 @@ export async function reserveAndUpdateUsage(
  */
 export async function refundAIReservation(
     operationId: string,
-    reason: string = "stream_failed"
+    _reason: string = "stream_failed"
 ): Promise<{ refunded: boolean; reason?: string }> {
     const reservation = await db.query.aiReservations.findFirst({
         where: eq(schema.aiReservations.operationId, operationId),
@@ -721,7 +715,7 @@ export async function refundUsage(
     userId: string,
     operation: AIOperation,
     wordCount: number,
-    tier: TierName
+    _tier: TierName
 ): Promise<void> {
     const today = getToday();
     const undoFields: Record<string, unknown> = {};

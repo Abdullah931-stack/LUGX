@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SyncErrorHandler, SyncErrorType, SyncError } from './error-handler';
+import { SyncErrorHandler, SyncErrorType } from './error-handler';
 
 describe('Sync Error Handler', () => {
     let handler: SyncErrorHandler;

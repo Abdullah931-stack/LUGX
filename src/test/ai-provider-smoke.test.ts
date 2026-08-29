@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { getApiKeys, getRequestsPerKey, getRotationStatus, maskApiKey, classifyGeminiError } from "@/lib/ai/key-rotation";
-import { getModelPair, MODEL_CONFIG } from "@/lib/ai/client";
+import { maskApiKey, classifyGeminiError } from "@/lib/ai/key-rotation";
+import { getModelPair } from "@/lib/ai/client";
 
 /**
  * AI Provider Smoke Test:
