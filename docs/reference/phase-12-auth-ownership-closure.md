@@ -39,7 +39,7 @@ The callback handler in [`src/app/auth/callback/route.ts`](file:///d:/Projects/L
 
 ### 2.3. Middleware Context & Deep Link Preservation
 
-In [`src/middleware.ts`](file:///d:/Projects/LUGX/src/middleware.ts):
+In [`src/middleware.ts`](file:///d:/Projects/LUGX/src/middleware.ts) *(Note: In Next.js 16, route protection and deep-link preservation are implemented in the Edge proxy at [`src/proxy.ts`](file:///d:/Projects/LUGX/src/proxy.ts))*:
 - Preserves search queries on protected route redirects (`${request.nextUrl.pathname}${request.nextUrl.search}`) so users seamlessly retain their full editor / query state after authentication.
 
 ### 2.4. OAuth Client, User Sync & Dead Code Elimination
@@ -65,7 +65,7 @@ To prevent resource enumeration (attacker guessing foreign UUIDs by probing for 
 - **Subscription Server Actions (`subscription-actions.ts`):**
   Removed `'use server'` directive so internal database mutation helpers (`updateUserTier`, `upsertSubscription`, `updateUserStripeCustomerId`, `cancelUserSubscription`) are purely server-side internal utilities and never exposed as client-callable RPC endpoints.
 - **Storage Path Tenant Isolation (`src/lib/supabase/storage.ts`):**
-  `assertSafeStoragePath(userId, path)` enforces that storage bucket operations strictly require the `userId/` prefix and reject directory traversal (`..`) sequences.
+  `assertSafeStoragePath(userId, path)` enforces that storage bucket operations strictly require the `userId/` prefix and reject directory traversal (`..`) sequences. *(Note: Supabase Storage was subsequently eliminated in Phase 14 ([`phase-14-supabase-storage-removal-closure.md`](./phase-14-supabase-storage-removal-closure.md)), dropping the `storage_path` database column and deleting `storage.ts` to store pure Markdown text directly in Neon PostgreSQL)*.
 
 ---
 
@@ -99,7 +99,7 @@ To prevent resource enumeration (attacker guessing foreign UUIDs by probing for 
    - `/api/ai/stream` foreign `fileId` rejection with `404 Not Found`.
    - `/api/ai/stream` malformed/non-string `fileId` rejection with `400 Bad Request`.
    - High-concurrency atomic `syncUserToDatabase` UPSERT race test (10 parallel executions with zero constraint errors).
-   - Storage path tenant isolation and directory traversal tests (`assertSafeStoragePath`).
+   - Storage path tenant isolation and directory traversal tests (`assertSafeStoragePath`) *(Note: pruned in Phase 14 clean-up)*.
    - Unauthenticated session invariants.
 
 3. **Full Suite Regression (`npx vitest run`)**

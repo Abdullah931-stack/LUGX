@@ -34,7 +34,7 @@ The following 4 `@tiptap/*` packages (and 63 transitive packages) were uninstall
 
 ### 2.4 Codebase Touchpoint Modernization
 - `src/hooks/use-ai-stream.ts`: Enforces `type EditorInstance = EditorAdapter`. Removed all `@tiptap/react` and `streamingGhostPluginKey` imports. Removed legacy ProseMirror transaction fallbacks.
-- `src/lib/sanitize.test.ts`: Modernized to test pure `sanitizeHtml` and standalone parsers.
+- `src/lib/sanitize.test.ts`: Modernized to test pure `sanitizeHtml` and standalone parsers *(Note: `src/lib/sanitize.test.ts`, along with all legacy HTML sanitizers and `dompurify`, was later permanently purged in release v1.17.0 as the entire pipeline operates natively on pure Markdown AST)*.
 - `src/lib/exporters/README.md`: Updated code examples to reference `EditorAdapter` and raw Markdown.
 - `.env.example`: Updated comments to reflect Markdown editor ephemeral streaming.
 

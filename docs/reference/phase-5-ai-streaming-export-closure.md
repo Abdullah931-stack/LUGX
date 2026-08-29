@@ -16,6 +16,7 @@ Phase 5 completes the transformation of the AI Streaming, UI Preview, and Docume
 ## 2. Key Changes & Architectural Invariants
 
 ### 1. Unified Inline Interactive Preview Card (`src/lib/extensions/streaming-ghost-extension.ts`)
+*(Note: Initially created at `src/lib/extensions/streaming-ghost-extension.ts`, this widget was subsequently consolidated into the standalone CodeMirror 6 plugin `src/components/editor/markdown/streaming-ghost.ts` during Phase 6 with the removal of `src/lib/extensions/`)*
 - **Single Cohesive Interface:** Permanently removed the top static `<AIStreamPreview />` panel. Consolidated all AI streaming preview display and decision controls into `CMStreamingGhostWidget`.
 - **Interactive Action Controls:** Embedded real-time action buttons inside the inline card header: `Stop Generation` during active streaming, and the 3 decision buttons (`Accept / Apply`, `Reject`, `Retry`) upon stream completion (`preview_ready`).
 - **Layout Thrashing Elimination (`updateDOM` at 60fps):** In-place DOM updates prevent DOM destruction and re-creation during high-speed token streaming.
