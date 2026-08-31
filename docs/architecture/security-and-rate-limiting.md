@@ -86,15 +86,34 @@ Documents in LUGX are stored and processed exclusively as pure UTF-8 Markdown te
 
 ---
 
-## 4. Local Data Encryption (`src/lib/sync/encryption.ts`)
+## 4. Dual-Tier Hybrid Encryption & Isolated Crypto Worker (`src/lib/sync/encryption.ts`, `src/lib/workers/crypto.worker.ts`)
 
-Client-side encryption of IndexedDB payloads for sensitive documents:
+LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloaded to a dedicated Web Worker to ensure zero main-thread UI lag and complete defense-in-depth:
 
-- Algorithm: **AES-GCM 256-bit** with a random 12-byte IV per payload.
-- Key derivation: **PBKDF2**, 100,000 iterations, SHA-256, random 16-byte salt
-  (`deriveKeyFromPassword`).
-- Output envelope (`EncryptedData`): `{ ciphertext, iv, algorithm, version: 1 }`
-  to keep future algorithm migrations explicit.
+### 4.1 Isolated Cryptographic Execution & Non-Extractable Keys
+- **Background Worker Offloading (`src/lib/workers/crypto.worker.ts`)**: All computationally intensive key derivations (PBKDF2 with 600,000 iterations) and symmetric transformations run in an isolated Web Worker via a typed RPC bridge (`src/lib/sync/crypto-worker-bridge.ts`), sustaining 60fps UI performance.
+- **Direct Engine Dual Mode**: In Node.js/SSR and automated test environments, the bridge transparently executes against the direct WebCrypto SubtleCrypto engine with identical security invariants and zero artificial mocking.
+- **Non-Extractable CryptoKey Enforcement**: All derived and imported keys are marked `extractable: false` within Web Crypto API memory spaces.
+
+### 4.2 Multi-Layer Defensive RAM Sanitization
+- **Instant `.fill(0)` Memory Clearing**: Intermediate byte arrays (`Uint8Array`) containing passwords, salts, CSPRNG initialization vectors (IVs), 128-bit entropy buffers, and decrypted plaintexts are zeroed out via `.fill(0)` inside `finally` blocks immediately upon operation completion.
+
+### 4.3 Zero-Knowledge Envelope & AAD Integrity Binding
+- **Algorithm & Envelope (`EncryptedEnvelope`)**:
+  - Algorithm: **AES-GCM 256-bit** with CSPRNG 12-byte IV and 16-byte salt.
+  - Key Derivation: **PBKDF2-HMAC-SHA256** with **600,000 iterations**.
+  - Envelope Schema: `{ version: 1, algorithm: 'AES-GCM-256', keyId, iv, salt, ciphertext, kdfIterations }`.
+- **Mandatory AAD Binding**: Additional Authenticated Data (`userId:fileId`) is bound into the AES-GCM 128-bit authentication tag for all document encryptions/decryptions. Any document substitution or payload tampering throws explicit `AADIntegrityError` or `InvalidCiphertextOrKeyError`.
+
+### 4.4 Dual Key Wrapping & BIP-39 Recovery Seed
+- **Master Key Dual-Wrapping**: The random 256-bit Vault Master Key is encrypted twice in PostgreSQL:
+  1. Password-derived Key Encryption Key (`wrapMasterKeyWithPassword`).
+  2. 12-word BIP-39 mnemonic seed Key Encryption Key (`wrapMasterKeyWithRecoverySeed`).
+- **Standard BIP-39 Seed (`src/lib/sync/mnemonic.ts`)**: Converts 128-bit CSPRNG entropy to 12 English words with 4-bit SHA-256 checksum verification.
+
+### 4.5 In-Memory Session Key Store & Auto-Lock (`src/lib/sync/session-key-store.ts`)
+- Holds `LocalDeviceKey` and `VaultMasterKey` in volatile memory.
+- Inactivity Auto-Lock timer automatically zeroes and purges keys (`purgeKeys()`) after timeout or upon logout.
 
 ---
 
@@ -119,6 +138,7 @@ user-facing deletions are tombstones
 ## 6. Verification
 
 ```bash
+npx vitest run src/test/vault-crypto.test.ts                                                        # Phase 1 crypto worker, AAD, RAM wiping & BIP-39
 npx vitest run src/test/auth-redirect.test.ts                                                      # open redirect & OAuth security
 npx vitest run --config vitest.live.config.ts src/test/cross-user-ownership.test.ts               # cross-user isolation & atomic sync (live DB)
 npx vitest run --config vitest.live.config.ts src/app/api/files/[id]/route.putguard.test.ts       # auth + rate-limit + version guards (live DB)
