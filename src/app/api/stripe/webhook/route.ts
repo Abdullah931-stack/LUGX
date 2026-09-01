@@ -36,21 +36,13 @@ import type { TierName } from '@/config/tiers.config';
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
 
-/**
- * In-memory fast-path dedupe set for processed webhook event IDs.
- * Note: Database `subscription_events` table is the authoritative durable ledger.
- */
-const processedEventIds = new Set<string>();
+import {
+    isEventProcessedInMemory,
+    markEventProcessedInMemory,
+    type HandlerResult,
+} from '@/lib/stripe/webhook-dedupe';
 
-/**
- * Test-only helper that empties the in-memory dedupe set between test runs.
- * Named with a leading underscore so no production caller can mistake it for
- * runtime API — it exists solely so regression tests can simulate server restarts.
- * @internal
- */
-export function __resetProcessedEventIds() {
-    processedEventIds.clear();
-}
+export const dynamic = 'force-dynamic';
 
 /**
  * Maximum age (in seconds) of an accepted webhook signature timestamp.
@@ -58,13 +50,6 @@ export function __resetProcessedEventIds() {
  * rejected even with a valid signature.
  */
 const MAX_TIMESTAMP_AGE_SECONDS = 300; // 5 minutes
-
-export interface HandlerResult {
-    success: boolean;
-    userId?: string;
-    subscriptionId?: string;
-    error?: string;
-}
 
 /**
  * Extracts and normalizes billing period dates for subscriptions.
@@ -553,7 +538,7 @@ export async function POST(request: NextRequest) {
         const eventId = event.id;
 
         // 4. Idempotency Gate (Fast-path memory check + Authoritative DB check)
-        if (processedEventIds.has(eventId)) {
+        if (isEventProcessedInMemory(eventId)) {
             console.log(`[WEBHOOK] Duplicate event ignored (in-memory): ${eventId}`);
             return NextResponse.json({ received: true, duplicate: true });
         }
@@ -561,7 +546,7 @@ export async function POST(request: NextRequest) {
         const isProcessedInDb = await isSubscriptionEventProcessed(eventId);
         if (isProcessedInDb) {
             console.log(`[WEBHOOK] Duplicate event ignored (durable DB ledger): ${eventId}`);
-            processedEventIds.add(eventId);
+            markEventProcessedInMemory(eventId);
             return NextResponse.json({ received: true, duplicate: true });
         }
 
@@ -608,21 +593,12 @@ export async function POST(request: NextRequest) {
                     eventType: event.type,
                     status: 'unhandled',
                 });
-                processedEventIds.add(eventId);
+                markEventProcessedInMemory(eventId);
                 return NextResponse.json({ received: true, event: eventId });
         }
 
         if (mutationMeta.success) {
-            processedEventIds.add(eventId);
-        }
-
-        // 6. Zero-Allocation Fast-Path Cache Eviction (O(1) Memory Overhead)
-        if (processedEventIds.size > 10_000) {
-            let count = 0;
-            for (const id of processedEventIds) {
-                processedEventIds.delete(id);
-                if (++count >= 5_000) break;
-            }
+            markEventProcessedInMemory(eventId);
         }
 
         return NextResponse.json({ received: true, event: eventId });

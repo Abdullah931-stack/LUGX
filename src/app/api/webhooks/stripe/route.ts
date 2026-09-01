@@ -8,4 +8,6 @@
  * strictly and idempotently by the canonical handler in `@/app/api/stripe/webhook/route`.
  */
 
-export { POST, __resetProcessedEventIds } from '@/app/api/stripe/webhook/route';
+export const dynamic = 'force-dynamic';
+
+export { POST } from '@/app/api/stripe/webhook/route';

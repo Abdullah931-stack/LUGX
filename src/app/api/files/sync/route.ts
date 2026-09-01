@@ -15,6 +15,8 @@ import {
     rateLimitExceededResponse
 } from '@/lib/rate-limit';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * Default and maximum page sizes
  */

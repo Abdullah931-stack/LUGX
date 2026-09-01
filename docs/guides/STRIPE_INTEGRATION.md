@@ -90,6 +90,16 @@ export function getStripePriceId(tier: TierName): string
 export function isValidStripeTier(tier: unknown): tier is 'pro' | 'ultra'
 ```
 
+#### `webhook-dedupe.ts`
+In-memory fast-path deduplication cache and Next.js App Router route isolation:
+
+```typescript
+export function isEventProcessedInMemory(eventId: string): boolean
+export function markEventProcessedInMemory(eventId: string): void
+export function __resetProcessedEventIds(): void
+export interface HandlerResult { success: boolean; userId?: string; subscriptionId?: string; error?: string; }
+```
+
 ---
 
 ### 2. API Routes

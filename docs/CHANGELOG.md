@@ -2,9 +2,37 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.23.2] - 2026-09-01 (Next.js 16 Production Build Stabilization, Route Export Compliance & allowScripts Supply-Chain Security)
+
+### Fixed - Next.js 16 Production Build & Route Export Violations
+
+- **App Router Route Export Hardening (`src/lib/stripe/webhook-dedupe.ts`):** Extracted `processedEventIds`, `__resetProcessedEventIds`, and `HandlerResult` into an isolated module `@/lib/stripe/webhook-dedupe`. This strictly enforces Next.js App Router route constraints (prohibiting non-HTTP exports from `route.ts` files) and eliminates TypeScript error `TS2344` (`OmitWithTag` type generation constraint violation) during `next build`.
+- **Dynamic Route Prerender Isolation:** Explicitly enforced `export const dynamic = 'force-dynamic'` across all server API routes (`/api/files/sync`, `/api/files/[id]`, `/api/stripe/webhook`, `/api/webhooks/stripe`), preventing unwanted static prerendering evaluations against database/cookie stores during bundle compilation.
+- **Webpack Bundler Stabilization:** Configured `"build": "next build --webpack"` in `package.json`, eliminating silent Turbopack PostCSS worker pool deadlocks (`pool_entry-[turbopack-node]_transforms_postcss_ts`) on Windows and containerized CI runners.
+- **Supply-Chain Lifecycle Script Hardening (`package.json`):** Added the standard `allowScripts` configuration whitelisting `esbuild` and `unrs-resolver` for npm v12/11.16+ deployment environments, guaranteeing pre-built native binaries are linked during `npm ci` rather than triggering 45-minute timeout fallbacks.
+
+## [1.23.1] - 2026-08-31 (Isolated Crypto Worker, Defensive RAM Sanitization, BIP-39 Recovery & Session Key Store)
+
+### Added - Zero-Knowledge Cryptographic Core & Background Web Worker
+
+- **Isolated Crypto Web Worker (`src/lib/workers/crypto.worker.ts`):** Offloaded high-cost cryptographic operations from the main browser thread to a dedicated Web Worker:
+  - **PBKDF2-HMAC-SHA256 Key Derivation:** Fixed at 600,000 iterations for enterprise-grade protection against brute-force attacks.
+  - **AES-GCM-256 Symmetric Encryption:** Authenticated encryption with 12-byte random IVs and mandatory Additional Authenticated Data (`userId:fileId`) binding, preventing payload tampering and file swapping.
+  - **Chunked Base64 Performance:** Implemented 8KB chunked array buffer conversion, eliminating call stack overflow and V8 heap churn on large payloads (500KB+).
+  - **URL-Safe & Unpadded Base64 Support:** Automatic character substitution and padding reconstruction.
+- **Typed Isomorphic RPC Bridge (`src/lib/sync/crypto-worker-bridge.ts`):** Engineered a Promise-based typed RPC bridge with automatic isomorphic routing (Web Worker in browser runtime, direct WebCrypto engine in Node.js/Vitest test suites).
+- **In-Memory Session Key Store (`src/lib/sync/session-key-store.ts`):** Safe volatile RAM key storage for `LocalDeviceKey` and `VaultMasterKey`:
+  - **Deterministic Time-Based Invalidation:** `Date.now() - lastActivityTimestamp > timeout` on every key accessor, neutralizing timer throttling in background tabs and OS sleep wakeups.
+  - **Instant RAM Purging (`purgeKeys`):** Immediate clearing and wiping of stored cryptographic keys on lock or logout.
+- **BIP-39 Standard Recovery Seed Generator (`src/lib/sync/mnemonic.ts`):** 128-bit CSPRNG entropy to 12-word mnemonic with 4-bit SHA-256 checksum verification across the official 2048-word English dictionary.
+- **Unified Encryption Manager Modernization (`src/lib/sync/encryption.ts`):** Enforced Unicode `NFKC` password normalization for cross-platform parity (macOS vs Windows/Linux) and sequential re-initialization memory wiping guards.
+- **Comprehensive Verification Suite (`src/test/vault-crypto.test.ts`):** Added 28 unit and integration tests covering PBKDF2 derivations, AAD integrity, BIP-39 SatoshiLabs official test vectors, Base64 chunking, and RAM sanitization.
+- **Documentation Master Index & Closure Record:** Documented the full architecture in `docs/architecture/security-and-rate-limiting.md`, `docs/reference/phase-15-crypto-worker-and-key-management-closure.md`, and synchronized `docs/README.md`.
+
 ## [1.23.0] - 2026-08-29 (Node.js 22 LTS Runtime Upgrade, Smart Hybrid Database Driver, CI Hermeticity & React 19 Hardening)
 
 ### Added - Runtime Modernization & Universal Database Driver
+
 - **Upgraded to Node.js 22 (Active LTS):** Fully aligned the GitHub Actions multi-stage CI pipeline and project dependencies with Node.js 22 LTS across all 6 pipeline stages in `.github/workflows/ci.yml`.
 - **Dependency & Typing Modernization:** Upgraded `@types/node` to `^22` and `@testing-library/jest-dom` to `^7.0.1` (natively satisfying its `node: '>=22'` engine requirement and eliminating all `EBADENGINE` installation warnings).
 - **Smart Hybrid Database Client (`src/lib/db/index.ts`):** Engineered an intelligent hybrid database driver that dynamically selects the optimal connection strategy:
@@ -19,6 +47,7 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.22.0] - 2026-08-29 (Adaptive Multi-Driver Transaction Client, Test UUID Namespace Isolation & CI Concurrency Hardening)
 
 ### Fixed - Multi-Environment Database Transactions & CI Stage 4 Hardening
+
 - **Adaptive Multi-Driver Transactional Client (`src/lib/db/transactional.ts`):** Resolved Stage 4 CI concurrency failures caused by hardcoded `@neondatabase/serverless` WebSocket pool initialization. Replaced static client with an adaptive multi-driver architecture using a lazy proxy singleton:
   - **Neon Cloud (`neon.tech`):** Automatically initializes `@neondatabase/serverless` WebSocket Pool with `drizzle-orm/neon-serverless`.
   - **Local, Docker & CI Container (`localhost` / `127.0.0.1` / standard PostgreSQL):** Automatically connects via `pg.Pool` (`node-postgres`) with `drizzle-orm/node-postgres`, executing full ACID transactions (`BEGIN`, `COMMIT`, `ROLLBACK`) with zero WebSocket overhead or artificial mocking.
@@ -32,6 +61,7 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.21.0] - 2026-08-28 (Multi-Stage CI Pipeline Architecture, Database Isolation & Concurrency Integrity Verification)
 
 ### Added - CI/CD Pipeline & Database Isolation Automation
+
 - **Multi-Stage GitHub Actions CI Pipeline (`.github/workflows/ci.yml`):** Engineered a 6-stage GitHub Actions CI workflow partitioned into Quality Gate (`quality-gate`: ESLint 9, TypeScript strict `tsc --noEmit`, `npm audit`), Unit Contracts (`unit-contracts`: deterministic unit tests with zero network/DB dependencies), Schema Migration Integrity (`migration-integrity`: PostgreSQL 16 container verifying sequential SQL migrations and Drizzle schema sync), Concurrency Integrity & DB Isolation (`concurrency-and-db-isolation`: isolated PostgreSQL 16 + Redis 7 service containers running `npm run test:live` with `TEST_DB_FORBIDDEN_HOSTS` protection), Production Build (`build-verification`: Next.js 16 build verification with cached artifacts), and Gated Live Smoke (`live-provider-smoke`: protected cloud AI/webhook test execution).
 - **Migration & Schema Verification Automation (`scripts/verify-migrations.mjs`):** Implemented an automated verification script that boots a database connection, applies raw SQL migrations (`0001` through `0007`) sequentially, and verifies the existence of all core tables, enums, unique indexes, and constraints.
 - **ESLint & Static Quality Tuning (`eslint.config.mjs`):** Optimized flat ESLint configuration to tune TypeScript rules, exclude test helper any-types, and clean up React 19 callback and effect declaration orders in `search-replace.tsx` and `folder-picker-modal.tsx`.
@@ -40,17 +70,20 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.20.0] - 2026-08-28 (Build Phase Decoupling from Runtime Secrets & Complete Live Integration Test Isolation)
 
 ### Changed - Build & Static Analysis Decoupling
+
 - **Decoupled Stripe Client Initialization (`src/lib/stripe/index.ts`):** Removed module top-level throwing validations (`throw new Error`) on missing `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Initialized Stripe instance with build-safe fallback placeholder (`sk_test_placeholder`), deferring strict fail-closed key validation checks (`ensureStripeSecretKey()`) to runtime invocation within operations (`getOrCreateStripeCustomer`, `createCheckoutSession`, `constructWebhookEvent`, etc.).
 - **Safe Database & Neon Pool Initializers (`src/lib/db/index.ts` & `src/lib/db/transactional.ts`):** Provided fallback dummy PostgreSQL connection strings for Neon client and Neon serverless Pool initialization during static analysis and module tracing, preventing module evaluation throws when `DATABASE_URL` is omitted during CI builds.
 - **Resilient Supabase Client Creation (`src/lib/supabase/client.ts`, `src/lib/supabase/server.ts`, `src/proxy.ts`):** Added fallback URL (`https://placeholder.supabase.co`) and anon key strings for browser, server, and Next.js middleware client creation to ensure static page generation and route compilation succeed in clean environments without `.env` or `.env.local`.
 - **Zero-Secret CI & PR Verification:** Verified that `next build` and `npm run build` succeed with exit code `0` in completely clean environments devoid of `.env` or `.env.local` files, generating all 13 routes and performing full TypeScript type-checking without requiring production credentials.
 
 ### Fixed - Live Test Suite Isolation
+
 - **Isolated Cross-User Ownership Integration Tests (`vitest.live.config.ts`):** Added `src/test/cross-user-ownership.test.ts` to `LIVE_TEST_FILES` in `vitest.live.config.ts`, ensuring all 16 live integration suites requiring real external databases run exclusively via `npm run test:live` and are 100% excluded from standard unit tests (`npm test`), achieving 37 passing unit suites (487 tests passed).
 
 ## [1.19.0] - 2026-08-28 (Editor Interaction & Coordinate Drift Fix, Zero-Layout-Shift Delimiter System, Adversarial Hardening)
 
 ### Fixed - Editor Interaction & Vertical Navigation Stability
+
 - **Eliminated CodeMirror 6 Coordinate Drift (`.cm-md-hr` in `src/components/editor/markdown/markdown-theme.ts`):** Replaced vertical margins (`margin: 0.75rem 0`) with internal padding (`paddingTop: 0.75rem; paddingBottom: 0.75rem;`) on horizontal rule line decorations. Because CodeMirror 6 measures line heights using `offsetHeight` (which excludes margins), the previous vertical margin created a 24px physical offset that caused CodeMirror's `HeightMap` to drift out of phase with DOM screen coordinates, creating dead interaction zones and causing vertical arrow navigation (`moveVertically`) to skip lines.
 - **Unblocked Mouse Text Selection & Dragging (`.cm-md-delimiter-hidden` in `src/components/editor/markdown/markdown-theme.ts` & `src/components/editor/markdown/streaming-ghost.ts`):** Removed `pointer-events: none` and `user-select: none` from inline token delimiters and AI streaming ghost marks, ensuring uninterrupted mouse click hit-testing and continuous multi-line drag selection across Markdown delimiters.
 - **Zero-Layout-Shift Delimiter System (`src/components/editor/markdown/markdown-theme.ts`):** Replaced `fontSize: 0px` and `letterSpacing: -1ch` on hidden delimiters with smooth opacity and muted color transitions (`opacity: 0.25; color: #71717a;`), preserving exact line-height and character width metrics to eliminate DOM layout shifts and baseline collapsing when typing or moving the cursor.
@@ -63,6 +96,7 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.18.0] - 2026-08-28 (CodeMirror 6 Text Direction & Bidi Engine Architecture, Toolbar Direction Menu & Unified Typography)
 
 ### Added - Text Direction & Bidi Engine Architecture
+
 - **Line-Level Bidi Isolation Extension (`bidiLinePlugin` in `src/components/editor/markdown/markdown-extensions.ts`):** Resolved the viewport virtualization direction inversion bug where scrolling unmounted top Arabic lines caused the browser to flip the container to LTR. Applied `Decoration.line` with dynamic `dir` attributes (`dir="auto"`, `dir="rtl"`, or `dir="ltr"`) directly to individual DOM lines.
 - **Three Dedicated Direction Modes:** Built explicit support for `auto` (smart content recommendation with stable in-memory document root direction), `rtl` (force global right-to-left layout), and `ltr` (force global left-to-right layout).
 - **Code Blocks LTR Locking (`lockCodeBlocksLTR`):** Added a configuration option to lock `FencedCode` lines to `dir="ltr"` and left text alignment even when the parent document is in `rtl` mode, dynamically togglable from the UI.
@@ -72,6 +106,7 @@ All notable changes to the LUGX project will be documented in this file.
 - **Extended `EditorAdapter` Contracts:** Added `getDirectionSettings()` and `setDirectionSettings()` methods to `EditorAdapter` and `CodeMirrorEditorAdapter`.
 
 ### Changed - Unified Typography & Weight Consistency
+
 - **Unified Font Stack (`src/components/editor/markdown/markdown-theme.ts` & `src/app/globals.css`):** Combined `var(--font-ibm-plex-arabic)` and `var(--font-geist-sans)` into a single unified font stack, eliminating font switching jumps when toggling direction modes.
 - **Explicit Weight & Smoothing Stabilization:** Enforced `fontWeight: "400"`, `fontSynthesis: "none"`, and `unicodeBidi: "isolate"` across editor theme styles to prevent browser faux-bold artifacting on Arabic glyphs in RTL mode.
 - **Test Hardening (`src/test/markdown-editor.test.ts` & `src/test/markdown-editor-e2e.test.ts`):** Added 5 unit and E2E tests validating bidi isolation, dynamic code block locking, adapter direction mutations, and virtualization stability across 2,000+ lines (total 37 test files, 487 passed).
@@ -79,6 +114,7 @@ All notable changes to the LUGX project will be documented in this file.
 ## [1.17.0] - 2026-08-28 (Complete Dead Code & HTML Converter Purge, TipTap Legacy Style Elimination)
 
 ### Removed - Complete Dead Code & HTML Converter Elimination
+
 - **Deleted Dead HTML & Sanitizer Files:** Completely removed `src/lib/parsers/text-to-html.ts` (124 lines), `src/lib/sanitize-client.ts` (66 lines), `src/lib/sanitize.server.ts` (57 lines), and `src/lib/sanitize.test.ts` (72 lines).
 - **Purged Unused HTML Converter Functions:** Removed `formatStreamOutputToHTML` and `sanitizePreviewChunk` from `src/lib/parsers/stream-markdown.ts`, and `htmlToPlainText` from `src/lib/exporters/utils/markdown-stripper.ts`.
 - **Eliminated Dead CSS Styles (`src/app/globals.css`):** Removed 123 lines of legacy `.tiptap-editor` and `.ProseMirror` style declarations and obsolete text-direction utility classes.
@@ -86,6 +122,7 @@ All notable changes to the LUGX project will be documented in this file.
 - **Cleaned Stream Hook (`src/hooks/use-ai-stream.ts`):** Removed unused `formatStreamOutputToHTML` import and dead `safeHtml` variable assignment.
 
 ### Changed - Test Modernization & Documentation Synchronization
+
 - **Stream Parser Test Modernization (`src/test/ai-stream-parser.test.ts`):** Focused test suite strictly on `validateStreamMarkdownOutput` and NDJSON wire protocol framing.
 - **Synchronized Documentation (`README.md`, `docs/`):** Updated technical stack tables, security definitions, and exporter guides to reflect pure UTF-8 Markdown single source of truth.
 

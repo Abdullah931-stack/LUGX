@@ -64,7 +64,8 @@ vi.mock("@/server/actions/subscription-actions", () => ({
     executeSubscriptionTransition: vi.fn(async (op: any) => op({})),
 }));
 
-import { POST, __resetProcessedEventIds } from "./route";
+import { POST } from "./route";
+import { __resetProcessedEventIds } from "@/lib/stripe/webhook-dedupe";
 import Stripe from "stripe";
 import * as stripeLib from "@/lib/stripe";
 import * as subActions from "@/server/actions/subscription-actions";

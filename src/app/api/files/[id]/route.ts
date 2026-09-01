@@ -9,6 +9,8 @@ import { eq, and, isNull } from 'drizzle-orm';
 import { generateETagSync, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from '@/lib/sync/etag-generator';
 import { fileApiRateLimiter, addRateLimitHeaders, rateLimitExceededResponse } from '@/lib/rate-limit';
 
+export const dynamic = 'force-dynamic';
+
 interface RouteParams {
     params: Promise<{ id: string }>;
 }

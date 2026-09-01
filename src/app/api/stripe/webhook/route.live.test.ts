@@ -47,7 +47,8 @@ vi.spyOn(stripe.subscriptions, "retrieve").mockImplementation(async (subId: stri
 
 process.env.STRIPE_WEBHOOK_SECRET = SECRET;
 // Dynamic import AFTER env setup
-const { POST, __resetProcessedEventIds } = await import("./route");
+const { POST } = await import("./route");
+const { __resetProcessedEventIds } = await import("@/lib/stripe/webhook-dedupe");
 
 const USERS = {
     checkout: "23232323-2323-2323-2323-232323232323",
