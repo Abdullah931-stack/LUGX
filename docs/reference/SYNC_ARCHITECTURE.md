@@ -65,14 +65,18 @@
 | `ConcurrencyManager` | File-level locking |
 | `ConnectionDetector` | Network monitoring |
 
-### 3. Data Layer
+### 3. Data & Cryptography Layer
 
 | Component | Responsibility |
 |-----------|----------------|
-| `IndexedDBManager` | Local storage |
-| `ETagGenerator` | Change detection |
-| `SyncRollback` | State recovery |
-| `Encryption` | Data encryption |
+| `IndexedDBManager` | Local document & operations storage |
+| `ETagGenerator` | SHA-256 change detection & optimistic concurrency |
+| `SyncRollback` | State checkpoints & isolated failure recovery |
+| `Encryption` (`EncryptionManager`) | Dual-tier hybrid encryption orchestration (`AES-GCM-256` + AAD) |
+| `CryptoWorkerBridge` | Typed isomorphic RPC bridge (Web Worker / Direct SubtleCrypto) |
+| `crypto.worker.ts` | Isolated Web Worker for PBKDF2 (600,000 iter) & AES-GCM offloading |
+| `SessionKeyStore` | Volatile in-memory key manager with deterministic auto-lock |
+| `BIP39 Mnemonic` (`mnemonic.ts`) | Standard 12-word seed generation & 4-bit SHA-256 checksum verification |
 
 ---
 

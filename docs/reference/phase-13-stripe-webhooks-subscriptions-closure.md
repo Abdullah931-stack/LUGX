@@ -53,25 +53,30 @@ The objective was to transform Stripe webhook ingestion and subscription lifecyc
 ```
 
 ### 2.1 Durable Idempotency Ledger (`subscription_events`)
+
 - **Migration `0006_subscription_events.sql`**: Created the `subscription_events` table in PostgreSQL with unique index `idx_subscription_events_event_id`.
 - **Restart Resilience**: Prior to Phase 13, event deduplication was stored solely in an in-memory `Set<string>`. Any server restart or cold boot in serverless functions lost deduplication state. Now, the database ledger provides the authoritative backstop.
 - **Zero-Allocation Set Eviction**: In-memory cache is bounded to 10,000 entries and evicted via direct Set iteration without intermediate array allocations.
 
 ### 2.2 Atomic ACID Transitions (`executeSubscriptionTransition`)
+
 - In `route.ts`, each event handler wraps user tier updates, subscription upserts, and durable event recording within a single atomic database transaction (`executeSubscriptionTransition(async (tx) => { ... })`).
 - Guarantees complete All-or-Nothing atomicity across database connection drops.
 
 ### 2.3 Terminal State Protection (Preventing Zombie Revivals)
+
 - When a subscription is marked `canceled` in the database, delayed out-of-order `customer.subscription.updated` events with `status: 'active'` are safely ignored and recorded as `ignored_stale`.
 - Reactivation can only occur through an explicit, fresh `checkout.session.completed` payment.
 
 ### 2.4 Billing Period Normalization (Fixing the 3-Location Bug)
+
 - **Problem**: In previous versions, `start_date` was duplicated into both `currentPeriodStart` and `currentPeriodEnd`, setting them to identical timestamps (`start === end`).
 - **Solution (`extractPeriod`)**:
   - Periods are extracted from `SubscriptionItem` (`item.current_period_start/end`) or associated `Invoice` line items (`invoice.lines.data[0].period.start/end`).
   - Strict invariant: `currentPeriodEnd` is guaranteed to strictly exceed `currentPeriodStart` (`end > start`).
 
 ### 2.5 Local DB Subscription Reconciliation for Invoices
+
 - `handleInvoicePaymentFailed` queries local database state by `userId` directly rather than making external network calls to Stripe, eliminating network latency and rate limit risks.
 
 ---
@@ -105,6 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_subscription_events_created_at
 ## 4. Verification Evidence
 
 ### 4.1 Unit / Contract Test Suite (`npx vitest run src/app/api/stripe/webhook/route.test.ts`)
+
 ```
 ✓ src/app/api/stripe/webhook/route.test.ts (9 tests)
   ✓ unmapped subscription status is fail-closed: throws, updates nothing
@@ -119,6 +125,7 @@ CREATE INDEX IF NOT EXISTS idx_subscription_events_created_at
 ```
 
 ### 4.2 Isolated Neon Branch Live Integration Suite (`npx vitest run --config vitest.live.config.ts src/app/api/stripe/webhook/route.live.test.ts`)
+
 ```
 ✓ src/app/api/stripe/webhook/route.live.test.ts (6 tests)
   ✓ rejects an invalid signature with 400 BEFORE any parsing or mutation

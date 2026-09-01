@@ -40,7 +40,7 @@ docs/
 | [ai-atomic-commit-architecture.md](./architecture/ai-atomic-commit-architecture.md) | Transactional AI commit binding file update + quota settlement + version guard |
 | [editor-sync-orchestration.md](./architecture/editor-sync-orchestration.md) | Unified editor write controller: autosave gates, reconciliation, AI transaction guard |
 | [ai-streaming-protocol.md](./architecture/ai-streaming-protocol.md) | NDJSON wire protocol, session FSM, adversarial hardening |
-| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, AES-GCM encryption, cron purge |
+| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, AAD integrity, defensive RAM sanitization), cron purge |
 
 ### Reference (`reference/`)
 
@@ -55,6 +55,7 @@ docs/
 | [phase-12-auth-ownership-closure.md](./reference/phase-12-auth-ownership-closure.md) | Phase 12 closure: Open Redirect elimination, OAuth callback hardening, 404 anti-enumeration error mapping, atomic user sync |
 | [phase-13-stripe-webhooks-subscriptions-closure.md](./reference/phase-13-stripe-webhooks-subscriptions-closure.md) | Phase 13 closure: Durable idempotency ledger (`subscription_events`), atomic ACID transitions, terminal state protection, accurate period calculation |
 | [phase-14-supabase-storage-removal-closure.md](./reference/phase-14-supabase-storage-removal-closure.md) | Phase 14 closure: Dead-code elimination of unused Supabase Storage, database schema drop of `storage_path`, test fixtures clean-up |
+| [vault-phase-1-crypto-core-closure.md](./reference/vault-phase-1-crypto-core-closure.md) | Vault Phase 1 closure: Isolated Crypto Worker, 600K PBKDF2 iterations, AES-GCM-256 with mandatory AAD binding, BIP-39 12-word seed, SessionKeyStore auto-lock, defensive RAM sanitization |
 | [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Bidi Line Plugin, 3 Direction Modes, Arabic/RTL safe decorations, live preview/source modes |
 | [phase-2-editor-replacement-tooling-closure.md](./reference/phase-2-editor-replacement-tooling-closure.md) | Phase 2 closure: TipTap replacement on editor page, EditorAdapter tooling integration, Multi-Range Search & Replace |
 | [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |

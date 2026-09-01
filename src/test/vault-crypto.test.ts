@@ -297,17 +297,29 @@ describe('Phase 1: Crypto Worker, Defensive RAM Sanitization & Key Management', 
       expect(validation.invalidWords).toContain('nonexistingword');
     });
 
-    it('should reject mnemonic when words are swapped (checksum failure)', async () => {
-      const validMnemonic = await generateMnemonic();
-      const words = validMnemonic.split(' ');
+    it('should reject mnemonic with deterministic invalid checksum (Official BIP-39 Vector)', async () => {
+      // 12x 'abandon' has 128-bit zero entropy with expected checksum 3 ('about'), but 12th word 'abandon' has checksum 0
+      const invalidChecksumMnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon';
+      const validation = await validateMnemonic(invalidChecksumMnemonic);
+      expect(validation.isValid).toBe(false);
+      expect(validation.error).toContain('checksum verification failed');
+    });
 
-      // Swap two words
-      const temp = words[0];
-      words[0] = words[1];
-      words[1] = temp;
-      const swappedMnemonic = words.join(' ');
+    it('should validate official BIP-39 test vector successfully', async () => {
+      // 11x 'abandon' + 'about' is the official BIP-39 zero-entropy test vector
+      const validTestVector = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+      const validation = await validateMnemonic(validTestVector);
+      expect(validation.isValid).toBe(true);
+    });
 
-      const validation = await validateMnemonic(swappedMnemonic);
+    it('should reject mnemonic when the checksum word is modified', async () => {
+      const validTestVector = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+      const words = validTestVector.split(' ');
+      // Replace the checksum word 'about' (index 3, checksum 0011) with 'ability' (index 1, checksum 0001)
+      words[11] = 'ability';
+      const corruptedChecksumMnemonic = words.join(' ');
+
+      const validation = await validateMnemonic(corruptedChecksumMnemonic);
       expect(validation.isValid).toBe(false);
       expect(validation.error).toContain('checksum verification failed');
     });
