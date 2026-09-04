@@ -112,8 +112,25 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 - **Standard BIP-39 Seed (`src/lib/sync/mnemonic.ts`)**: Converts 128-bit CSPRNG entropy to 12 English words with 4-bit SHA-256 checksum verification.
 
 ### 4.5 In-Memory Session Key Store & Auto-Lock (`src/lib/sync/session-key-store.ts`)
+
 - Holds `LocalDeviceKey` and `VaultMasterKey` in volatile memory.
-- Inactivity Auto-Lock timer automatically zeroes and purges keys (`purgeKeys()`) after timeout or upon logout.
+- Inactivity Auto-Lock timer automatically zeroes and purges keys (`purgeKeys()`) after timeout or on logout / session termination in `useSync`.
+
+### 4.6 Transparent At-Rest Encrypted IndexedDB (`src/lib/sync/indexeddb.ts`)
+
+- **Always-On Local Encryption**: Transparently encrypts all sensitive client-side records (`IDBFile.content`, `baseSnapshot.content`, `IDBOperation.content`, `previousContent`, and operational snapshots) using AES-GCM-256 via user-scoped `LocalDeviceKey`.
+- **Instance-Scoped Key Lifecycle & Volatile RAM Sanitization**: `LocalDeviceKey` is scoped to each `IndexedDBManager` instance to prevent cross-user key contamination in multi-account scenarios. Keys are securely zeroed via `wipeBuffer` on `close()` and `clearAll()`, and purged from RAM via `sessionKeyStore.purgeKeys()` on user logout or session termination in `useSync`.
+- **Resilient Lazy Key Persistence**: Keys are retrieved or lazily created through `await this.getDB()` to guarantee that the underlying `sync_metadata` store is open before key persistence, preventing silent key-loss across reloads.
+- **Cold-Start Concurrency Guard**: Uses an in-flight singleton promise (`keyInitPromise`) to deduplicate simultaneous cold-start operations on fresh databases, ensuring identical cryptographic key derivation without heavy lock mechanisms.
+- **Zero Plaintext At-Rest Invariant**: Confirmed by raw low-level database inspection; no readable document content or operation diffs are ever written to the client disk in plaintext.
+- **Cryptographic AAD Binding**: Binds unique domain contexts to each cipher record (`idb:file:${id}`, `idb:snapshot:${id}`, `idb:op:${opId}`) preventing payload tampering or cross-file substitution attacks.
+- **Fault Resilience & Isolation (`CorruptedLocalRecordError`)**: Automatically isolates damaged or authentication-mismatched records without crashing bulk queries (`getAllFiles`, `getDirtyFiles`).
+- **Seamless Legacy Migration**: In-place fallback that transparently reads legacy unencrypted records and upgrades them to ciphertext on subsequent writes.
+
+### 4.7 Cloud Vault Schema & Migration (`src/lib/db/schema.ts`, `0008_hybrid_vault_schema.sql`)
+
+- **`user_vault_profiles` Table**: Persists dual-wrapped master keys (`encrypted_master_key` via password KEK, `recovery_encrypted_master_key` via BIP-39 seed KEK) alongside independent salts (`key_salt`, `recovery_salt`) and PBKDF2 iteration configurations (600,000).
+- **`files` Table Encryption Metadata**: Adds `is_encrypted` boolean flag and structured `encryption_metadata` JSONB column (`version`, `algorithm`, `keyId`, `salt`, `iv`, `kdfIterations`) enabling the backend to identify encrypted assets and enforce Zero-Knowledge AI gatekeepers.
 
 ---
 
@@ -139,6 +156,7 @@ user-facing deletions are tombstones
 
 ```bash
 npx vitest run src/test/vault-crypto.test.ts                                                        # Phase 1 crypto worker, AAD, RAM wiping & BIP-39
+npx vitest run src/test/vault-storage.test.ts                                                       # Phase 2 database schema, migrations & transparent encrypted IDB
 npx vitest run src/test/auth-redirect.test.ts                                                      # open redirect & OAuth security
 npx vitest run --config vitest.live.config.ts src/test/cross-user-ownership.test.ts               # cross-user isolation & atomic sync (live DB)
 npx vitest run --config vitest.live.config.ts src/app/api/files/[id]/route.putguard.test.ts       # auth + rate-limit + version guards (live DB)

@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, boolean, timestamp, date, integer, pgEnum, uniqueIndex, index, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, boolean, timestamp, date, integer, jsonb, pgEnum, uniqueIndex, index, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // Enums
@@ -31,6 +31,19 @@ export const users = pgTable("users", {
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// User Vault Profiles table - zero-knowledge encrypted master key profiles (dual-tier wrapping)
+export const userVaultProfiles = pgTable("user_vault_profiles", {
+    userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    encryptedMasterKey: text("encrypted_master_key").notNull(),
+    recoveryEncryptedMasterKey: text("recovery_encrypted_master_key").notNull(),
+    keySalt: text("key_salt").notNull(),
+    recoverySalt: text("recovery_salt").notNull(),
+    kdfIterations: integer("kdf_iterations").default(600000).notNull(),
+    keyVersion: integer("key_version").default(1).notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Files table - user documents and folders
 export const files = pgTable("files", {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -40,6 +53,16 @@ export const files = pgTable("files", {
     content: text("content"),
     parentFolderId: uuid("parent_folder_id").references((): AnyPgColumn => files.id, { onDelete: "set null" }), // Self-referencing FK (deferred at schema level; see migration 0003 for ON DELETE behavior and deferrability)
     isFolder: boolean("is_folder").notNull().default(false),
+    // Encryption fields (Dual-Tier Hybrid & Zero-Knowledge Vault)
+    isEncrypted: boolean("is_encrypted").notNull().default(false),
+    encryptionMetadata: jsonb("encryption_metadata").$type<{
+        version: number;
+        algorithm: string;
+        keyId: string;
+        salt: string;
+        iv: string;
+        kdfIterations?: number;
+    }>(),
     // Sync-related fields
     etag: varchar("etag", { length: 64 }), // SHA-256 hash for change detection
     version: integer("version").default(1), // Monotonically increasing version
@@ -151,4 +174,6 @@ export type AIReservation = typeof aiReservations.$inferSelect;
 export type NewAIReservation = typeof aiReservations.$inferInsert;
 export type SubscriptionEvent = typeof subscriptionEvents.$inferSelect;
 export type NewSubscriptionEvent = typeof subscriptionEvents.$inferInsert;
+export type UserVaultProfile = typeof userVaultProfiles.$inferSelect;
+export type NewUserVaultProfile = typeof userVaultProfiles.$inferInsert;
 

@@ -18,9 +18,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
 
-// Load test environment (priority: shell > .env.test.local > .env.test)
+// Load test environment (priority: shell > .env.test.local > .env.test > .env.local > .env)
 dotenvConfig({ path: path.join(ROOT, ".env.test.local"), override: true });
 dotenvConfig({ path: path.join(ROOT, ".env.test"), override: false });
+dotenvConfig({ path: path.join(ROOT, ".env.local"), override: false });
+dotenvConfig({ path: path.join(ROOT, ".env"), override: false });
 
 const dbUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
 
@@ -143,6 +145,7 @@ async function main() {
             "usage",
             "ai_reservations",
             "subscription_events",
+            "user_vault_profiles",
         ];
 
         const { rows: existingTables } = await pool.query(`

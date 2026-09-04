@@ -23,6 +23,7 @@ import {
     OperationsGarbageCollector,
     normalizeMarkdownSource,
     RemoteUpdateEvent,
+    sessionKeyStore,
 } from '@/lib/sync';
 
 export interface UseSyncOptions {
@@ -86,6 +87,7 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 gcRef.current.cleanup();
                 gcRef.current = null;
             }
+            sessionKeyStore.purgeKeys();
             const resetTimer = setTimeout(() => {
                 setStatus('stopped');
                 setIsInitialized(false);
@@ -226,6 +228,7 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             scopedGC.cleanup();
             scopedSyncManager.destroy();
             scopedIdb.close();
+            sessionKeyStore.purgeKeys();
 
             if (syncManagerRef.current === scopedSyncManager) {
                 syncManagerRef.current = null;

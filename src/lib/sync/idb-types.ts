@@ -11,12 +11,24 @@
 export type MarkdownSource = string;
 
 /**
+ * Metadata for end-to-end encrypted envelopes (Zero-Knowledge Vault)
+ */
+export interface EncryptedEnvelopeMetadata {
+    version: number;
+    algorithm: string;
+    keyId: string;
+    salt: string;
+    iv: string;
+    kdfIterations?: number;
+}
+
+/**
  * Represents a file stored in IndexedDB for offline access
  */
 export interface IDBFile {
     /** Unique file identifier (matches server-side UUID) */
     id: string;
-    /** File content (Normalized Markdown text) */
+    /** File content (Normalized Markdown text in-memory) */
     content: MarkdownSource;
     /** ETag for change detection (SHA-256 hash, first 32 chars) */
     etag: string;
@@ -34,6 +46,10 @@ export interface IDBFile {
     parentFolderId: string | null;
     /** Whether this is a folder */
     isFolder: boolean;
+    /** Whether this file is end-to-end encrypted (Zero-Knowledge Vault file) */
+    isEncrypted?: boolean;
+    /** Envelope encryption metadata if isEncrypted is true */
+    encryptionMetadata?: EncryptedEnvelopeMetadata | null;
     /** Pristine base snapshot before local uncommitted edits were made */
     baseSnapshot?: {
         content: MarkdownSource;
@@ -41,6 +57,8 @@ export interface IDBFile {
         version: number;
         title?: string;
         parentFolderId?: string | null;
+        isEncrypted?: boolean;
+        encryptionMetadata?: EncryptedEnvelopeMetadata | null;
     };
 }
 
@@ -96,12 +114,30 @@ export interface IDBOperation {
     synced: boolean;
     /** Previous content (for undo/conflict resolution) */
     previousContent?: MarkdownSource;
+    /** Whether operation belongs to an encrypted file */
+    isEncrypted?: boolean;
     /** Pre-operation snapshot for safe rollback on failure */
     snapshot?: {
         content: MarkdownSource;
         etag: string;
         version: number;
     };
+}
+
+/**
+ * Error raised when a local encrypted IndexedDB record cannot be decrypted
+ */
+export class CorruptedLocalRecordError extends Error {
+    readonly code = 'CORRUPTED_LOCAL_RECORD';
+    constructor(
+        public readonly storeName: string,
+        public readonly recordId: string,
+        message = 'Local record decryption failed: ciphertext corrupted or auth tag mismatch'
+    ) {
+        super(`[${storeName}:${recordId}] ${message}`);
+        this.name = 'CorruptedLocalRecordError';
+        Object.setPrototypeOf(this, CorruptedLocalRecordError.prototype);
+    }
 }
 
 /**

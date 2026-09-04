@@ -188,6 +188,8 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
                 userId,
                 parentFolderId: null,
                 isFolder: false,
+                isEncrypted: false,
+                encryptionMetadata: null,
                 deletedAt: null,
             },
         });
