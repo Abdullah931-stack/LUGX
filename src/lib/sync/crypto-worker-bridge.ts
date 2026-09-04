@@ -15,20 +15,23 @@ import {
   InvalidCiphertextOrKeyError,
   CryptoWorkerBridgeError
 } from './types/vault';
+import { executeCryptoWorkerAction } from '../workers/crypto.worker';
 import {
-  executeCryptoWorkerAction,
   wipeBuffer,
   arrayBufferToBase64,
-  base64ToUint8Array
-} from '../workers/crypto.worker';
+  base64ToUint8Array,
+  generateDirectRandomBytes
+} from './crypto-utils';
 
-export { wipeBuffer, arrayBufferToBase64, base64ToUint8Array };
+export { wipeBuffer, arrayBufferToBase64, base64ToUint8Array, generateDirectRandomBytes };
 
 export class CryptoWorkerBridge {
   private worker: Worker | null = null;
   private pendingRequests = new Map<
     string,
     {
+      action: CryptoWorkerAction;
+      payload: any;
       resolve: (value: any) => void;
       reject: (reason?: any) => void;
       timer: ReturnType<typeof setTimeout>;
@@ -36,16 +39,33 @@ export class CryptoWorkerBridge {
   >();
   private requestCounter = 0;
   private isInitialized = false;
+  private isTerminated = false;
 
-  constructor(private readonly timeoutMs = 30000) {}
+  constructor(private readonly timeoutMs = 5000) {}
+
+  /**
+   * Diagnostic accessors for observability and failure testing
+   */
+  public getQueueLength(): number {
+    return this.pendingRequests.size;
+  }
+
+  public isWorkerTerminated(): boolean {
+    return this.isTerminated;
+  }
+
+  public getWorkerInstance(): Worker | null {
+    return this.worker;
+  }
 
   /**
    * Initializes Web Worker instance if in browser environment
    */
   public initialize(): void {
     if (this.isInitialized) return;
+    this.isInitialized = true;
 
-    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+    if (typeof window !== 'undefined' && typeof Worker !== 'undefined' && !this.isTerminated) {
       try {
         // Next.js Web Worker module instantiation
         this.worker = new Worker(
@@ -58,32 +78,23 @@ export class CryptoWorkerBridge {
         };
 
         this.worker.onerror = (errorEvent: ErrorEvent) => {
-          this.handleWorkerError(errorEvent);
+          void this.handleWorkerError(errorEvent);
         };
       } catch (err) {
         // Fallback to in-process direct execution if Worker creation fails
         this.worker = null;
+        this.isTerminated = true;
       }
     }
-
-    this.isInitialized = true;
   }
 
   /**
-   * Dispatches a typed task to the Crypto Worker (or Direct Engine)
+   * Direct WebCrypto engine execution (Node.js / Vitest / SSR / Fallback)
    */
-  public async executeTask<A extends CryptoWorkerAction>(
+  private async executeDirectTask<A extends CryptoWorkerAction>(
     action: A,
     payload: CryptoWorkerRequestPayloads[A]
   ): Promise<any> {
-    this.initialize();
-
-    // If Web Worker is active in browser, dispatch through postMessage
-    if (this.worker) {
-      return this.dispatchToWorker(action, payload);
-    }
-
-    // Direct WebCrypto engine execution (Node.js / Vitest / SSR / Fallback)
     try {
       return await executeCryptoWorkerAction(action, payload);
     } catch (err: any) {
@@ -100,6 +111,53 @@ export class CryptoWorkerBridge {
     }
   }
 
+  /**
+   * Immediately drains all pending requests across the bridge to direct execution,
+   * cancelling all active timers and preventing dead-worker cascades.
+   */
+  private async drainPendingRequestsToFallback(reason: string): Promise<void> {
+    const entries = Array.from(this.pendingRequests.entries());
+    this.pendingRequests.clear();
+
+    for (const [id, pending] of entries) {
+      clearTimeout(pending.timer);
+      try {
+        console.warn(`[CryptoWorkerBridge] Draining pending task ${pending.action} (${id}) to direct engine due to: ${reason}`);
+        const result = await this.executeDirectTask(pending.action, pending.payload);
+        pending.resolve(result);
+      } catch (err) {
+        pending.reject(
+          new CryptoWorkerBridgeError(
+            `Direct fallback failed during queue drain for ${pending.action}: ${(err as Error)?.message || err}`
+          )
+        );
+      }
+    }
+  }
+
+  /**
+   * Dispatches a typed task to the Crypto Worker (with automatic resilient fallback)
+   */
+  public async executeTask<A extends CryptoWorkerAction>(
+    action: A,
+    payload: CryptoWorkerRequestPayloads[A]
+  ): Promise<any> {
+    this.initialize();
+
+    // If Web Worker is active in browser and not terminated, dispatch through postMessage
+    if (this.worker && !this.isTerminated) {
+      try {
+        return await this.dispatchToWorker(action, payload);
+      } catch (err) {
+        console.warn(`[CryptoWorkerBridge] Worker dispatch failed for ${action}, falling back to direct engine:`, err);
+        return await this.executeDirectTask(action, payload);
+      }
+    }
+
+    // Direct WebCrypto engine execution
+    return await this.executeDirectTask(action, payload);
+  }
+
   private dispatchToWorker<A extends CryptoWorkerAction>(
     action: A,
     payload: CryptoWorkerRequestPayloads[A]
@@ -107,14 +165,26 @@ export class CryptoWorkerBridge {
     const id = `crypto-task-${Date.now()}-${++this.requestCounter}`;
 
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = setTimeout(async () => {
         if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id);
-          reject(new CryptoWorkerBridgeError(`Crypto worker request timed out after ${this.timeoutMs}ms (task: ${action})`));
+          console.warn(`[CryptoWorkerBridge] Task ${action} timed out in worker after ${this.timeoutMs}ms. Tripping circuit breaker and draining queue...`);
+
+          if (this.worker) {
+            try {
+              this.worker.terminate();
+            } catch {
+              // Ignore termination error
+            }
+            this.worker = null;
+          }
+          this.isTerminated = true;
+
+          // Seamless self-healing fallback for this task and all queued tasks
+          await this.drainPendingRequestsToFallback(`Worker timeout on task ${action}`);
         }
       }, this.timeoutMs);
 
-      this.pendingRequests.set(id, { resolve, reject, timer });
+      this.pendingRequests.set(id, { action, payload, resolve, reject, timer });
 
       const request: CryptoWorkerRequest<A> = { id, action, payload };
       this.worker!.postMessage(request);
@@ -144,12 +214,20 @@ export class CryptoWorkerBridge {
     }
   }
 
-  private handleWorkerError(errorEvent: ErrorEvent): void {
-    for (const [id, pending] of this.pendingRequests.entries()) {
-      clearTimeout(pending.timer);
-      pending.reject(new CryptoWorkerBridgeError(`Worker fatal error: ${errorEvent.message || 'Unknown error'}`));
-      this.pendingRequests.delete(id);
+  private async handleWorkerError(errorEvent: ErrorEvent): Promise<void> {
+    const errMsg = errorEvent?.message || 'Worker runtime failure';
+    console.warn('[CryptoWorkerBridge] Worker error encountered; tripping circuit breaker and draining queue:', errMsg);
+    if (this.worker) {
+      try {
+        this.worker.terminate();
+      } catch {
+        // Ignore termination error
+      }
+      this.worker = null;
     }
+    this.isTerminated = true;
+
+    await this.drainPendingRequestsToFallback(errMsg);
   }
 
   /**
@@ -227,7 +305,7 @@ export class CryptoWorkerBridge {
   }
 
   public async generateRandomBytes(length: number): Promise<Uint8Array> {
-    return this.executeTask('GENERATE_RANDOM_BYTES', { length });
+    return generateDirectRandomBytes(length);
   }
 
   public async generateMnemonic(entropyLengthBytes = 16): Promise<string> {
@@ -263,6 +341,7 @@ export class CryptoWorkerBridge {
     }
     this.pendingRequests.clear();
     this.isInitialized = false;
+    this.isTerminated = false;
   }
 }
 

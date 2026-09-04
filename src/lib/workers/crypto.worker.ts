@@ -18,58 +18,14 @@ import {
   validateMnemonic,
   mnemonicToSeed
 } from '../sync/mnemonic';
+import {
+  wipeBuffer,
+  arrayBufferToBase64,
+  base64ToUint8Array,
+  generateDirectRandomBytes
+} from '../sync/crypto-utils';
 
-/**
- * Defensive buffer wiping helper
- */
-export function wipeBuffer(buffer: Uint8Array | null | undefined): void {
-  if (buffer && buffer instanceof Uint8Array) {
-    try {
-      buffer.fill(0);
-    } catch {
-      // Ignore if buffer is detached or read-only
-    }
-  }
-}
-
-/**
- * Base64 Conversion Helpers (Chunked & URL-Safe Resilient)
- */
-export function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64');
-  }
-  let binary = '';
-  const len = bytes.byteLength;
-  const CHUNK_SIZE = 8192;
-  for (let i = 0; i < len; i += CHUNK_SIZE) {
-    const chunk = bytes.subarray(i, Math.min(i + CHUNK_SIZE, len));
-    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
-  }
-  return btoa(binary);
-}
-
-export function base64ToUint8Array(base64: string): Uint8Array {
-  if (!base64 || typeof base64 !== 'string') {
-    throw new InvalidCiphertextOrKeyError('Empty or invalid base64 string provided');
-  }
-  try {
-    let sanitized = base64.replace(/-/g, '+').replace(/_/g, '/').replace(/\s+/g, '');
-    while (sanitized.length % 4 !== 0) {
-      sanitized += '=';
-    }
-    const binary = atob(sanitized);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  } catch {
-    throw new InvalidCiphertextOrKeyError('Failed to decode malformed base64 envelope data');
-  }
-}
+export { wipeBuffer, arrayBufferToBase64, base64ToUint8Array, generateDirectRandomBytes };
 
 /**
  * Core Worker Cryptographic Handler Functions
@@ -314,9 +270,7 @@ export async function executeCryptoWorkerAction(action: CryptoWorkerAction, payl
     case 'UNWRAP_KEY_RAW':
       return await handleUnwrapKeyRaw(payload);
     case 'GENERATE_RANDOM_BYTES': {
-      const bytes = new Uint8Array(payload.length);
-      crypto.getRandomValues(bytes);
-      return bytes;
+      return generateDirectRandomBytes(payload.length);
     }
     case 'GENERATE_MNEMONIC':
       return await generateMnemonic(payload?.entropyLengthBytes || 16);

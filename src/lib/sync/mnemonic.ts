@@ -5,7 +5,7 @@
  * full wordlist validation, seed derivation, and multi-layer defensive RAM sanitization (.fill(0)).
  */
 
-import { wipeBuffer } from './crypto-worker-bridge';
+import { wipeBuffer } from './crypto-utils';
 
 /**
  * Official BIP-39 English Wordlist (2048 words)

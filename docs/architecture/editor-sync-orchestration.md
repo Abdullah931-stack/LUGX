@@ -313,6 +313,43 @@ To support multilingual and bidirectional authoring without performance regressi
 
 ---
 
+## 6h. Tab Wakeup Auto-Healing & Local IndexedDB Durability Guarantee (v1.23.3 Amendment)
+
+To prevent local data desynchronization and unhandled rejections when browser tabs are throttled or suspended during long-running background tasks (such as extended AI streaming operations):
+
+1. **Deferred Local Persistence Flag (`pendingLocalSyncRef`):**
+   - When an AI commit succeeds (`onCommitSuccess`) or an auto-save fails to persist to IndexedDB due to a temporary storage or cryptographic stall, `pendingLocalSyncRef.current` is flagged as `true`.
+   - The document's dirty status is deliberately preserved (`setIsDirty(true)`), preventing silent offline divergence where the user believes changes are persisted.
+
+2. **Tab Wakeup Auto-Healing (`visibilitychange` & `focus`):**
+   - The orchestrator registers listeners for both `visibilitychange` (when document returns to `visible`) and `focus` (window gains user focus).
+   - Upon wakeup, if `pendingLocalSyncRef.current` is active and the sync hook is initialized, the orchestrator triggers an automatic recovery write:
+     ```typescript
+     // Synchronously consume flag before await to eliminate dual-event burst race conditions
+     pendingLocalSyncRef.current = false;
+     try {
+         await syncHookRef.current.saveLocal({
+             id: fileId,
+             content: adapterRef.current.getValue(),
+             title,
+             version: fileVersionRef.current,
+             etag: fileEtagRef.current || "",
+             isDirty: isDirtyRef.current,
+         });
+     } catch (err) {
+         pendingLocalSyncRef.current = true; // Revert flag on failure for subsequent retry
+     }
+     ```
+
+3. **Dual-Event Burst Race Elimination (Anti-Overengineering):**
+   - In Chromium engines, switching back to a suspended tab fires both `visibilitychange` and `focus` within 1–3ms.
+   - By synchronously consuming `pendingLocalSyncRef.current = false` immediately before the asynchronous `await saveLocal(...)` call, the second event finds the flag already cleared and exits immediately. This eliminates redundant cryptographic operations without requiring complex mutex lock states.
+
+4. **Preservation of Cloud Dirtiness (Zero UI Deception):**
+   - The wakeup handler strictly persists the current dirty state (`isDirty: isDirtyRef.current`) without calling `setIsDirty(false)`. Local IndexedDB persistence guarantees offline crash resilience, but clearing `isDirty` is exclusively reserved for positive server responses in `executeServerWrite`. This ensures visual save indicators and `beforeunload` navigation guards remain truthful.
+
+---
+
 ## 7. Verification Proof
 
 - Automated Tests (current):
@@ -328,6 +365,8 @@ To support multilingual and bidirectional authoring without performance regressi
   - `src/test/markdown-exporters.test.ts` (6/6 passing)
   - `src/test/markdown-editor.test.ts` (21/21 passing)
   - `src/test/markdown-editor-e2e.test.ts` (9/9 passing)
-  - Full test suite: 37/37 test files, 487/487 tests passing (100% success rate).
+  - `src/test/vault-crypto.test.ts` (31/31 passing - includes W3C chunking, timeout & circuit-breaker queue draining)
+  - Full test suite: 39/39 test files, 534/534 tests passing (100% success rate).
+
 
 

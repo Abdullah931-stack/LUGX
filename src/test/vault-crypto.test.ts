@@ -525,4 +525,79 @@ describe('Phase 1: Crypto Worker, Defensive RAM Sanitization & Key Management', 
       nowSpy.mockRestore();
     });
   });
+
+  describe('8. Resilient Web Worker Fallback, Queue Draining & W3C Chunking', () => {
+    it('should generate random bytes with W3C chunking for requests exceeding 64KB (65,536 bytes)', async () => {
+      const { generateDirectRandomBytes, MAX_RANDOM_BYTES_CHUNK } = await import('../lib/sync/crypto-utils');
+
+      expect(MAX_RANDOM_BYTES_CHUNK).toBe(65536);
+
+      // Large buffer exceeding W3C single-call quota
+      const largeSize = 70000;
+      const bytes = generateDirectRandomBytes(largeSize);
+
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      expect(bytes.length).toBe(largeSize);
+      // Ensure bytes are populated (not all zeros)
+      const hasNonZero = bytes.some((b) => b !== 0);
+      expect(hasNonZero).toBe(true);
+
+      // Edge cases
+      expect(generateDirectRandomBytes(0).length).toBe(0);
+      expect(() => generateDirectRandomBytes(-5)).toThrow(RangeError);
+    });
+
+    it('should verify Web Crypto Subtle availability and assert secure context', async () => {
+      const { isCryptoSubtleAvailable, assertSecureCryptoContext } = await import('../lib/sync/crypto-utils');
+
+      expect(isCryptoSubtleAvailable()).toBe(true);
+      expect(() => assertSecureCryptoContext()).not.toThrow();
+    });
+
+    it('should drain pending requests queue and trip circuit breaker on worker timeout', async () => {
+      const { CryptoWorkerBridge } = await import('../lib/sync/crypto-worker-bridge');
+
+      // Create a bridge with a fast 50ms timeout for deterministic test execution
+      const bridge = new CryptoWorkerBridge(50);
+
+      // Inject a mock Worker that absorbs messages without replying (simulating background tab freeze)
+      const mockWorker = {
+        postMessage: vi.fn(),
+        terminate: vi.fn(),
+        onmessage: null,
+        onerror: null,
+      };
+
+      (bridge as any).worker = mockWorker;
+      (bridge as any).isInitialized = true;
+      (bridge as any).isTerminated = false;
+
+      // Dispatch multiple concurrent tasks to build up the pending queue
+      const task1Promise = bridge.executeTask('GENERATE_MNEMONIC', { entropyLengthBytes: 16 });
+      const task2Promise = bridge.executeTask('GENERATE_MNEMONIC', { entropyLengthBytes: 16 });
+
+      expect(bridge.getQueueLength()).toBe(2);
+      expect(bridge.isWorkerTerminated()).toBe(false);
+
+      // Await both tasks: the first timeout must trigger queue drain to fallback for ALL pending tasks
+      const [res1, res2] = await Promise.all([task1Promise, task2Promise]);
+
+      expect(typeof res1).toBe('string');
+      expect(typeof res2).toBe('string');
+      expect(res1.split(' ').length).toBe(12);
+      expect(res2.split(' ').length).toBe(12);
+
+      // Verify circuit breaker tripped and queue was drained completely
+      expect(bridge.getQueueLength()).toBe(0);
+      expect(bridge.isWorkerTerminated()).toBe(true);
+      expect(mockWorker.terminate).toHaveBeenCalled();
+
+      // Subsequent tasks must now execute directly without attempting worker dispatch
+      const directResult = await bridge.executeTask('GENERATE_MNEMONIC', { entropyLengthBytes: 16 });
+      expect(typeof directResult).toBe('string');
+      expect(mockWorker.postMessage).toHaveBeenCalledTimes(2); // Only the initial two before breaker tripped
+
+      bridge.terminate();
+    });
+  });
 });

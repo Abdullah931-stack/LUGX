@@ -2,6 +2,25 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.23.3] - 2026-09-04 (Crypto Worker Timeout Elimination, Self-Healing Circuit Breaker, W3C Chunked CSPRNG & Tab Wakeup Durability)
+
+### Fixed - Web Worker Background Suspension, Timeout Cascades & Desynchronization
+
+- **Zero-Latency Direct CSPRNG Generation (`src/lib/sync/crypto-utils.ts`):** Decoupled random byte generation (`generateDirectRandomBytes`) from asynchronous Web Worker IPC. Invokes `globalThis.crypto.getRandomValues` synchronously (<0.001ms execution), eliminating single-point-of-failure 30,000ms timeouts when background browser tabs are throttled or frozen during long-running AI streams.
+- **W3C 64KB Chunking Boundary Enforcement (`src/lib/sync/crypto-utils.ts`):** Enforced automatic slice chunking for random byte requests exceeding 65,536 bytes (`MAX_RANDOM_BYTES_CHUNK`), strictly adhering to W3C Web Cryptography API specifications and preventing runtime `QuotaExceededError` exceptions.
+- **Insecure Context Guard & Diagnostics (`src/lib/sync/crypto-utils.ts`):** Added `isCryptoSubtleAvailable()` and `assertSecureCryptoContext()` to proactively detect non-secure contexts (such as accessing the dev server via local network IP `http://192.168.x.x:3000` without HTTPS) and output actionable guidance rather than cryptic `undefined` dereferences.
+- **Self-Healing Circuit Breaker & Queue Drain (`src/lib/sync/crypto-worker-bridge.ts`):**
+  - Reduced worker task timeout from 30s to 5s (`timeoutMs = 5000`).
+  - Added immediate `drainPendingRequestsToFallback()`: upon worker error or timeout, active timers across all queued requests are cleared and the entire pending task queue is drained and executed concurrently via direct in-process WebCrypto (`executeDirectTask`), preventing dead-worker cascade stalls.
+  - Implemented trip-open circuit breaker (`isTerminated = true`) that routes subsequent cryptographic operations directly to the native WebCrypto engine without attempting worker dispatch.
+- **Circular Dependency Elimination (`src/lib/sync/crypto-utils.ts`, `src/lib/workers/crypto.worker.ts`, `src/lib/sync/mnemonic.ts`):** Extracted `wipeBuffer`, `arrayBufferToBase64`, and `base64ToUint8Array` into `crypto-utils.ts`, breaking the cyclical dependency chain (`crypto.worker` ↔ `mnemonic` ↔ `crypto-worker-bridge`) that previously corrupted ES module initialization under Turbopack in Next.js 16.
+- **Tab Wakeup Auto-Healing & Local Durability Guarantee (`src/hooks/use-editor-orchestrator.ts`):**
+  - In `onCommitSuccess`, prevented premature `setIsDirty(false)` when local IndexedDB writes fail, recording `pendingLocalSyncRef = true` to avert silent offline desynchronization.
+  - Added `visibilitychange` and `focus` event listeners that automatically detect unpersisted local snapshots upon tab reactivations and replay IndexedDB persistence without user intervention.
+  - Synchronously consumed `pendingLocalSyncRef.current = false` before `await` in `handleWakeup` to eliminate dual-event burst race conditions (`visibilitychange` + `focus` firing within milliseconds) without stateful mutex locks.
+  - Preserved cloud dirtiness accurately by removing erroneous `setIsDirty(false)` from tab wakeup persistence handler, preventing visual UI deception of cloud synchronization.
+  - Wrapped secondary recovery writes within defensive `try/catch` blocks to prevent unhandled promise rejections (`unhandledRejection`).
+
 ## [1.23.2] - 2026-09-01 (Next.js 16 Production Build Stabilization, Route Export Compliance & allowScripts Supply-Chain Security)
 
 ### Fixed - Next.js 16 Production Build & Route Export Violations

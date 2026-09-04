@@ -172,6 +172,7 @@ export function useEditorOrchestrator({
 
     // --- Sync Hook Integration ---
     const syncHookRef = useRef<UseSyncReturn | null>(null);
+    const pendingLocalSyncRef = useRef<boolean>(false);
 
     const handleSyncConflict = useCallback(
         async (conflict: SyncConflict): Promise<"local" | "server" | "merge"> => {
@@ -211,24 +212,34 @@ export function useEditorOrchestrator({
 
     // --- AI Stream Hook Integration ---
     const aiStream = useAIStream({
-        onCommitSuccess: ({ version, etag }) => {
+        onCommitSuccess: async ({ version, etag }) => {
             fileVersionRef.current = version;
             setServerVersion(version);
             fileEtagRef.current = etag;
             setServerEtag(etag);
             editorGenerationRef.current += 1;
             setLastSaved(new Date());
-            setIsDirty(false);
 
             if (syncHookRef.current?.isInitialized && adapterRef.current) {
-                syncHookRef.current.saveLocal({
-                    id: fileId,
-                    content: adapterRef.current.getValue(),
-                    title,
-                    version,
-                    etag: etag || "",
-                    isDirty: false,
-                });
+                try {
+                    await syncHookRef.current.saveLocal({
+                        id: fileId,
+                        content: adapterRef.current.getValue(),
+                        title,
+                        version,
+                        etag: etag || "",
+                        isDirty: false,
+                    });
+                    pendingLocalSyncRef.current = false;
+                    setIsDirty(false);
+                } catch (saveErr) {
+                    console.error("[Orchestrator] Post-commit local IndexedDB save error:", saveErr);
+                    // Defensive durability: retain dirty flag and schedule retry on tab wakeup
+                    pendingLocalSyncRef.current = true;
+                    setIsDirty(true);
+                }
+            } else {
+                setIsDirty(false);
             }
 
             broadcastCrossTabEvent({
@@ -548,14 +559,18 @@ export function useEditorOrchestrator({
             } catch (saveErr) {
                 console.warn("[Orchestrator] Save failed, saving dirty to IndexedDB:", saveErr);
                 if (syncHook.isInitialized) {
-                    await syncHook.saveLocal({
-                        id: fileId,
-                        content,
-                        title,
-                        version: fileVersionRef.current,
-                        etag: fileEtagRef.current || "",
-                        isDirty: true,
-                    });
+                    try {
+                        await syncHook.saveLocal({
+                            id: fileId,
+                            content,
+                            title,
+                            version: fileVersionRef.current,
+                            etag: fileEtagRef.current || "",
+                            isDirty: true,
+                        });
+                    } catch (dirtySaveErr) {
+                        console.error("[Orchestrator] Fallback dirty save to IndexedDB failed:", dirtySaveErr);
+                    }
                 }
             } finally {
                 setIsSaving(false);
@@ -837,6 +852,45 @@ export function useEditorOrchestrator({
             window.removeEventListener("beforeunload", handleBeforeUnload);
         };
     }, [isDirty, aiStream.isCommitting, isSaving, aiStream.status]);
+
+    // Tab visibility & focus auto-healing for local IndexedDB durability
+    useEffect(() => {
+        const handleWakeup = async () => {
+            if (
+                typeof document !== "undefined" &&
+                document.visibilityState === "visible" &&
+                pendingLocalSyncRef.current &&
+                syncHookRef.current?.isInitialized &&
+                adapterRef.current
+            ) {
+                // Synchronously consume flag before await to eliminate dual-event burst race conditions (visibilitychange + focus)
+                pendingLocalSyncRef.current = false;
+                console.log("[Orchestrator] Tab became active; retrying pending local IndexedDB persistence...");
+                try {
+                    await syncHookRef.current.saveLocal({
+                        id: fileId,
+                        content: adapterRef.current.getValue(),
+                        title,
+                        version: fileVersionRef.current,
+                        etag: fileEtagRef.current || "",
+                        isDirty: isDirtyRef.current,
+                    });
+                    console.log("[Orchestrator] Pending local IndexedDB persistence recovered successfully on wakeup.");
+                } catch (err) {
+                    console.error("[Orchestrator] Wakeup retry of local IndexedDB persistence failed:", err);
+                    // Revert flag on failure so subsequent wakeup or focus can retry
+                    pendingLocalSyncRef.current = true;
+                }
+            }
+        };
+
+        window.addEventListener("visibilitychange", handleWakeup);
+        window.addEventListener("focus", handleWakeup);
+        return () => {
+            window.removeEventListener("visibilitychange", handleWakeup);
+            window.removeEventListener("focus", handleWakeup);
+        };
+    }, [fileId, title]);
 
     // AI Operation Trigger
     const startAIOperation = useCallback(

@@ -73,8 +73,9 @@
 | `ETagGenerator` | SHA-256 change detection & optimistic concurrency |
 | `SyncRollback` | State checkpoints & isolated failure recovery |
 | `Encryption` (`EncryptionManager`) | Dual-tier hybrid encryption orchestration (`AES-GCM-256` + AAD) |
-| `CryptoWorkerBridge` | Typed isomorphic RPC bridge (Web Worker / Direct SubtleCrypto) |
-| `crypto.worker.ts` | Isolated Web Worker for PBKDF2 (600,000 iter) & AES-GCM offloading |
+| `CryptoWorkerBridge` | Typed isomorphic RPC bridge with self-healing circuit breaker & automatic queue drain |
+| `crypto-utils.ts` | Decoupled cryptographic primitives, W3C chunked CSPRNG & RAM sanitization |
+| `crypto.worker.ts` | Isolated Web Worker for PBKDF2 (600,000 iter) & heavy symmetric offloading |
 | `SessionKeyStore` | Volatile in-memory key manager with deterministic auto-lock |
 | `BIP39 Mnemonic` (`mnemonic.ts`) | Standard 12-word seed generation & 4-bit SHA-256 checksum verification |
 
@@ -141,6 +142,15 @@ try {
   await riskyOperation();
 } catch {
   await rollback.rollback(checkpoint);
+}
+```
+
+### 4. Tab Wakeup Auto-Healing & Local Durability (`useEditorOrchestrator`)
+```typescript
+// Replays pending IndexedDB persistence upon visibilitychange/focus
+if (document.visibilityState === "visible" && pendingLocalSyncRef.current) {
+  pendingLocalSyncRef.current = false; // Synchronous consumption prevents dual-event race
+  await syncHookRef.current.saveLocal({ ... });
 }
 ```
 

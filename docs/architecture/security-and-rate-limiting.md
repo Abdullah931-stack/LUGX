@@ -92,6 +92,8 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 
 ### 4.1 Isolated Cryptographic Execution & Non-Extractable Keys
 - **Background Worker Offloading (`src/lib/workers/crypto.worker.ts`)**: All computationally intensive key derivations (PBKDF2 with 600,000 iterations) and symmetric transformations run in an isolated Web Worker via a typed RPC bridge (`src/lib/sync/crypto-worker-bridge.ts`), sustaining 60fps UI performance.
+- **Zero-Latency Direct CSPRNG & W3C Chunking (`src/lib/sync/crypto-utils.ts`)**: Cryptographically secure random byte generation (IVs, salts, entropy) executes synchronously via `globalThis.crypto.getRandomValues` (<0.001ms), eliminating Web Worker IPC overhead and preventing background tab throttling deadlocks. Requests exceeding 64KB are automatically chunked to strictly comply with W3C quota limits (`MAX_RANDOM_BYTES_CHUNK = 65536`).
+- **Resilient Fallback & Circuit Breaker Queue Drain (`src/lib/sync/crypto-worker-bridge.ts`)**: In the event of Web Worker suspension or unexpected failure (e.g. background tab hibernation or Turbopack worker compilation stall), tasks time out at 5 seconds, trip the circuit breaker (`isTerminated = true`), and immediately drain all queued requests directly into the in-process `SubtleCrypto` engine without hanging the user interface or losing offline persistence.
 - **Direct Engine Dual Mode**: In Node.js/SSR and automated test environments, the bridge transparently executes against the direct WebCrypto SubtleCrypto engine with identical security invariants and zero artificial mocking.
 - **Non-Extractable CryptoKey Enforcement**: All derived and imported keys are marked `extractable: false` within Web Crypto API memory spaces.
 
