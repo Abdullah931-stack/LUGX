@@ -24,6 +24,7 @@ import {
     normalizeMarkdownSource,
     RemoteUpdateEvent,
 } from '@/lib/sync';
+import type { UserVaultProfile } from '@/lib/sync/types/vault';
 
 export interface UseSyncOptions {
     userId?: string | null;
@@ -44,8 +45,8 @@ export interface UseSyncReturn {
     loadLocal: (fileId: string) => Promise<IDBFile | null>;
     markDirty: (fileId: string) => Promise<void>;
     idb: IndexedDBManager | null;
-    saveCachedVaultProfile: (profile: any) => Promise<void>;
-    getCachedVaultProfile: () => Promise<any | null>;
+    saveCachedVaultProfile: <T = UserVaultProfile>(profile: T) => Promise<void>;
+    getCachedVaultProfile: <T = UserVaultProfile>() => Promise<T | null>;
 }
 
 export function useSync(options: UseSyncOptions): UseSyncReturn {
@@ -370,16 +371,16 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
         setPendingCount(dirtyFiles.length);
     }, [userId]);
 
-    const saveCachedVaultProfile = useCallback(async (profile: any): Promise<void> => {
+    const saveCachedVaultProfile = useCallback(async <T = UserVaultProfile>(profile: T): Promise<void> => {
         const activeIdb = idbManagerRef.current;
         if (!activeIdb) return;
         await activeIdb.saveCachedVaultProfile(profile);
     }, []);
 
-    const getCachedVaultProfile = useCallback(async (): Promise<any | null> => {
+    const getCachedVaultProfile = useCallback(async <T = UserVaultProfile>(): Promise<T | null> => {
         const activeIdb = idbManagerRef.current;
         if (!activeIdb) return null;
-        return activeIdb.getCachedVaultProfile();
+        return activeIdb.getCachedVaultProfile<T>();
     }, []);
 
     return {
@@ -393,7 +394,9 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
         saveLocal,
         loadLocal,
         markDirty,
-        idb: idbManagerRef.current,
+        get idb() {
+            return idbManagerRef.current;
+        },
         saveCachedVaultProfile,
         getCachedVaultProfile,
     };

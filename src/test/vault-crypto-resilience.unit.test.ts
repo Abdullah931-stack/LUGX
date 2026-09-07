@@ -1,13 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-    cryptoWorkerBridge,
     wipeBuffer,
     generateMasterKeyRaw,
     generateSalt,
-    generateIV,
     deriveKEKFromPin,
-    wrapMasterKeyWithPin,
-    unwrapMasterKeyWithPin,
     encryptEnvelope,
     decryptEnvelope,
     sessionKeyStore,

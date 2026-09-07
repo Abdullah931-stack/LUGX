@@ -111,7 +111,6 @@ export default function EditorPage() {
 
         // Vault State
         isEncrypted,
-        isVaultLocked,
         isUnlockModalOpen,
         setIsUnlockModalOpen,
         handleVaultUnlocked,

@@ -5,9 +5,7 @@ import {
   createWebAuthnPrfEnvelope,
   unwrapMasterKeyWithWebAuthnPrf,
 } from '../lib/sync/webauthn-prf';
-import { cryptoWorkerBridge } from '../lib/sync/crypto-worker-bridge';
 import { DeviceTrustEnvelope } from '../lib/sync/types/vault';
-import { arrayBufferToBase64, base64ToUint8Array } from '../lib/sync/crypto-utils';
 
 describe('WebAuthn PRF Hardware Key Derivation & Envelope Lifecycle', () => {
   const testUserId = 'user-hardware-test-uuid-1234';

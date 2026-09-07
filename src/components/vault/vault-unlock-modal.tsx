@@ -7,10 +7,9 @@ import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { getUserVaultProfile, updateVaultPassword } from "@/server/actions/vault-actions";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
+import { unwrapMasterKeyWithWebAuthnPrf, checkWebAuthnSupportStatus, createWebAuthnPrfEnvelope } from "@/lib/sync/webauthn-prf";
 import { unwrapMasterKeyWithPin, wrapMasterKeyWithPin, generateSalt } from "@/lib/sync/encryption";
-import { unwrapMasterKeyWithWebAuthnPrf, isWebAuthnPrfSupported, checkWebAuthnSupportStatus, createWebAuthnPrfEnvelope } from "@/lib/sync/webauthn-prf";
-import { DeviceTrustEnvelope, DeviceTrustType } from "@/lib/sync/types/vault";
-import { TrustDeviceModal } from "./trust-device-modal";
+import { DeviceTrustEnvelope, DeviceTrustType, UserVaultProfile } from "@/lib/sync/types/vault";
 
 interface VaultUnlockModalProps {
     isOpen: boolean;
@@ -30,7 +29,6 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
     const [newPassword, setNewPassword] = useState("");
     const [confirmNewPassword, setConfirmNewPassword] = useState("");
     const [isResetStep, setIsResetStep] = useState(false);
-    const [isTrustModalOpen, setIsTrustModalOpen] = useState(false);
 
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -112,7 +110,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
      * Resolves the user vault profile:
      * Tries local IndexedDB cache first (offline-first), falls back to server if not cached.
      */
-    async function resolveVaultProfile(): Promise<any | null> {
+    async function resolveVaultProfile(): Promise<UserVaultProfile | null> {
         // 1. Check local IndexedDB cache
         try {
             const cached = await indexedDBManager.getCachedVaultProfile();
@@ -126,11 +124,11 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
         if (res.success && res.data) {
             // Cache locally for offline resilience
             try {
-                await indexedDBManager.saveCachedVaultProfile(res.data);
+                await indexedDBManager.saveCachedVaultProfile(res.data as unknown as UserVaultProfile);
             } catch {
                 // Ignore cache errors
             }
-            return res.data;
+            return res.data as unknown as UserVaultProfile;
         }
 
         return null;
@@ -178,9 +176,9 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                 onUnlocked();
                 onClose();
             }, 300);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[VaultUnlockModal] Biometric unlock error:", err);
-            setError(err.message || "فشلت المصادقة العتادية. يمكنك استخدام كلمة المرور بدلاً من ذلك.");
+            setError((err as Error)?.message || "فشلت المصادقة العتادية. يمكنك استخدام كلمة المرور بدلاً من ذلك.");
         } finally {
             setIsLoading(false);
         }
@@ -229,6 +227,10 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                 await indexedDBManager.saveDeviceTrustEnvelope(updatedEnv, userId);
             }
 
+            if (!unwrappedMasterKey) {
+                throw new Error("Failed to unwrap master key");
+            }
+
             sessionKeyStore.setMasterKey(unwrappedMasterKey, 1);
 
             broadcastCrossTabEvent({
@@ -237,7 +239,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
 
             onUnlocked();
             onClose();
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.warn("[VaultUnlockModal] PIN unlock error:", err);
             const newAttempts = (deviceEnvelope.failedAttempts || 0) + 1;
             if (newAttempts >= 5) {
@@ -333,7 +335,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                         envelope = await createWebAuthnPrfEnvelope(
                             unwrappedMasterKey,
                             userId,
-                            profile.email || "user@lugx.local",
+                            "user@lugx.local",
                             epoch
                         );
                     } else {
@@ -350,9 +352,9 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                     await indexedDBManager.saveDeviceTrustEnvelope(envelope, userId);
                     setDeviceEnvelope(envelope);
                     setIsDeviceTrusted(true);
-                } catch (trustErr: any) {
+                } catch (trustErr: unknown) {
                     console.warn("[VaultUnlockModal] Failed to wrap trust envelope during unlock:", trustErr);
-                    setError(trustErr.message || "تم فك قفل الخزنة، ولكن تعذر تفعيل توثيق هذا الجهاز.");
+                    setError((trustErr as Error)?.message || "تم فك قفل الخزنة، ولكن تعذر تفعيل توثيق هذا الجهاز.");
                     setIsLoading(false);
                     return;
                 }
@@ -364,7 +366,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
 
             onUnlocked();
             onClose();
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[VaultUnlockModal] Password unlock failure:", err);
             setError("كلمة المرور غير صحيحة. يرجى إعادة المحاولة.");
         } finally {
@@ -430,7 +432,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
 
             setIsResetStep(true);
             setSuccessMessage("تم التحقق من بذرة الاسترجاع بنجاح. يرجى تعيين كلمة مرور جديدة للخزنة.");
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[VaultUnlockModal] Recovery seed unlock failure:", err);
             setError("بذرة الاسترجاع غير صحيحة أو تالفة. يرجى التأكد من الكلمات.");
         } finally {
@@ -524,9 +526,9 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
 
             onUnlocked();
             onClose();
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[VaultUnlockModal] Password reset error:", err);
-            setError("فشل تحديث كلمة المرور: " + (err.message || "خطأ غير متوقع"));
+            setError("فشل تحديث كلمة المرور: " + ((err as Error)?.message || "خطأ غير متوقع"));
         } finally {
             if (newSaltBytes) wipeBuffer(newSaltBytes);
             if (passBytes) wipeBuffer(passBytes);

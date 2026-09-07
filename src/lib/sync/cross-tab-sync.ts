@@ -5,12 +5,14 @@
  * sharing the same workspace session without requiring server polling.
  */
 
+import type { FileEncryptionMetadata } from '@/lib/db/schema';
+
 export interface CrossTabSyncEvent {
     type: 'file_saved' | 'conflict_resolved' | 'file_deleted' | 'file_encrypted' | 'file_decrypted' | 'vault_unlocked' | 'vault_locked';
     fileId?: string;
     version?: number;
     etag?: string;
-    metadata?: any;
+    metadata?: FileEncryptionMetadata | Record<string, unknown> | null;
     timestamp: number;
     senderTabId: string;
 }

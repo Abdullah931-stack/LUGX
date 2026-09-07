@@ -46,6 +46,15 @@ export const userVaultProfiles = pgTable("user_vault_profiles", {
 });
 
 // Files table - user documents and folders
+export interface FileEncryptionMetadata {
+    version: number;
+    algorithm: string;
+    keyId: string;
+    salt: string;
+    iv: string;
+    kdfIterations?: number;
+}
+
 export const files = pgTable("files", {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -56,14 +65,7 @@ export const files = pgTable("files", {
     isFolder: boolean("is_folder").notNull().default(false),
     // Encryption fields (Dual-Tier Hybrid & Zero-Knowledge Vault)
     isEncrypted: boolean("is_encrypted").notNull().default(false),
-    encryptionMetadata: jsonb("encryption_metadata").$type<{
-        version: number;
-        algorithm: string;
-        keyId: string;
-        salt: string;
-        iv: string;
-        kdfIterations?: number;
-    }>(),
+    encryptionMetadata: jsonb("encryption_metadata").$type<FileEncryptionMetadata>(),
     // Sync-related fields
     etag: varchar("etag", { length: 64 }), // SHA-256 hash for change detection
     version: integer("version").default(1), // Monotonically increasing version

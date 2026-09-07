@@ -20,9 +20,6 @@ import {
     base64ToUint8Array,
     generateMasterKeyRaw,
     generateSalt,
-    generateIV,
-    deriveKEKFromPassword,
-    deriveKEKFromRecoverySeed,
     wrapMasterKeyWithPassword,
     unwrapMasterKeyWithPassword,
     wrapMasterKeyWithRecoverySeed,
@@ -37,7 +34,6 @@ import {
     generateMnemonic,
     validateMnemonic,
     InvalidCiphertextOrKeyError,
-    AADIntegrityError,
     EncryptedEnvelope,
     DeviceTrustEnvelope,
     InvalidPinError,
@@ -278,7 +274,7 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
 
             await idb.saveCachedVaultProfile(cachedProfile);
 
-            const retrieved = await idb.getCachedVaultProfile();
+            const retrieved = await idb.getCachedVaultProfile<typeof cachedProfile>();
             expect(retrieved).not.toBeNull();
             expect(retrieved?.id).toBe('vault-uuid-001');
             expect(retrieved?.wrappedMasterKey).toBe('d3JhcHBlZEtleTEyMw==');
@@ -312,7 +308,7 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
             };
 
             await autoManager.saveCachedVaultProfile(profile, testUserId);
-            const retrieved = await autoManager.getCachedVaultProfile(testUserId);
+            const retrieved = await autoManager.getCachedVaultProfile<typeof profile>(testUserId);
             expect(retrieved).not.toBeNull();
             expect(retrieved?.id).toBe('vault-uuid-auto');
             autoManager.close();
@@ -1124,7 +1120,6 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
 
             // Simulate resolution payload with server ciphertext
             let contentToSend = serverCiphertext;
-            let metaToSend: any = { version: 1, algorithm: 'AES-GCM-256', iv: 'iv123' };
 
             // When content starts with gcm:v1:, our guard prevents re-encryption
             if (contentToSend.startsWith('gcm:v1:')) {

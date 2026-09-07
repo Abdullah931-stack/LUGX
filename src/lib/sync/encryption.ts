@@ -20,7 +20,6 @@ import {
   arrayBufferToBase64,
   base64ToUint8Array
 } from './crypto-worker-bridge';
-import { sessionKeyStore } from './session-key-store';
 import { validateMnemonic } from './mnemonic';
 
 export interface EncryptionConfig {
@@ -284,7 +283,7 @@ export async function unwrapMasterKeyWithPin(
 
   try {
     return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, aad);
-  } catch (err) {
+  } catch (_err) {
     throw new InvalidPinError(
       'Incorrect PIN provided for trusted device unlock',
       Math.max(0, 5 - (envelope.failedAttempts + 1))

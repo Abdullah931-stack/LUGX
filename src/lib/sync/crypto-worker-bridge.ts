@@ -11,6 +11,7 @@ import {
   CryptoWorkerResponse,
   CryptoWorkerAction,
   CryptoWorkerRequestPayloads,
+  CryptoWorkerResponsePayloads,
   AADIntegrityError,
   InvalidCiphertextOrKeyError,
   CryptoWorkerBridgeError
@@ -31,9 +32,9 @@ export class CryptoWorkerBridge {
     string,
     {
       action: CryptoWorkerAction;
-      payload: any;
-      resolve: (value: any) => void;
-      reject: (reason?: any) => void;
+      payload: unknown;
+      resolve: (value: unknown) => void;
+      reject: (reason?: unknown) => void;
       timer: ReturnType<typeof setTimeout>;
     }
   >();
@@ -91,7 +92,7 @@ export class CryptoWorkerBridge {
         this.worker.onerror = (errorEvent: ErrorEvent) => {
           void this.handleWorkerError(errorEvent);
         };
-      } catch (err) {
+      } catch (_err) {
         // Fallback to in-process direct execution if Worker creation fails
         this.worker = null;
         this.isTerminated = true;
@@ -105,20 +106,21 @@ export class CryptoWorkerBridge {
   private async executeDirectTask<A extends CryptoWorkerAction>(
     action: A,
     payload: CryptoWorkerRequestPayloads[A]
-  ): Promise<any> {
+  ): Promise<CryptoWorkerResponsePayloads[A]> {
     try {
       return await executeCryptoWorkerAction(action, payload);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof AADIntegrityError || err instanceof InvalidCiphertextOrKeyError) {
         throw err;
       }
-      if (err?.code === 'INVALID_CIPHERTEXT_OR_KEY' || err?.name === 'InvalidCiphertextOrKeyError') {
-        throw new InvalidCiphertextOrKeyError(err.message);
+      const maybeErr = err as { code?: string; name?: string; message?: string } | null;
+      if (maybeErr?.code === 'INVALID_CIPHERTEXT_OR_KEY' || maybeErr?.name === 'InvalidCiphertextOrKeyError') {
+        throw new InvalidCiphertextOrKeyError(maybeErr.message);
       }
-      if (err?.code === 'AAD_INTEGRITY_FAILURE' || err?.name === 'AADIntegrityError') {
-        throw new AADIntegrityError(err.message);
+      if (maybeErr?.code === 'AAD_INTEGRITY_FAILURE' || maybeErr?.name === 'AADIntegrityError') {
+        throw new AADIntegrityError(maybeErr.message);
       }
-      throw new CryptoWorkerBridgeError(err?.message || 'Crypto execution error', err);
+      throw new CryptoWorkerBridgeError(maybeErr?.message || 'Crypto execution error', err);
     }
   }
 
@@ -134,7 +136,10 @@ export class CryptoWorkerBridge {
       clearTimeout(pending.timer);
       try {
         console.warn(`[CryptoWorkerBridge] Draining pending task ${pending.action} (${id}) to direct engine due to: ${reason}`);
-        const result = await this.executeDirectTask(pending.action, pending.payload);
+        const result = await this.executeDirectTask(
+          pending.action,
+          pending.payload as CryptoWorkerRequestPayloads[typeof pending.action]
+        );
         pending.resolve(result);
       } catch (err) {
         pending.reject(
@@ -152,7 +157,7 @@ export class CryptoWorkerBridge {
   public async executeTask<A extends CryptoWorkerAction>(
     action: A,
     payload: CryptoWorkerRequestPayloads[A]
-  ): Promise<any> {
+  ): Promise<CryptoWorkerResponsePayloads[A]> {
     this.initialize();
 
     // If Web Worker is active in browser and not terminated, dispatch through postMessage
@@ -183,13 +188,13 @@ export class CryptoWorkerBridge {
   private dispatchToWorker<A extends CryptoWorkerAction>(
     action: A,
     payload: CryptoWorkerRequestPayloads[A]
-  ): Promise<any> {
+  ): Promise<CryptoWorkerResponsePayloads[A]> {
     const id = `crypto-task-${Date.now()}-${++this.requestCounter}`;
     const taskTimeout = this.timeoutMs !== undefined
       ? this.timeoutMs
       : (CryptoWorkerBridge.TASK_SPECIFIC_TIMEOUTS[action] ?? 10000);
 
-    return new Promise((resolve, reject) => {
+    return new Promise<CryptoWorkerResponsePayloads[A]>((resolve, reject) => {
       const timer = setTimeout(async () => {
         if (this.pendingRequests.has(id)) {
           console.warn(`[CryptoWorkerBridge] Task ${action} timed out in worker after ${taskTimeout}ms. Tripping circuit breaker and draining queue...`);
@@ -204,15 +209,31 @@ export class CryptoWorkerBridge {
           }
           this.isTerminated = true;
 
-          // Seamless self-healing fallback for this task and all queued tasks
+          // Drain pending requests to direct engine fallback
           await this.drainPendingRequestsToFallback(`Worker timeout on task ${action}`);
         }
       }, taskTimeout);
 
-      this.pendingRequests.set(id, { action, payload, resolve, reject, timer });
+      this.pendingRequests.set(id, {
+        action,
+        payload,
+        resolve: (val: unknown) => resolve(val as CryptoWorkerResponsePayloads[A]),
+        reject,
+        timer
+      });
 
-      const request: CryptoWorkerRequest<A> = { id, action, payload };
-      this.worker!.postMessage(request);
+      try {
+        const request: CryptoWorkerRequest<A> = {
+          id,
+          action,
+          payload
+        };
+        this.worker!.postMessage(request);
+      } catch (postErr) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(new CryptoWorkerBridgeError(`Failed to postMessage to worker for ${action}`, postErr));
+      }
     });
   }
 

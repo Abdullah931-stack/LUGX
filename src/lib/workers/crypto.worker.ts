@@ -9,9 +9,10 @@
 import {
   CryptoWorkerRequest,
   CryptoWorkerResponse,
-  AADIntegrityError,
   InvalidCiphertextOrKeyError,
-  CryptoWorkerAction
+  CryptoWorkerAction,
+  CryptoWorkerRequestPayloads,
+  CryptoWorkerResponsePayloads
 } from '../sync/types/vault';
 import {
   generateMnemonic,
@@ -241,7 +242,7 @@ export async function handleUnwrapKeyRaw(payload: {
         kek,
         wrappedBytes as unknown as BufferSource
       );
-    } catch (err: unknown) {
+    } catch (_err: unknown) {
       throw new InvalidCiphertextOrKeyError('Master key unwrap failed: authentication tag mismatch or invalid KEK');
     }
 
@@ -257,37 +258,55 @@ export async function handleUnwrapKeyRaw(payload: {
 /**
  * Dispatcher for all Crypto Worker Actions
  */
-export async function executeCryptoWorkerAction(action: CryptoWorkerAction, payload: any): Promise<any> {
+export async function executeCryptoWorkerAction<A extends CryptoWorkerAction>(
+  action: A,
+  payload: CryptoWorkerRequestPayloads[A]
+): Promise<CryptoWorkerResponsePayloads[A]> {
   switch (action) {
     case 'DERIVE_KEY_RAW':
-      return await handleDeriveKeyRaw(payload);
+      return (await handleDeriveKeyRaw(payload as CryptoWorkerRequestPayloads['DERIVE_KEY_RAW'])) as CryptoWorkerResponsePayloads[A];
     case 'ENCRYPT_AES_GCM':
-      return await handleEncryptAESGCM(payload);
+      return (await handleEncryptAESGCM(payload as CryptoWorkerRequestPayloads['ENCRYPT_AES_GCM'])) as CryptoWorkerResponsePayloads[A];
     case 'DECRYPT_AES_GCM':
-      return await handleDecryptAESGCM(payload);
+      return (await handleDecryptAESGCM(payload as CryptoWorkerRequestPayloads['DECRYPT_AES_GCM'])) as CryptoWorkerResponsePayloads[A];
     case 'WRAP_KEY_RAW':
-      return await handleWrapKeyRaw(payload);
+      return (await handleWrapKeyRaw(payload as CryptoWorkerRequestPayloads['WRAP_KEY_RAW'])) as CryptoWorkerResponsePayloads[A];
     case 'UNWRAP_KEY_RAW':
-      return await handleUnwrapKeyRaw(payload);
+      return (await handleUnwrapKeyRaw(payload as CryptoWorkerRequestPayloads['UNWRAP_KEY_RAW'])) as CryptoWorkerResponsePayloads[A];
     case 'GENERATE_RANDOM_BYTES': {
-      return generateDirectRandomBytes(payload.length);
+      const p = payload as CryptoWorkerRequestPayloads['GENERATE_RANDOM_BYTES'];
+      return generateDirectRandomBytes(p.length) as CryptoWorkerResponsePayloads[A];
     }
-    case 'GENERATE_MNEMONIC':
-      return await generateMnemonic(payload?.entropyLengthBytes || 16);
-    case 'VALIDATE_MNEMONIC':
-      return await validateMnemonic(payload.mnemonic);
-    case 'MNEMONIC_TO_SEED':
-      return await mnemonicToSeed(payload.mnemonic, payload.saltBytes, payload.iterations);
+    case 'GENERATE_MNEMONIC': {
+      const p = payload as CryptoWorkerRequestPayloads['GENERATE_MNEMONIC'];
+      return (await generateMnemonic(p?.entropyLengthBytes || 16)) as CryptoWorkerResponsePayloads[A];
+    }
+    case 'VALIDATE_MNEMONIC': {
+      const p = payload as CryptoWorkerRequestPayloads['VALIDATE_MNEMONIC'];
+      return (await validateMnemonic(p.mnemonic)) as CryptoWorkerResponsePayloads[A];
+    }
+    case 'MNEMONIC_TO_SEED': {
+      const p = payload as CryptoWorkerRequestPayloads['MNEMONIC_TO_SEED'];
+      return (await mnemonicToSeed(p.mnemonic, p.saltBytes, p.iterations)) as CryptoWorkerResponsePayloads[A];
+    }
     default:
       throw new Error(`Unsupported crypto worker action: ${action}`);
   }
+}
+
+interface WorkerScope {
+  postMessage(message: unknown): void;
 }
 
 /**
  * Web Worker Message Event Listener
  * Active only when running in a Worker Global Scope
  */
-if (typeof self !== 'undefined' && typeof (self as any).postMessage === 'function' && typeof window === 'undefined') {
+const activeWorkerScope = (typeof self !== 'undefined' && typeof window === 'undefined' && 'postMessage' in self)
+  ? (self as unknown as WorkerScope)
+  : null;
+
+if (activeWorkerScope && typeof activeWorkerScope.postMessage === 'function') {
   self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
     const request = event.data;
     if (!request || !request.id || !request.action) return;
@@ -299,19 +318,20 @@ if (typeof self !== 'undefined' && typeof (self as any).postMessage === 'functio
         success: true,
         result
       };
-      (self as any).postMessage(response);
-    } catch (error: any) {
+      activeWorkerScope.postMessage(response);
+    } catch (error: unknown) {
+      const maybeErr = error as { name?: string; message?: string; code?: string; stack?: string } | null;
       const response: CryptoWorkerResponse = {
         id: request.id,
         success: false,
         error: {
-          name: error?.name || 'Error',
-          message: error?.message || 'Unknown crypto worker execution failure',
-          code: error?.code,
-          stack: error?.stack
+          name: maybeErr?.name || 'Error',
+          message: maybeErr?.message || 'Unknown crypto worker execution failure',
+          code: maybeErr?.code,
+          stack: maybeErr?.stack
         }
       };
-      (self as any).postMessage(response);
+      activeWorkerScope.postMessage(response);
     }
   };
 }

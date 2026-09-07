@@ -167,6 +167,8 @@ export interface ConflictFileState {
     title?: string;
     parentFolderId?: string | null;
     deleted?: boolean;
+    isEncrypted?: boolean;
+    encryptionMetadata?: EncryptedEnvelopeMetadata | null;
 }
 
 /**

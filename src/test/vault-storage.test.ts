@@ -20,8 +20,6 @@ import path from 'node:path';
 import {
     userVaultProfiles,
     files,
-    UserVaultProfile,
-    NewUserVaultProfile
 } from '../lib/db/schema';
 import {
     IDBFile,
@@ -35,7 +33,6 @@ import {
     createIndexedDBManager,
 } from '../lib/sync/indexeddb';
 import { sessionKeyStore } from '../lib/sync/session-key-store';
-import { cryptoWorkerBridge } from '../lib/sync/crypto-worker-bridge';
 
 describe('Phase 2: Database Schema & Transparent Encrypted IndexedDB Storage', () => {
     let manager1: IndexedDBManager;

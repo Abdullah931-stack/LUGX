@@ -219,9 +219,9 @@ export function FileContextMenu({
                 } else {
                     alert(result.error || "فشل نسخ الملف المشفر");
                 }
-            } catch (err: any) {
+            } catch (err: unknown) {
                 console.error("[FileContextMenu] Encrypted copy error:", err);
-                alert("حدث خطأ أثناء نسخ الملف المشفر: " + (err.message || "خطأ غير معروف"));
+                alert("حدث خطأ أثناء نسخ الملف المشفر: " + ((err as Error)?.message || "خطأ غير معروف"));
             } finally {
                 setIsTransforming(false);
             }
@@ -331,7 +331,7 @@ export function FileContextMenu({
             };
 
             // Sync to server if reachable
-            let syncResult: any = null;
+            let syncResult: Awaited<ReturnType<typeof toggleFileEncryption>> | null = null;
             try {
                 syncResult = await toggleFileEncryption(fileId, true, encResult.ciphertextBase64, metadata);
             } catch (serverErr) {
@@ -393,9 +393,9 @@ export function FileContextMenu({
 
             onRefresh?.();
             onClose();
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[FileContextMenu] Encryption error:", err);
-            alert("فشل تشفير الملف: " + (err.message || "خطأ غير معروف"));
+            alert("فشل تشفير الملف: " + ((err as Error)?.message || "خطأ غير معروف"));
         } finally {
             if (ivBytes) wipeBuffer(ivBytes);
             setIsTransforming(false);
@@ -436,7 +436,7 @@ export function FileContextMenu({
                 const serverRes = await getFile(fileId);
                 if (serverRes.success && serverRes.data) {
                     rawContent = serverRes.data.content || "";
-                    metadata = serverRes.data.encryptionMetadata as any;
+                    metadata = serverRes.data.encryptionMetadata;
                 }
             }
 
@@ -459,7 +459,7 @@ export function FileContextMenu({
             }
 
             // Sync to server if reachable
-            let syncResult: any = null;
+            let syncResult: Awaited<ReturnType<typeof toggleFileEncryption>> | null = null;
             try {
                 syncResult = await toggleFileEncryption(fileId, false, decryptedContent, null);
             } catch (serverErr) {
@@ -506,9 +506,9 @@ export function FileContextMenu({
 
             onRefresh?.();
             onClose();
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[FileContextMenu] Decryption error:", err);
-            alert("فشل فك تشفير الملف: " + (err.message || "خطأ غير معروف"));
+            alert("فشل فك تشفير الملف: " + ((err as Error)?.message || "خطأ غير معروف"));
         } finally {
             setIsTransforming(false);
         }

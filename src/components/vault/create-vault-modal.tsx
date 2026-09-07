@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Shield, Key, Copy, Check, AlertTriangle, ArrowRight, ArrowLeft, Loader2, Lock } from "lucide-react";
+import { Shield, Copy, Check, AlertTriangle, ArrowLeft, Loader2, Lock } from "lucide-react";
 import { cryptoWorkerBridge, wipeBuffer, arrayBufferToBase64 } from "@/lib/sync/crypto-worker-bridge";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { createUserVaultProfile } from "@/server/actions/vault-actions";
@@ -89,8 +89,8 @@ export function CreateVaultModal({ isOpen, onClose, onSuccess, userId }: CreateV
             setChallengeInputs({});
 
             setStep("seed");
-        } catch (err: any) {
-            setGeneralError("فشل في توليد بذرة الاسترجاع: " + (err.message || "خطأ غير معروف"));
+        } catch (err: unknown) {
+            setGeneralError("فشل في توليد بذرة الاسترجاع: " + ((err as Error)?.message || "خطأ غير معروف"));
         } finally {
             setIsLoading(false);
         }
@@ -218,9 +218,9 @@ export function CreateVaultModal({ isOpen, onClose, onSuccess, userId }: CreateV
 
             onSuccess();
             onClose();
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[CreateVaultModal] Activation error:", err);
-            setGeneralError("فشل تفعيل الخزنة: " + (err.message || "خطأ غير متوقع"));
+            setGeneralError("فشل تفعيل الخزنة: " + ((err as Error)?.message || "خطأ غير متوقع"));
             setStep("verify");
         } finally {
             // Defensive RAM sanitization

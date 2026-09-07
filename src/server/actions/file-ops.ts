@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/lib/db";
+import type { FileEncryptionMetadata } from "@/lib/db/schema";
 import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull, isNotNull, inArray } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
@@ -26,7 +27,7 @@ export interface FileOpResult<T = typeof schema.files.$inferSelect> {
         updatedAt?: string;
         content?: string | null;
         isEncrypted?: boolean | null;
-        encryptionMetadata?: any;
+        encryptionMetadata?: FileEncryptionMetadata | null;
     };
 }
 
@@ -655,7 +656,7 @@ export async function copyFile(
     encryptedOverride?: {
         newFileId?: string;
         content?: string;
-        encryptionMetadata?: any;
+        encryptionMetadata?: FileEncryptionMetadata | null;
     }
 ): Promise<FileOpResult> {
     try {

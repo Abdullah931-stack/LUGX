@@ -9,13 +9,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  cryptoWorkerBridge,
   wipeBuffer,
   generateMasterKeyRaw,
   generateSalt,
-  generateIV,
   deriveKEKFromPassword,
-  deriveKEKFromRecoverySeed,
   wrapMasterKeyWithPassword,
   unwrapMasterKeyWithPassword,
   wrapMasterKeyWithRecoverySeed,
@@ -29,7 +26,6 @@ import {
   validateMnemonic,
   mnemonicToEntropy,
   entropyToMnemonic,
-  mnemonicToSeed,
   BIP39_WORDLIST,
   AADIntegrityError,
   InvalidCiphertextOrKeyError,

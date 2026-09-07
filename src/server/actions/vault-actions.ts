@@ -12,7 +12,7 @@ import { db, schema } from "@/lib/db";
 import { getUser } from "@/lib/supabase/server";
 import { eq } from "drizzle-orm";
 
-export interface VaultActionResult<T = any> {
+export interface VaultActionResult<T = unknown> {
     success: boolean;
     data?: T;
     error?: string;

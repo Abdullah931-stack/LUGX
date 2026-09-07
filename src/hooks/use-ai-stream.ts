@@ -21,10 +21,11 @@ import {
     clearPendingAIOperation,
     listPendingAIOperations,
 } from '@/lib/ai/pending-operation-store';
+import type { FileEncryptionMetadata } from '@/lib/db/schema';
 
 export interface UseAIStreamOptions {
     onStreamStart?: () => void;
-    onCommitSuccess?: (result: { version: number; etag: string; committedContent?: string; encryptionMetadata?: any }) => void;
+    onCommitSuccess?: (result: { version: number; etag: string; committedContent?: string; encryptionMetadata?: FileEncryptionMetadata | null }) => void;
     onConflict?: (serverVersion?: { version?: number | null; etag?: string | null }) => void;
     onError?: (error: Error) => void;
     getLatestVersion?: () => number;
@@ -41,7 +42,7 @@ export interface UseAIStreamOptions {
      */
     transformCommitPayload?: (finalContent: string) => Promise<{
         content: string;
-        encryptionMetadata?: any;
+        encryptionMetadata?: FileEncryptionMetadata | null;
     }>;
 }
 
@@ -567,7 +568,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 : originalEtag;
 
             let contentToCommit = finalDocumentMarkdown;
-            let encryptionMetadataToCommit: any = undefined;
+            let encryptionMetadataToCommit: FileEncryptionMetadata | null | undefined = undefined;
 
             if (typeof options.transformCommitPayload === 'function') {
                 const transformed = await options.transformCommitPayload(finalDocumentMarkdown);

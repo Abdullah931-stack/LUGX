@@ -118,3 +118,12 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   - **Dual Selector in UI:** Both `TrustDeviceModal` and `VaultUnlockModal` (Password tab) present dual options: Hardware Biometrics (with dynamic hardware capability detection and diagnostic guidance) and 6-Digit PIN (software fallback).
   - **Default Zero-Trace Policy:** For high-threat environments, shared workstations, or untrusted hardware, users can remain on the default **Level 1: Strict Zero-Trace (Volatile RAM-Only)** mode, where no cryptographic key material or envelope is ever written to disk/storage.
   - **Remote Central Revocation:** Remote revocation via `deviceTrustEpoch` (backed by PostgreSQL migration `0009_add_device_trust_epoch.sql`) atomically invalidates both PRF and PIN device trust envelopes across all devices simultaneously from any authenticated session via cryptographic AAD binding.
+
+## TD-11 — Full Repository ESLint Hygiene & Zero-Warning Determinism — ✅ RESOLVED (2026-09-07)
+
+- **Debt:** Post-Vault implementation codebase accumulated 104 ESLint issues (3 errors, 101 warnings) across 23 files, primarily consisting of loose types (`@typescript-eslint/no-explicit-any`), dead imports/variables (`@typescript-eslint/no-unused-vars`), React 19 hook lifecycle purity violations (`react-hooks/refs`, `react-hooks/exhaustive-deps`, and `react-hooks/set-state-in-effect`), and syntax invariants (`prefer-const`).
+- **Resolution:**
+  - Strongly typed all cryptographic worker RPC action payloads (`CryptoWorkerResponsePayloads`), indexedDB vault profiles (`UserVaultProfile`), and database encryption metadata (`FileEncryptionMetadata`).
+  - Pruned all unused imports, variables, and dead mocks across server actions, sync engines, UI modals, and test suites.
+  - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
+  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all 45 test suites (629 tests green).

@@ -23,7 +23,7 @@ import {
     base64ToUint8Array,
 } from './crypto-worker-bridge';
 import { sessionKeyStore } from './session-key-store';
-import { DeviceTrustEnvelope } from './types/vault';
+import { DeviceTrustEnvelope, UserVaultProfile } from './types/vault';
 
 interface LocalEncryptedPayload {
     readonly _enc: 1;
@@ -1087,7 +1087,7 @@ class IndexedDBManager {
      * Cache the user's encrypted vault profile locally in sync_metadata store
      * to support offline unlocking and key derivation.
      */
-    async saveCachedVaultProfile(profile: any, userId?: string): Promise<void> {
+    async saveCachedVaultProfile<T = UserVaultProfile>(profile: T, userId?: string): Promise<void> {
         if (!profile) return;
         const targetUserId = userId?.trim() || this.userId;
         if (!targetUserId) {
@@ -1114,7 +1114,7 @@ class IndexedDBManager {
      * Retrieve cached vault profile for offline unlocking.
      * Safely returns null if no valid userId is available to avoid unhandled rejections.
      */
-    async getCachedVaultProfile(userId?: string): Promise<any | null> {
+    async getCachedVaultProfile<T = UserVaultProfile>(userId?: string): Promise<T | null> {
         const targetUserId = userId?.trim() || this.userId;
         if (!targetUserId) {
             console.warn('[IndexedDB] getCachedVaultProfile: No valid userId available, returning null');
@@ -1129,7 +1129,7 @@ class IndexedDBManager {
             const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).get('vault_profile');
             req.onsuccess = () => {
                 if (req.result && req.result.profile) {
-                    resolve(req.result.profile);
+                    resolve(req.result.profile as T);
                 } else {
                     resolve(null);
                 }

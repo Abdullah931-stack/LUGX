@@ -203,6 +203,18 @@ export interface CryptoWorkerRequestPayloads {
   };
 }
 
+export interface CryptoWorkerResponsePayloads {
+  DERIVE_KEY_RAW: Uint8Array;
+  ENCRYPT_AES_GCM: { ciphertextBase64: string; ivBase64: string };
+  DECRYPT_AES_GCM: string;
+  WRAP_KEY_RAW: { wrappedKeyBase64: string; ivBase64: string };
+  UNWRAP_KEY_RAW: Uint8Array;
+  GENERATE_RANDOM_BYTES: Uint8Array;
+  GENERATE_MNEMONIC: string;
+  VALIDATE_MNEMONIC: { isValid: boolean; error?: string; invalidWords?: string[] };
+  MNEMONIC_TO_SEED: Uint8Array;
+}
+
 export interface CryptoWorkerRequest<A extends CryptoWorkerAction = CryptoWorkerAction> {
   readonly id: string;
   readonly action: A;

@@ -8,15 +8,11 @@
 import "fake-indexeddb/auto";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-    cryptoWorkerBridge,
     wipeBuffer,
     generateMasterKeyRaw,
     generateSalt,
     wrapMasterKeyWithPassword,
-    unwrapMasterKeyWithPassword,
-    deriveKEKFromPin,
     wrapMasterKeyWithPin,
-    unwrapMasterKeyWithPin,
     encryptEnvelope,
     decryptEnvelope,
     sessionKeyStore,
@@ -27,11 +23,10 @@ import {
 } from "@/lib/sync";
 import { createIndexedDBManager, IndexedDBManager } from "@/lib/sync/indexeddb";
 import {
-    getUserVaultProfile,
     createUserVaultProfile,
     revokeAllTrustedDevices,
 } from "@/server/actions/vault-actions";
-import { toggleFileEncryption, copyFile, getFile } from "@/server/actions/file-ops";
+import { toggleFileEncryption, copyFile } from "@/server/actions/file-ops";
 import { commitAIFileOperation } from "@/server/actions/ai-commit";
 import { db, schema } from "@/lib/db";
 import { txDb } from "@/lib/db/transactional";
@@ -139,7 +134,7 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
         const testPassword = "VaultPasscode2026!";
         const keySalt = await generateSalt(16);
         const recoverySalt = await generateSalt(16);
-        const mnemonic = await generateMnemonic(16);
+        const _mnemonic = await generateMnemonic(16);
 
         // 2. Wrap master key for server registration
         const passwordWrapped = await wrapMasterKeyWithPassword(

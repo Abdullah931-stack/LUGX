@@ -5,7 +5,7 @@ import { ShieldCheck, Lock, AlertTriangle, Loader2, CheckCircle2, X, Fingerprint
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { wrapMasterKeyWithPin, generateSalt } from "@/lib/sync/encryption";
-import { isWebAuthnPrfSupported, checkWebAuthnSupportStatus, createWebAuthnPrfEnvelope } from "@/lib/sync/webauthn-prf";
+import { checkWebAuthnSupportStatus, createWebAuthnPrfEnvelope } from "@/lib/sync/webauthn-prf";
 import { getUserVaultProfile } from "@/server/actions/vault-actions";
 import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from "@/lib/sync/crypto-worker-bridge";
 import type { DeviceTrustType } from "@/lib/sync/types/vault";
@@ -169,9 +169,9 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
                 onSuccess?.();
                 onClose();
             }, 1200);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[TrustDeviceModal] Failed to wrap and save trust envelope:", err);
-            setError(err.message || "فشل حفظ إعدادات توثيق الجهاز. يرجى المحاولة مجدداً.");
+            setError((err as Error)?.message || "فشل حفظ إعدادات توثيق الجهاز. يرجى المحاولة مجدداً.");
         } finally {
             setIsLoading(false);
         }

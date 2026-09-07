@@ -12,13 +12,47 @@ import { DeviceTrustEnvelope } from './types/vault';
 import { arrayBufferToBase64, base64ToUint8Array, wipeBuffer } from './crypto-utils';
 import { cryptoWorkerBridge } from './crypto-worker-bridge';
 
+export interface PrfAuthenticationExtensionsClientInputs {
+  prf?: {
+    eval?: {
+      first: BufferSource;
+      second?: BufferSource;
+    };
+  };
+}
+
+export interface PrfAuthenticationExtensionsClientOutputs {
+  prf?: {
+    enabled?: boolean;
+    results?: {
+      first?: ArrayBuffer;
+      second?: ArrayBuffer;
+    };
+  };
+}
+
+interface WebAuthnGlobalScope {
+  isSecureContext?: boolean;
+  PublicKeyCredential?: typeof PublicKeyCredential & {
+    getClientCapabilities?: () => Promise<Record<string, boolean>>;
+  };
+  navigator?: {
+    credentials?: CredentialsContainer;
+  };
+  crypto?: Crypto;
+  location?: {
+    hostname?: string;
+  };
+}
+
 /**
  * Derives a 256-bit AES-GCM Key Encryption Key (KEK) from raw PRF output and salt via HKDF-SHA-256
  */
 export async function derivePrfKek(prfOutput: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
-  const subtle = typeof window !== 'undefined' && window.crypto?.subtle
-    ? window.crypto.subtle
-    : (globalThis as any).crypto?.subtle;
+  const cryptoObj = typeof window !== 'undefined'
+    ? window.crypto
+    : (globalThis as unknown as { crypto?: Crypto }).crypto;
+  const subtle = cryptoObj?.subtle;
 
   if (!subtle) {
     throw new Error('WebCrypto SubtleCrypto is not available in the current environment');
@@ -26,7 +60,7 @@ export async function derivePrfKek(prfOutput: Uint8Array, salt: Uint8Array): Pro
 
   const hkdfKey = await subtle.importKey(
     'raw',
-    prfOutput,
+    prfOutput as unknown as BufferSource,
     'HKDF',
     false,
     ['deriveBits']
@@ -56,7 +90,7 @@ export interface WebAuthnSupportStatus {
  * Performs a comprehensive diagnostic check on WebAuthn PRF capabilities
  */
 export async function checkWebAuthnSupportStatus(): Promise<WebAuthnSupportStatus> {
-  const root = typeof window !== 'undefined' ? window : (globalThis as any);
+  const root = (typeof window !== 'undefined' ? window : globalThis) as unknown as WebAuthnGlobalScope;
 
   // 1. Check secure context requirement (WebAuthn requires HTTPS or localhost)
   if (typeof window !== 'undefined' && !window.isSecureContext) {
@@ -113,11 +147,11 @@ export async function checkWebAuthnSupportStatus(): Promise<WebAuthnSupportStatu
     }
 
     return { supported: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       supported: false,
       reason: 'unknown_error',
-      message: err?.message || 'حدث خطأ أثناء استعلام عتاد المصادقة.',
+      message: (err as Error)?.message || 'حدث خطأ أثناء استعلام عتاد المصادقة.',
     };
   }
 }
@@ -139,9 +173,9 @@ export async function createWebAuthnPrfEnvelope(
   userEmail: string,
   deviceTrustEpoch = 1
 ): Promise<DeviceTrustEnvelope> {
-  const root = typeof window !== 'undefined' ? window : (globalThis as any);
+  const root = (typeof window !== 'undefined' ? window : globalThis) as unknown as WebAuthnGlobalScope;
   const credentials = root?.navigator?.credentials;
-  const cryptoObj = root?.crypto || (globalThis as any).crypto;
+  const cryptoObj = root?.crypto;
 
   if (!credentials || !cryptoObj) {
     throw new Error('WebAuthn is not supported in this environment');
@@ -183,7 +217,7 @@ export async function createWebAuthnPrfEnvelope(
             first: prfSalt.buffer,
           },
         },
-      } as any,
+      } as AuthenticationExtensionsClientInputs,
     },
   })) as PublicKeyCredential | null;
 
@@ -192,7 +226,7 @@ export async function createWebAuthnPrfEnvelope(
   }
 
   const credentialId = arrayBufferToBase64(new Uint8Array(credential.rawId));
-  const clientExtResults: any = credential.getClientExtensionResults?.() || {};
+  const clientExtResults = (credential.getClientExtensionResults?.() || {}) as PrfAuthenticationExtensionsClientOutputs;
 
   let derivedRawBytes: Uint8Array | null = null;
 
@@ -218,7 +252,7 @@ export async function createWebAuthnPrfEnvelope(
               first: prfSalt.buffer,
             },
           },
-        } as any,
+        } as AuthenticationExtensionsClientInputs,
       },
     })) as PublicKeyCredential | null;
 
@@ -226,7 +260,7 @@ export async function createWebAuthnPrfEnvelope(
       throw new Error('Failed to evaluate PRF on created authenticator');
     }
 
-    const assertExtResults: any = assertion.getClientExtensionResults?.() || {};
+    const assertExtResults = (assertion.getClientExtensionResults?.() || {}) as PrfAuthenticationExtensionsClientOutputs;
     if (!assertExtResults.prf?.results?.first) {
       throw new Error('Platform authenticator did not return PRF evaluated key material');
     }
@@ -279,9 +313,9 @@ export async function unwrapMasterKeyWithWebAuthnPrf(
     throw new Error('Missing credentialId in hardware trust envelope');
   }
 
-  const root = typeof window !== 'undefined' ? window : (globalThis as any);
+  const root = (typeof window !== 'undefined' ? window : globalThis) as unknown as WebAuthnGlobalScope;
   const credentials = root?.navigator?.credentials;
-  const cryptoObj = root?.crypto || (globalThis as any).crypto;
+  const cryptoObj = root?.crypto;
 
   if (!credentials || !cryptoObj) {
     throw new Error('WebAuthn is not supported in this environment');
@@ -308,7 +342,7 @@ export async function unwrapMasterKeyWithWebAuthnPrf(
               first: prfSalt.buffer as ArrayBuffer,
             },
           },
-        } as any,
+        } as AuthenticationExtensionsClientInputs,
       },
     })) as PublicKeyCredential | null;
 
@@ -316,7 +350,7 @@ export async function unwrapMasterKeyWithWebAuthnPrf(
       throw new Error('Biometric / Hardware authentication cancelled');
     }
 
-    const extResults: any = assertion.getClientExtensionResults?.() || {};
+    const extResults = (assertion.getClientExtensionResults?.() || {}) as PrfAuthenticationExtensionsClientOutputs;
     if (!extResults.prf?.results?.first) {
       throw new Error('Platform authenticator did not return PRF evaluation result');
     }

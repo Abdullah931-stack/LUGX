@@ -16,6 +16,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { getFile, updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/server/actions/file-ops";
+import type { FileEncryptionMetadata } from "@/lib/db/schema";
 import { debounce } from "@/lib/utils";
 import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
 import { useAIStream } from "@/hooks/use-ai-stream";
@@ -169,10 +170,10 @@ export function useEditorOrchestrator({
     const [isVaultLocked, setIsVaultLocked] = useState<boolean>(false);
     const [isUnlockModalOpen, setIsUnlockModalOpen] = useState<boolean>(false);
     const isEncryptedRef = useRef<boolean>(false);
-    const fileEncryptionMetadataRef = useRef<any>(null);
+    const fileEncryptionMetadataRef = useRef<FileEncryptionMetadata | null>(null);
     const pendingEncryptedPayloadRef = useRef<{
         content: string;
-        metadata: any;
+        metadata: FileEncryptionMetadata | null;
         title: string;
         version: number;
         etag: string | null;
@@ -624,7 +625,7 @@ export function useEditorOrchestrator({
                     let isIdenticalContent = content === saveRes.serverVersion.content;
                     if (!isIdenticalContent && isEncryptedRef.current && saveRes.serverVersion.content) {
                         const masterKey = sessionKeyStore.getMasterKeyRaw();
-                        const serverMeta = (saveRes.serverVersion as any).encryptionMetadata || fileEncryptionMetadataRef.current;
+                        const serverMeta = saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current;
                         const serverIvStr = serverMeta?.iv;
                         if (masterKey && serverIvStr) {
                             try {
@@ -887,7 +888,7 @@ export function useEditorOrchestrator({
         setHydration("ready");
         if (adapterRef.current) adapterRef.current.setEditable(true);
         pendingEncryptedPayloadRef.current = null;
-    }, [fileId, userId]);
+    }, [fileId, resolveEffectiveUserId]);
 
     // Initial Load - Offline-First with Background Server Sync
     useEffect(() => {
@@ -920,7 +921,7 @@ export function useEditorOrchestrator({
                         if (fileIsEncrypted && !sessionKeyStore.hasMasterKey()) {
                             pendingEncryptedPayloadRef.current = {
                                 content: localFile.content || "",
-                                metadata: localFile.encryptionMetadata,
+                                metadata: localFile.encryptionMetadata || null,
                                 title: localFile.title,
                                 version: localFile.version || 1,
                                 etag: localFile.etag || null,
@@ -1135,10 +1136,11 @@ export function useEditorOrchestrator({
             pipelineRef.current = null;
         });
 
+        const autoSaveInstance = debouncedAutoSaveRef.current;
         return () => {
             cancelled = true;
             // AUD-01 Invariant: Cancel pending delayed auto-save timer for departing file
-            debouncedAutoSaveRef.current?.cancel?.();
+            autoSaveInstance?.cancel?.();
 
             // Durability guard: Flush dirty uncommitted edits locally to IndexedDB before route switch
             if (isDirtyRef.current && adapterRef.current && syncHookRef.current?.isInitialized) {
@@ -1189,7 +1191,7 @@ export function useEditorOrchestrator({
                     isEncryptedRef.current = true;
                     setIsEncrypted(true);
                     if (event.metadata) {
-                        fileEncryptionMetadataRef.current = event.metadata;
+                        fileEncryptionMetadataRef.current = event.metadata as FileEncryptionMetadata;
                     }
                     if (event.version) {
                         fileVersionRef.current = event.version;
@@ -1354,7 +1356,7 @@ export function useEditorOrchestrator({
                         // Defensive Guard (AUD-03): Server version resolution payload is already authenticated ciphertext.
                         // Bypass re-encryption to eliminate double-encryption corruption loops.
                         contentToSend = resolution.content;
-                        metaToSend = (activeConflict.serverVersion as any).encryptionMetadata || fileEncryptionMetadataRef.current;
+                        metaToSend = activeConflict.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current;
                     } else {
                         const masterKey = sessionKeyStore.getMasterKeyRaw();
                         if (!masterKey) {
