@@ -384,4 +384,97 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
             expect(res.error).toContain('DB Transaction Deadlock');
         }
     });
+
+    it('should reject commitAIFileOperation if file is encrypted and no encryptionMetadata is provided', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
+
+        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+            id: 'res-enc-1',
+            operationId: 'op-enc-plain',
+            userId: 'user-1',
+            fileId: 'file-enc',
+            status: 'reserved',
+            reservedUnits: 100,
+        } as any);
+
+        vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
+            id: 'file-enc',
+            userId: 'user-1',
+            version: 1,
+            etag: 'etag-v1',
+            isEncrypted: true,
+            updatedAt: new Date(),
+        } as any);
+
+        const res = await commitAIFileOperation({
+            operationId: 'op-enc-plain',
+            fileId: 'file-enc',
+            expectedVersion: 1,
+            resultContent: 'Plaintext attempt on encrypted file',
+        });
+
+        expect(res.success).toBe(false);
+        expect(res.status).toBe('error');
+        if ('error' in res) {
+            expect(res.error).toContain('Cannot commit unencrypted content to an encrypted file');
+        }
+    });
+
+    it('should successfully commit encrypted content and persist encryptionMetadata for encrypted files', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
+
+        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+            id: 'res-enc-2',
+            operationId: 'op-enc-valid',
+            userId: 'user-1',
+            fileId: 'file-enc',
+            status: 'reserved',
+            reservedUnits: 100,
+        } as any);
+
+        vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
+            id: 'file-enc',
+            userId: 'user-1',
+            version: 1,
+            etag: 'etag-v1',
+            isEncrypted: true,
+            updatedAt: new Date(),
+        } as any);
+
+        const mockEncryptedMeta = {
+            version: 1,
+            algorithm: 'AES-GCM-256',
+            keyId: 'master-v1',
+            salt: '',
+            iv: 'valid-iv-base64',
+            kdfIterations: 600000,
+        };
+
+        const txMock = {
+            update: vi.fn(() => ({
+                set: vi.fn(() => ({
+                    where: vi.fn(() => ({
+                        returning: vi.fn().mockResolvedValue([
+                            { id: 'file-enc', version: 2, etag: 'etag-v2', status: 'committed' },
+                        ]),
+                    })),
+                })),
+            })),
+        };
+
+        vi.mocked(txDb.transaction).mockImplementationOnce(async (callback: any) => {
+            return callback(txMock);
+        });
+
+        const res = await commitAIFileOperation({
+            operationId: 'op-enc-valid',
+            fileId: 'file-enc',
+            expectedVersion: 1,
+            resultContent: 'ciphertext-base64-payload==',
+            encryptionMetadata: mockEncryptedMeta,
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.status).toBe('committed');
+    });
 });
