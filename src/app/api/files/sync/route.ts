@@ -139,6 +139,8 @@ export async function GET(request: NextRequest) {
             id: file.id,
             title: file.title,
             content: file.content,
+            isEncrypted: file.isEncrypted,
+            encryptionMetadata: file.encryptionMetadata,
             etag: file.etag,
             version: file.version,
             parentFolderId: file.parentFolderId,

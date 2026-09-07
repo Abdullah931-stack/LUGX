@@ -25,6 +25,8 @@ export interface FileOpResult<T = typeof schema.files.$inferSelect> {
         etag?: string | null;
         updatedAt?: string;
         content?: string | null;
+        isEncrypted?: boolean | null;
+        encryptionMetadata?: any;
     };
 }
 
@@ -174,6 +176,14 @@ export async function updateFileContent(
             return { success: false, status: "error", error: "Cannot update content of a folder" };
         }
 
+        if (currentFile.isEncrypted) {
+            return {
+                success: false,
+                status: "error",
+                error: "Cannot directly update encrypted file with plaintext. Use toggleFileEncryption or encrypted envelope pipeline.",
+            };
+        }
+
         const currentVersion = currentFile.version ?? 0;
 
         // Verify optimistic lock precondition if supplied
@@ -187,6 +197,8 @@ export async function updateFileContent(
                     etag: currentFile.etag,
                     updatedAt: currentFile.updatedAt.toISOString(),
                     content: currentFile.content,
+                    isEncrypted: currentFile.isEncrypted,
+                    encryptionMetadata: currentFile.encryptionMetadata,
                 },
             };
         }
@@ -201,6 +213,8 @@ export async function updateFileContent(
                     etag: currentFile.etag,
                     updatedAt: currentFile.updatedAt.toISOString(),
                     content: currentFile.content,
+                    isEncrypted: currentFile.isEncrypted,
+                    encryptionMetadata: currentFile.encryptionMetadata,
                 },
             };
         }
@@ -239,6 +253,8 @@ export async function updateFileContent(
                         etag: refreshed.etag,
                         updatedAt: refreshed.updatedAt.toISOString(),
                         content: refreshed.content,
+                        isEncrypted: refreshed.isEncrypted,
+                        encryptionMetadata: refreshed.encryptionMetadata,
                     },
                 };
             }
@@ -251,6 +267,121 @@ export async function updateFileContent(
     } catch (error) {
         console.error("Update file error:", error);
         return { success: false, status: "error", error: "Failed to update file" };
+    }
+}
+
+/**
+ * Atomically toggle file encryption state, updating content and encryption metadata
+ * with optimistic concurrency control.
+ */
+export async function toggleFileEncryption(
+    fileId: string,
+    isEncrypted: boolean,
+    content: string,
+    encryptionMetadata?: {
+        version: number;
+        algorithm: string;
+        keyId: string;
+        salt: string;
+        iv: string;
+        kdfIterations?: number;
+    } | null,
+    options?: UpdateFileOptions
+): Promise<FileOpResult> {
+    try {
+        const user = await getUser();
+        if (!user) {
+            return { success: false, status: "unauthorized", error: "Authentication required" };
+        }
+
+        const currentFile = await db.query.files.findFirst({
+            where: and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id),
+                isNull(schema.files.deletedAt)
+            ),
+        });
+
+        if (!currentFile) {
+            return { success: false, status: "not_found", error: "File not found or deleted" };
+        }
+
+        if (currentFile.isFolder) {
+            return { success: false, status: "error", error: "Cannot toggle encryption on a folder" };
+        }
+
+        const currentVersion = currentFile.version ?? 0;
+
+        if (options?.expectedVersion !== undefined && options.expectedVersion !== currentVersion) {
+            return {
+                success: false,
+                status: "conflict",
+                error: "Conflict: this file was modified by another session.",
+                serverVersion: {
+                    version: currentFile.version,
+                    etag: currentFile.etag,
+                    updatedAt: currentFile.updatedAt.toISOString(),
+                    content: currentFile.content,
+                    isEncrypted: currentFile.isEncrypted,
+                    encryptionMetadata: currentFile.encryptionMetadata,
+                },
+            };
+        }
+
+        if (options?.expectedETag && currentFile.etag && options.expectedETag !== currentFile.etag) {
+            return {
+                success: false,
+                status: "conflict",
+                error: "Conflict: ETag mismatch detected.",
+                serverVersion: {
+                    version: currentFile.version,
+                    etag: currentFile.etag,
+                    updatedAt: currentFile.updatedAt.toISOString(),
+                    content: currentFile.content,
+                    isEncrypted: currentFile.isEncrypted,
+                    encryptionMetadata: currentFile.encryptionMetadata,
+                },
+            };
+        }
+
+        const normalizedContent = normalizeMarkdownSource(content);
+        const baseVersion = options?.expectedVersion ?? currentVersion;
+        const newVersion = baseVersion + 1;
+        const now = new Date();
+        const newEtag = generateETagSync({ id: fileId, content: normalizedContent, updatedAt: now });
+
+        const [updated] = await db
+            .update(schema.files)
+            .set({
+                content: normalizedContent,
+                isEncrypted,
+                encryptionMetadata: isEncrypted ? encryptionMetadata : null,
+                etag: newEtag,
+                version: newVersion,
+                updatedAt: now,
+            })
+            .where(and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id),
+                eq(schema.files.version, baseVersion),
+                isNull(schema.files.deletedAt)
+            ))
+            .returning();
+
+        if (!updated) {
+            return { success: false, status: "conflict", error: "Concurrent update conflict detected" };
+        }
+
+        try {
+            revalidatePath("/workspace");
+        } catch {
+            // Standalone testing safe
+        }
+
+        return { success: true, etag: newEtag, version: newVersion, data: updated };
+    } catch (error) {
+        console.error("Toggle file encryption error:", error);
+        return { success: false, status: "error", error: "Failed to toggle file encryption" };
     }
 }
 
@@ -520,7 +651,12 @@ export async function restoreFile(
 export async function copyFile(
     fileId: string,
     newParentFolderId?: string | null,
-    depth = 0
+    depth = 0,
+    encryptedOverride?: {
+        newFileId?: string;
+        content?: string;
+        encryptionMetadata?: any;
+    }
 ): Promise<FileOpResult> {
     try {
         const MAX_DEPTH = 20;
@@ -540,6 +676,15 @@ export async function copyFile(
         }
 
         const original = originalResult.data;
+
+        // Zero-knowledge security guard: If file is encrypted and no client-side re-encrypted payload is provided, block copy
+        if (original.isEncrypted && !encryptedOverride) {
+            return {
+                success: false,
+                status: "error",
+                error: "Encrypted files require client-side re-encryption with a unique authentication tag. Please copy via the workspace UI.",
+            };
+        }
 
         // Validate destination parent folder if specified
         const targetParentId = newParentFolderId !== undefined
@@ -585,17 +730,28 @@ export async function copyFile(
             copyTitle = generateCopyTitle(original.title, copyCounter);
         }
 
-        const newFileId = randomUUID();
+        const newFileId = (original.isEncrypted && encryptedOverride?.newFileId)
+            ? encryptedOverride.newFileId
+            : randomUUID();
         const now = new Date();
+
+        const finalContent = original.isFolder
+            ? null
+            : (encryptedOverride?.content !== undefined ? encryptedOverride.content : (original.content || ""));
 
         // Single-step atomic ETag generation
         const etag = original.isFolder
             ? null
             : generateETagSync({
                 id: newFileId,
-                content: original.content || "",
+                content: finalContent || "",
                 updatedAt: now,
             });
+
+        const isEnc = original.isEncrypted ? true : false;
+        const encMeta = (original.isEncrypted && encryptedOverride)
+            ? encryptedOverride.encryptionMetadata
+            : null;
 
         const [copiedFile] = await db
             .insert(schema.files)
@@ -605,7 +761,9 @@ export async function copyFile(
                 title: copyTitle,
                 parentFolderId: targetParentId,
                 isFolder: original.isFolder,
-                content: original.isFolder ? null : original.content,
+                content: finalContent,
+                isEncrypted: isEnc,
+                encryptionMetadata: encMeta,
                 etag,
                 version: 1,
                 createdAt: now,
@@ -618,7 +776,10 @@ export async function copyFile(
             const childrenResult = await getFolderChildren(fileId);
             if (childrenResult.success && childrenResult.data) {
                 for (const child of childrenResult.data) {
-                    await copyFile(child.id, copiedFile.id, depth + 1);
+                    // Deep copy unencrypted children (encrypted children require client re-encryption)
+                    if (!child.isEncrypted) {
+                        await copyFile(child.id, copiedFile.id, depth + 1);
+                    }
                 }
             }
         }

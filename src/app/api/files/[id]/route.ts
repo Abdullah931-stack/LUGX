@@ -46,6 +46,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             id: file.id,
             title: file.title,
             content: file.content,
+            isEncrypted: file.isEncrypted,
+            encryptionMetadata: file.encryptionMetadata,
             etag: file.etag,
             version: file.version,
             parentFolderId: file.parentFolderId,
@@ -81,11 +83,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
         const body = await request.json().catch(() => ({}));
-        const { content, title, expectedVersion, baseVersion } = body as {
+        const { content, title, expectedVersion, baseVersion, isEncrypted, encryptionMetadata } = body as {
             content?: string;
             title?: string;
             expectedVersion?: number;
             baseVersion?: number;
+            isEncrypted?: boolean;
+            encryptionMetadata?: any;
         };
 
         const ifMatch = parseETagHeader(request.headers.get('If-Match'));
@@ -114,6 +118,15 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             return NextResponse.json({ error: 'Cannot update content of a folder' }, { status: 400 });
         }
 
+        if (currentFile.isEncrypted && isEncrypted !== false && content !== undefined) {
+            const effectiveMetadata = encryptionMetadata || currentFile.encryptionMetadata;
+            if (!effectiveMetadata?.iv) {
+                return NextResponse.json({
+                    error: 'Cannot update content of an encrypted file without valid encryption metadata',
+                }, { status: 400 });
+            }
+        }
+
         // Check If-Match condition
         if (ifMatch && currentFile.etag && ifMatch !== currentFile.etag) {
             const headers = new Headers({ 'Content-Type': 'application/json', 'ETag': formatETagHeader(currentFile.etag) });
@@ -124,6 +137,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
                     etag: currentFile.etag,
                     version: currentFile.version,
                     content: currentFile.content,
+                    isEncrypted: currentFile.isEncrypted,
+                    encryptionMetadata: currentFile.encryptionMetadata,
                     updatedAt: currentFile.updatedAt.toISOString(),
                 },
             }), { status: 412, headers });
@@ -140,6 +155,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
                     etag: currentFile.etag,
                     version: currentFile.version,
                     content: currentFile.content,
+                    isEncrypted: currentFile.isEncrypted,
+                    encryptionMetadata: currentFile.encryptionMetadata,
                     updatedAt: currentFile.updatedAt.toISOString(),
                 },
             }), { status: 412, headers });
@@ -157,6 +174,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             .set({
                 content: newContent,
                 title: newTitle,
+                isEncrypted: isEncrypted !== undefined ? isEncrypted : currentFile.isEncrypted,
+                encryptionMetadata: isEncrypted !== undefined
+                    ? (isEncrypted ? (encryptionMetadata ?? currentFile.encryptionMetadata) : null)
+                    : (encryptionMetadata !== undefined ? encryptionMetadata : currentFile.encryptionMetadata),
                 etag: newEtag,
                 version: newVersion,
                 updatedAt: now,
@@ -184,6 +205,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
                         etag: refreshed.etag,
                         version: refreshed.version,
                         content: refreshed.content,
+                        isEncrypted: refreshed.isEncrypted,
+                        encryptionMetadata: refreshed.encryptionMetadata,
                         updatedAt: refreshed.updatedAt.toISOString(),
                     },
                 }), { status: 412, headers });

@@ -23,7 +23,6 @@ import {
     OperationsGarbageCollector,
     normalizeMarkdownSource,
     RemoteUpdateEvent,
-    sessionKeyStore,
 } from '@/lib/sync';
 
 export interface UseSyncOptions {
@@ -44,6 +43,9 @@ export interface UseSyncReturn {
     saveLocal: (file: Partial<IDBFile> & { id: string; content: string }) => Promise<void>;
     loadLocal: (fileId: string) => Promise<IDBFile | null>;
     markDirty: (fileId: string) => Promise<void>;
+    idb: IndexedDBManager | null;
+    saveCachedVaultProfile: (profile: any) => Promise<void>;
+    getCachedVaultProfile: () => Promise<any | null>;
 }
 
 export function useSync(options: UseSyncOptions): UseSyncReturn {
@@ -87,7 +89,6 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 gcRef.current.cleanup();
                 gcRef.current = null;
             }
-            sessionKeyStore.purgeKeys();
             const resetTimer = setTimeout(() => {
                 setStatus('stopped');
                 setIsInitialized(false);
@@ -228,7 +229,6 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             scopedGC.cleanup();
             scopedSyncManager.destroy();
             scopedIdb.close();
-            sessionKeyStore.purgeKeys();
 
             if (syncManagerRef.current === scopedSyncManager) {
                 syncManagerRef.current = null;
@@ -285,6 +285,8 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 version: existingFile.version,
                 title: existingFile.title,
                 parentFolderId: existingFile.parentFolderId,
+                isEncrypted: file.isEncrypted ?? existingFile.isEncrypted ?? false,
+                encryptionMetadata: file.encryptionMetadata ?? existingFile.encryptionMetadata ?? null,
             };
         } else if (file.isDirty === false) {
             // Clean file: baseSnapshot matches confirmed state
@@ -294,6 +296,8 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 version: file.version !== undefined ? file.version : (existingFile?.version || 0),
                 title: file.title || existingFile?.title || 'Untitled',
                 parentFolderId: file.parentFolderId || existingFile?.parentFolderId || null,
+                isEncrypted: file.isEncrypted ?? existingFile?.isEncrypted ?? false,
+                encryptionMetadata: file.encryptionMetadata ?? existingFile?.encryptionMetadata ?? null,
             };
         }
 
@@ -305,6 +309,8 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             version: file.version !== undefined ? file.version : (existingFile?.version || 0),
             parentFolderId: file.parentFolderId || existingFile?.parentFolderId || null,
             isFolder: file.isFolder ?? existingFile?.isFolder ?? false,
+            isEncrypted: file.isEncrypted !== undefined ? file.isEncrypted : (existingFile?.isEncrypted ?? false),
+            encryptionMetadata: file.encryptionMetadata !== undefined ? file.encryptionMetadata : (existingFile?.encryptionMetadata ?? null),
             lastModified: Date.now(),
             lastSyncedAt: file.isDirty === false ? Date.now() : (existingFile?.lastSyncedAt || 0),
             isDirty: file.isDirty !== undefined ? file.isDirty : true,
@@ -329,6 +335,7 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 previousContent: baseSnapshot?.content || (existingFile ? normalizeMarkdownSource(existingFile.content) : ''),
                 timestamp: Date.now(),
                 synced: false,
+                isEncrypted: idbFile.isEncrypted,
                 snapshot: baseSnapshot ? {
                     content: baseSnapshot.content,
                     etag: baseSnapshot.etag,
@@ -363,6 +370,18 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
         setPendingCount(dirtyFiles.length);
     }, [userId]);
 
+    const saveCachedVaultProfile = useCallback(async (profile: any): Promise<void> => {
+        const activeIdb = idbManagerRef.current;
+        if (!activeIdb) return;
+        await activeIdb.saveCachedVaultProfile(profile);
+    }, []);
+
+    const getCachedVaultProfile = useCallback(async (): Promise<any | null> => {
+        const activeIdb = idbManagerRef.current;
+        if (!activeIdb) return null;
+        return activeIdb.getCachedVaultProfile();
+    }, []);
+
     return {
         status,
         connectionState,
@@ -374,5 +393,8 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
         saveLocal,
         loadLocal,
         markDirty,
+        idb: idbManagerRef.current,
+        saveCachedVaultProfile,
+        getCachedVaultProfile,
     };
 }

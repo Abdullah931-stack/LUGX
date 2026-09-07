@@ -23,6 +23,7 @@ import {
     base64ToUint8Array,
 } from './crypto-worker-bridge';
 import { sessionKeyStore } from './session-key-store';
+import { DeviceTrustEnvelope } from './types/vault';
 
 interface LocalEncryptedPayload {
     readonly _enc: 1;
@@ -413,7 +414,11 @@ class IndexedDBManager {
     /**
      * Retrieves and decrypts a file record by ID
      */
-    async getFile(id: string): Promise<IDBFile | undefined> {
+    async getFile(id: string, userId?: string): Promise<IDBFile | undefined> {
+        const targetUserId = userId?.trim() || this.userId;
+        if (targetUserId && (this.userId !== targetUserId || !this.db)) {
+            await this.init(targetUserId);
+        }
         const db = await this.getDB();
         const raw = await new Promise<IDBFile | undefined>((resolve, reject) => {
             const tx = db.transaction(IDB_CONFIG.STORES.FILES, 'readonly');
@@ -429,7 +434,11 @@ class IndexedDBManager {
     /**
      * Encrypts and saves a file record to IndexedDB
      */
-    async saveFile(file: IDBFile): Promise<void> {
+    async saveFile(file: IDBFile, userId?: string): Promise<void> {
+        const targetUserId = userId?.trim() || this.userId;
+        if (targetUserId && (this.userId !== targetUserId || !this.db)) {
+            await this.init(targetUserId);
+        }
         const encryptedFile = await this.encryptFileForStorage(file);
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
@@ -1072,6 +1081,131 @@ class IndexedDBManager {
     async isStorageNearlyFull(): Promise<boolean> {
         const { percentage } = await this.getStorageEstimate();
         return percentage > 80;
+    }
+
+    /**
+     * Cache the user's encrypted vault profile locally in sync_metadata store
+     * to support offline unlocking and key derivation.
+     */
+    async saveCachedVaultProfile(profile: any, userId?: string): Promise<void> {
+        if (!profile) return;
+        const targetUserId = userId?.trim() || this.userId;
+        if (!targetUserId) {
+            console.warn('[IndexedDB] saveCachedVaultProfile: Skipped - No valid userId available');
+            return;
+        }
+        if (this.userId !== targetUserId || !this.db) {
+            await this.init(targetUserId);
+        }
+        const db = await this.getDB();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readwrite');
+            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).put({
+                id: 'vault_profile',
+                profile,
+                updatedAt: Date.now(),
+            });
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /**
+     * Retrieve cached vault profile for offline unlocking.
+     * Safely returns null if no valid userId is available to avoid unhandled rejections.
+     */
+    async getCachedVaultProfile(userId?: string): Promise<any | null> {
+        const targetUserId = userId?.trim() || this.userId;
+        if (!targetUserId) {
+            console.warn('[IndexedDB] getCachedVaultProfile: No valid userId available, returning null');
+            return null;
+        }
+        if (this.userId !== targetUserId || !this.db) {
+            await this.init(targetUserId);
+        }
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readonly');
+            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).get('vault_profile');
+            req.onsuccess = () => {
+                if (req.result && req.result.profile) {
+                    resolve(req.result.profile);
+                } else {
+                    resolve(null);
+                }
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /**
+     * Save or update the device trust envelope (PIN-wrapped master key) in sync_metadata
+     */
+    async saveDeviceTrustEnvelope(envelope: DeviceTrustEnvelope, userId?: string): Promise<void> {
+        if (!envelope) return;
+        const targetUserId = userId?.trim() || this.userId;
+        if (!targetUserId) {
+            console.warn('[IndexedDB] saveDeviceTrustEnvelope: Skipped - No valid userId available');
+            return;
+        }
+        if (this.userId !== targetUserId || !this.db) {
+            await this.init(targetUserId);
+        }
+        const db = await this.getDB();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readwrite');
+            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).put({
+                id: 'device_trust_envelope',
+                envelope,
+                updatedAt: Date.now(),
+            });
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /**
+     * Retrieve the device trust envelope for quick PIN unlock
+     */
+    async getDeviceTrustEnvelope(userId?: string): Promise<DeviceTrustEnvelope | null> {
+        const targetUserId = userId?.trim() || this.userId;
+        if (!targetUserId) {
+            return null;
+        }
+        if (this.userId !== targetUserId || !this.db) {
+            await this.init(targetUserId);
+        }
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readonly');
+            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).get('device_trust_envelope');
+            req.onsuccess = () => {
+                if (req.result && req.result.envelope) {
+                    resolve(req.result.envelope);
+                } else {
+                    resolve(null);
+                }
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /**
+     * Delete the device trust envelope, revoking trusted device status locally
+     */
+    async clearDeviceTrustEnvelope(userId?: string): Promise<void> {
+        const targetUserId = userId?.trim() || this.userId;
+        if (!targetUserId) return;
+        if (this.userId !== targetUserId || !this.db) {
+            await this.init(targetUserId);
+        }
+        const db = await this.getDB();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readwrite');
+            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).delete('device_trust_envelope');
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
     }
 
     close(): void {

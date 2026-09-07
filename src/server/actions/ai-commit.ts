@@ -14,6 +14,14 @@ export interface CommitAIFileOperationParams {
     expectedVersion: number;
     expectedETag?: string | null;
     resultContent: string;
+    encryptionMetadata?: {
+        version: number;
+        algorithm: string;
+        keyId: string;
+        salt: string;
+        iv: string;
+        kdfIterations?: number;
+    } | null;
     originalContent?: string;
 }
 
@@ -136,6 +144,15 @@ export async function commitAIFileOperation(
             return { success: false, status: "error", error: "File not found or deleted" };
         }
 
+        // Zero-Knowledge Defense: Disallow committing plaintext to an encrypted file
+        if (currentFile.isEncrypted && !params.encryptionMetadata?.iv) {
+            return {
+                success: false,
+                status: "error",
+                error: "Cannot commit unencrypted content to an encrypted file without encryption metadata",
+            };
+        }
+
         const normalizeETag = (t?: string | null) => (t ? t.replace(/^W\//, "").replace(/"/g, "") : null);
         const fileCurrentVersion = currentFile.version ?? 0;
         let baseVersion = expectedVersion;
@@ -200,6 +217,9 @@ export async function commitAIFileOperation(
                     .update(schema.files)
                     .set({
                         content: resultContent,
+                        encryptionMetadata: currentFile.isEncrypted
+                            ? (params.encryptionMetadata ?? currentFile.encryptionMetadata)
+                            : null,
                         etag: newEtag,
                         version: newVersion,
                         updatedAt: now,
@@ -263,6 +283,9 @@ export async function commitAIFileOperation(
                 .update(schema.files)
                 .set({
                     content: resultContent,
+                    encryptionMetadata: currentFile.isEncrypted
+                        ? (params.encryptionMetadata ?? currentFile.encryptionMetadata)
+                        : null,
                     etag: newEtag,
                     version: newVersion,
                     updatedAt: now,

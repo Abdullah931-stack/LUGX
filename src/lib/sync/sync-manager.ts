@@ -605,6 +605,8 @@ class SyncManager {
                         body: JSON.stringify({
                             content: file.content,
                             title: file.title,
+                            isEncrypted: file.isEncrypted ?? false,
+                            encryptionMetadata: file.encryptionMetadata ?? null,
                             operationId: op.operationId || op.id,
                             baseVersion: op.baseVersion ?? file.version,
                             expectedVersion: op.baseVersion ?? file.version,
@@ -794,6 +796,8 @@ class SyncManager {
                         body: JSON.stringify({
                             content: file.content,
                             title: file.title,
+                            isEncrypted: file.isEncrypted ?? false,
+                            encryptionMetadata: file.encryptionMetadata ?? null,
                             expectedVersion: file.version ?? 1,
                         }),
                         signal,
@@ -1111,6 +1115,20 @@ class SyncManager {
                     isDirty: false,
                 };
                 await this.idb.saveFile(updatedFile);
+                const ops = await this.idb.getOperations(localFile.id);
+                for (const op of ops) {
+                    if (!op.synced) {
+                        await this.idb.updateOperationStatus(op.id, 'synced', { synced: true });
+                    }
+                }
+            } else if (resolution === 'local') {
+                // When local resolution is selected, clear dirty flag and mark all operations as synced
+                const refreshedFile = await this.idb.getFile(localFile.id);
+                if (refreshedFile) {
+                    refreshedFile.isDirty = false;
+                    refreshedFile.lastSyncedAt = Date.now();
+                    await this.idb.saveFile(refreshedFile);
+                }
                 const ops = await this.idb.getOperations(localFile.id);
                 for (const op of ops) {
                     if (!op.synced) {
