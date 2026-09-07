@@ -16,14 +16,17 @@ export type {
   SyntaxValidationResult,
   CryptoWorkerAction,
   CryptoWorkerRequest,
-  CryptoWorkerResponse
+  CryptoWorkerResponse,
+  DeviceTrustEnvelope
 } from './types/vault';
 export {
   AADIntegrityError,
   InvalidCiphertextOrKeyError,
   CryptoWorkerBridgeError,
   KeyDerivationError,
-  SessionKeyStoreError
+  SessionKeyStoreError,
+  InvalidPinError,
+  DeviceTrustRevokedError
 } from './types/vault';
 
 // IndexedDB
@@ -78,6 +81,9 @@ export {
   unwrapMasterKeyWithPassword,
   wrapMasterKeyWithRecoverySeed,
   unwrapMasterKeyWithRecoverySeed,
+  deriveKEKFromPin,
+  wrapMasterKeyWithPin,
+  unwrapMasterKeyWithPin,
   encryptEnvelope,
   decryptEnvelope
 } from './encryption';
@@ -100,3 +106,14 @@ export {
   BIP39_WORDLIST
 } from './mnemonic';
 export type { MnemonicValidationResult } from './mnemonic';
+
+// WebAuthn PRF (Hardware-Bound Biometric Trust)
+export {
+  isWebAuthnPrfSupported,
+  checkWebAuthnSupportStatus,
+  createWebAuthnPrfEnvelope,
+  unwrapMasterKeyWithWebAuthnPrf,
+  derivePrfKek
+} from './webauthn-prf';
+export type { WebAuthnSupportStatus } from './webauthn-prf';
+

@@ -6,10 +6,11 @@
  */
 
 export interface CrossTabSyncEvent {
-    type: 'file_saved' | 'conflict_resolved' | 'file_deleted';
-    fileId: string;
+    type: 'file_saved' | 'conflict_resolved' | 'file_deleted' | 'file_encrypted' | 'file_decrypted' | 'vault_unlocked' | 'vault_locked';
+    fileId?: string;
     version?: number;
     etag?: string;
+    metadata?: any;
     timestamp: number;
     senderTabId: string;
 }

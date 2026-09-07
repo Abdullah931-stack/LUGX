@@ -13,10 +13,12 @@ import { SessionKeyStoreError } from './types/vault';
 
 export type KeyStoreListener = (isUnlocked: boolean) => void;
 
+const SESSION_STORAGE_VAULT_KEY = 'lugx_vault_session_v1';
+
 export interface SessionKeyStoreConfig {
   /**
    * Inactivity timeout in milliseconds before vault automatically locks.
-   * Default: 15 minutes (900,000 ms). 0 disables auto-lock.
+   * Default: 1 hour (3,600,000 ms). 0 disables auto-lock.
    */
   inactivityTimeoutMs?: number;
 }
@@ -29,7 +31,7 @@ export class SessionKeyStore {
   private keyVersion = 1;
 
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
-  private inactivityTimeoutMs = 15 * 60 * 1000; // 15 minutes default
+  private inactivityTimeoutMs = 60 * 60 * 1000; // 1 hour default (3,600,000 ms)
   private lastActivityTimestamp = 0;
   private listeners = new Set<KeyStoreListener>();
 
@@ -45,6 +47,13 @@ export class SessionKeyStore {
   public setInactivityTimeout(ms: number): void {
     this.inactivityTimeoutMs = ms;
     this.touch();
+  }
+
+  /**
+   * Returns current inactivity auto-lock timeout in milliseconds
+   */
+  public getInactivityTimeout(): number {
+    return this.inactivityTimeoutMs;
   }
 
   /**
@@ -207,6 +216,14 @@ export class SessionKeyStore {
 
     this.masterKey = null;
     this.lastActivityTimestamp = 0;
+
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        window.sessionStorage.removeItem(SESSION_STORAGE_VAULT_KEY);
+      } catch {
+        // ignore
+      }
+    }
   }
 
   private purgeLocalDeviceKey(): void {

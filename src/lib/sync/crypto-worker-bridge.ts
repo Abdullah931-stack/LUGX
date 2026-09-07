@@ -41,7 +41,7 @@ export class CryptoWorkerBridge {
   private isInitialized = false;
   private isTerminated = false;
 
-  constructor(private readonly timeoutMs = 5000) {}
+  constructor(private readonly timeoutMs?: number) {}
 
   /**
    * Diagnostic accessors for observability and failure testing
@@ -56,6 +56,17 @@ export class CryptoWorkerBridge {
 
   public getWorkerInstance(): Worker | null {
     return this.worker;
+  }
+
+  public resetWorker(): void {
+    if (this.worker) {
+      try {
+        this.worker.terminate();
+      } catch {}
+      this.worker = null;
+    }
+    this.isInitialized = false;
+    this.isTerminated = false;
   }
 
   /**
@@ -158,16 +169,30 @@ export class CryptoWorkerBridge {
     return await this.executeDirectTask(action, payload);
   }
 
+  private static readonly TASK_SPECIFIC_TIMEOUTS: Partial<Record<CryptoWorkerAction, number>> = {
+    DERIVE_KEY_RAW: 30000,
+    WRAP_KEY_RAW: 30000,
+    UNWRAP_KEY_RAW: 30000,
+    GENERATE_MNEMONIC: 15000,
+    MNEMONIC_TO_SEED: 30000,
+    ENCRYPT_AES_GCM: 10000,
+    DECRYPT_AES_GCM: 10000,
+    GENERATE_RANDOM_BYTES: 10000,
+  };
+
   private dispatchToWorker<A extends CryptoWorkerAction>(
     action: A,
     payload: CryptoWorkerRequestPayloads[A]
   ): Promise<any> {
     const id = `crypto-task-${Date.now()}-${++this.requestCounter}`;
+    const taskTimeout = this.timeoutMs !== undefined
+      ? this.timeoutMs
+      : (CryptoWorkerBridge.TASK_SPECIFIC_TIMEOUTS[action] ?? 10000);
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(async () => {
         if (this.pendingRequests.has(id)) {
-          console.warn(`[CryptoWorkerBridge] Task ${action} timed out in worker after ${this.timeoutMs}ms. Tripping circuit breaker and draining queue...`);
+          console.warn(`[CryptoWorkerBridge] Task ${action} timed out in worker after ${taskTimeout}ms. Tripping circuit breaker and draining queue...`);
 
           if (this.worker) {
             try {
@@ -182,7 +207,7 @@ export class CryptoWorkerBridge {
           // Seamless self-healing fallback for this task and all queued tasks
           await this.drainPendingRequestsToFallback(`Worker timeout on task ${action}`);
         }
-      }, this.timeoutMs);
+      }, taskTimeout);
 
       this.pendingRequests.set(id, { action, payload, resolve, reject, timer });
 

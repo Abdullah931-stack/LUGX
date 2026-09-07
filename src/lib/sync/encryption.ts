@@ -9,7 +9,10 @@
 import {
   EncryptedEnvelope,
   AADIntegrityError,
-  InvalidCiphertextOrKeyError
+  InvalidCiphertextOrKeyError,
+  DeviceTrustEnvelope,
+  InvalidPinError,
+  DeviceTrustRevokedError
 } from './types/vault';
 import {
   cryptoWorkerBridge,
@@ -184,6 +187,108 @@ export async function unwrapMasterKeyWithRecoverySeed(
 
   try {
     return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, aad);
+  } finally {
+    wipeBuffer(kek);
+    wipeBuffer(iv);
+  }
+}
+
+/**
+ * Derives a 256-bit KEK from a 6-digit PIN using PBKDF2
+ */
+export async function deriveKEKFromPin(
+  pin: string,
+  saltBytes: Uint8Array,
+  iterations = 600000
+): Promise<Uint8Array> {
+  const cleanPin = pin.trim();
+  if (!/^\d{6}$/.test(cleanPin)) {
+    throw new InvalidPinError('PIN must consist of exactly 6 digits (0-9)');
+  }
+
+  const pinBytes = new TextEncoder().encode(cleanPin);
+  try {
+    return await cryptoWorkerBridge.deriveKeyRaw(
+      pinBytes,
+      saltBytes,
+      iterations,
+      256
+    );
+  } finally {
+    wipeBuffer(pinBytes);
+  }
+}
+
+/**
+ * Wraps (encrypts) the Master Key with a PIN-derived KEK for trusted device persistence
+ */
+export async function wrapMasterKeyWithPin(
+  masterKeyBytes: Uint8Array,
+  pin: string,
+  saltBytes: Uint8Array,
+  userId: string,
+  deviceTrustEpoch = 1,
+  iterations = 600000
+): Promise<DeviceTrustEnvelope> {
+  const kek = await deriveKEKFromPin(pin, saltBytes, iterations);
+  const iv = await generateIV(12);
+  const aad = `trusted_device:${userId}:${deviceTrustEpoch}`;
+
+  try {
+    const wrapped = await cryptoWorkerBridge.wrapKeyRaw(kek, masterKeyBytes, iv, aad);
+    const now = Date.now();
+    return {
+      version: 1,
+      algorithm: 'AES-GCM-256',
+      encryptedMasterKey: wrapped.wrappedKeyBase64,
+      salt: arrayBufferToBase64(saltBytes),
+      iv: wrapped.ivBase64,
+      kdfIterations: iterations,
+      deviceTrustEpoch,
+      trustedAt: now,
+      expiresAt: now + 30 * 24 * 60 * 60 * 1000, // 30 days validity
+      failedAttempts: 0,
+    };
+  } finally {
+    wipeBuffer(kek);
+    wipeBuffer(iv);
+  }
+}
+
+/**
+ * Unwraps (decrypts) the Master Key using the user's PIN on a trusted device
+ */
+export async function unwrapMasterKeyWithPin(
+  envelope: DeviceTrustEnvelope,
+  pin: string,
+  userId: string
+): Promise<Uint8Array> {
+  if (Date.now() > envelope.expiresAt) {
+    throw new DeviceTrustRevokedError('Trusted device envelope has expired after 30 days');
+  }
+
+  if (envelope.failedAttempts >= 5) {
+    throw new InvalidPinError('Maximum PIN unlock attempts exceeded (5/5). Device trust revoked.', 0);
+  }
+
+  const saltBytes = base64ToUint8Array(envelope.salt);
+  let kek: Uint8Array;
+  try {
+    kek = await deriveKEKFromPin(pin, saltBytes, envelope.kdfIterations || 600000);
+  } finally {
+    wipeBuffer(saltBytes);
+  }
+
+  const iv = base64ToUint8Array(envelope.iv);
+  const aad = `trusted_device:${userId}:${envelope.deviceTrustEpoch || 1}`;
+
+  try {
+    return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, aad);
+  } catch (err) {
+    throw new InvalidPinError(
+      'Incorrect PIN provided for trusted device unlock',
+      Math.max(0, 5 - (envelope.failedAttempts + 1))
+    );
   } finally {
     wipeBuffer(kek);
     wipeBuffer(iv);

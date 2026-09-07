@@ -24,8 +24,26 @@ export interface UserVaultProfile {
   readonly recoverySalt: string;
   readonly kdfIterations: number;
   readonly keyVersion: number;
+  readonly deviceTrustEpoch?: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+export type DeviceTrustType = 'pin' | 'webauthn_prf';
+
+export interface DeviceTrustEnvelope {
+  readonly version: 1;
+  readonly algorithm: 'AES-GCM-256';
+  readonly trustType?: DeviceTrustType; // Defaults to 'pin' for backward compatibility
+  readonly encryptedMasterKey: string; // Base64 wrapped master key
+  readonly salt: string;               // Base64 16 bytes device salt or 32 bytes PRF salt
+  readonly iv: string;                 // Base64 12 bytes IV
+  readonly kdfIterations?: number;     // Default: 600,000 (for PIN)
+  readonly credentialId?: string;      // Base64URL credential ID (for webauthn_prf)
+  readonly deviceTrustEpoch: number;   // Epoch when trusted
+  readonly trustedAt: number;          // Timestamp ms
+  readonly expiresAt: number;          // Timestamp ms (e.g. 30 days)
+  readonly failedAttempts: number;     // Anti-brute force counter (max 5 for PIN)
 }
 
 export interface VaultState {
@@ -102,6 +120,24 @@ export class SessionKeyStoreError extends Error {
     super(message);
     this.name = 'SessionKeyStoreError';
     Object.setPrototypeOf(this, SessionKeyStoreError.prototype);
+  }
+}
+
+export class InvalidPinError extends Error {
+  readonly code = 'INVALID_PIN';
+  constructor(message = 'Invalid PIN provided for trusted device unlock', public readonly remainingAttempts?: number) {
+    super(message);
+    this.name = 'InvalidPinError';
+    Object.setPrototypeOf(this, InvalidPinError.prototype);
+  }
+}
+
+export class DeviceTrustRevokedError extends Error {
+  readonly code = 'DEVICE_TRUST_REVOKED';
+  constructor(message = 'Trusted device authorization has been revoked or expired') {
+    super(message);
+    this.name = 'DeviceTrustRevokedError';
+    Object.setPrototypeOf(this, DeviceTrustRevokedError.prototype);
   }
 }
 
