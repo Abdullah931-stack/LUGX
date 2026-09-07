@@ -1,14 +1,11 @@
 import { defineConfig, configDefaults } from 'vitest/config';
 import path from 'path';
-import { LIVE_TEST_FILES } from './vitest.live.config';
-
-export const CLOUD_E2E_FILES = [
-    'src/test/ai-live-e2e.test.ts',
-];
+import { LIVE_TEST_FILES, CLOUD_E2E_FILES } from './vitest.constants.mjs';
 
 export default defineConfig({
     test: {
-        environment: 'node', setupFiles: ['./vitest.setup.ts'],
+        environment: 'node',
+        setupFiles: ['./vitest.setup.ts'],
         globals: true,
         include: ['src/**/*.test.{ts,tsx}', 'src/**/*.test.ts'],
         // Phase 10: LIVE integration suites and external cloud suites are excluded from default runner
@@ -31,8 +28,7 @@ export default defineConfig({
     },
     resolve: {
         alias: {
-            '@': path.resolve(__dirname, './src'),
+            '@': path.resolve(import.meta.dirname, './src'),
         },
     },
 });
-
