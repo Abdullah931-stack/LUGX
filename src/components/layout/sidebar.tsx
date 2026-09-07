@@ -13,7 +13,9 @@ import {
     Upload,
     MoreHorizontal,
     Trash2,
+    ShieldCheck,
 } from "lucide-react";
+import Link from "next/link";
 import { getUserFiles, getDeletedFiles, createFile, moveFile } from "@/server/actions/file-ops";
 import { importFile } from "@/server/actions/import-file";
 import { validateFile } from "@/lib/parsers/file-validator";
@@ -29,9 +31,15 @@ interface FileItem {
     parentFolderId: string | null;
     updatedAt: Date;
     deletedAt: Date | null;
+    isEncrypted?: boolean;
+    userId?: string;
 }
 
-export function Sidebar() {
+interface SidebarProps {
+    userId?: string;
+}
+
+export function Sidebar({ userId }: SidebarProps = {}) {
     const [collapsed, setCollapsed] = useState(false);
     const [files, setFiles] = useState<FileItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -362,6 +370,7 @@ export function Sidebar() {
                             <FileTreeItem
                                 key={file.id}
                                 file={file}
+                                userId={userId || file.userId}
                                 level={0}
                                 onMove={handleMoveFile}
                                 onRefresh={loadFiles}
@@ -410,6 +419,7 @@ export function Sidebar() {
                                         <TrashFileRow
                                             key={file.id}
                                             file={file}
+                                            userId={userId || file.userId}
                                             onRefresh={() => {
                                                 void loadFiles();
                                                 void loadDeletedFiles();
@@ -434,13 +444,24 @@ export function Sidebar() {
                 </div>
             )}
 
-            {/* Import Button */}
+            {/* Footer Actions: Security & Import */}
             {!collapsed && (
-                <div className="p-2 border-t border-zinc-800/50 mt-auto">
+                <div className="p-2 border-t border-zinc-800/50 mt-auto space-y-1.5">
+                    <Link href="/account" className="block w-full">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="w-full gap-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 justify-start text-xs font-normal"
+                        >
+                            <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                            <span>أمان الخزنة والأجهزة</span>
+                        </Button>
+                    </Link>
+
                     <Button
                         variant="outline"
                         size="sm"
-                        className="w-full gap-2 border-zinc-700 hover:border-indigo-500 hover:bg-indigo-500/10 hover:text-indigo-400"
+                        className="w-full gap-2 border-zinc-700 hover:border-indigo-500 hover:bg-indigo-500/10 hover:text-indigo-400 text-xs"
                         onClick={handleImportClick}
                         disabled={isImporting}
                     >
@@ -462,9 +483,11 @@ export function Sidebar() {
  */
 function TrashFileRow({
     file,
+    userId,
     onRefresh,
 }: {
     file: FileItem;
+    userId?: string;
     onRefresh: () => void;
 }) {
     const [showContextMenu, setShowContextMenu] = useState(false);
@@ -507,6 +530,7 @@ function TrashFileRow({
                     fileId={file.id}
                     fileName={file.title}
                     isFolder={file.isFolder}
+                    userId={userId || file.userId}
                     isDeleted
                     onRefresh={onRefresh}
                 />

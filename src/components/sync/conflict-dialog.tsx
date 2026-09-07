@@ -153,12 +153,17 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
                 break;
         }
 
-        await onResolve({
-            strategy: selectedStrategy,
-            content: contentToSubmit,
-            title: selectedTitle,
-            parentFolderId: conflict.localVersion.parentFolderId,
-        });
+        try {
+            await onResolve({
+                strategy: selectedStrategy,
+                content: contentToSubmit,
+                title: selectedTitle,
+                parentFolderId: conflict.localVersion.parentFolderId,
+            });
+            onClose();
+        } catch (err) {
+            console.error("[ConflictDialog] Resolution failed:", err);
+        }
     };
 
     return (

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { ChevronRight, FileText, Folder, MoreHorizontal } from "lucide-react";
+import { ChevronRight, FileText, Folder, MoreHorizontal, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FileContextMenu } from "./file-context-menu";
 
@@ -13,12 +13,15 @@ interface FileItem {
     isFolder: boolean;
     parentFolderId: string | null;
     updatedAt: Date;
+    isEncrypted?: boolean;
+    userId?: string;
     children?: FileItem[];
 }
 
 interface FileTreeItemProps {
     file: FileItem;
     level?: number;
+    userId?: string;
     onMove?: (fileId: string, newParentId: string | null) => void;
     onRefresh?: () => void;
 }
@@ -27,7 +30,7 @@ interface FileTreeItemProps {
  * Recursive File Tree Item Component
  * Supports nested folders with unlimited depth and drag & drop
  */
-export function FileTreeItem({ file, level = 0, onMove, onRefresh }: FileTreeItemProps) {
+export function FileTreeItem({ file, level = 0, userId, onMove, onRefresh }: FileTreeItemProps) {
     const [isExpanded, setIsExpanded] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const [showContextMenu, setShowContextMenu] = useState(false);
@@ -116,6 +119,8 @@ export function FileTreeItem({ file, level = 0, onMove, onRefresh }: FileTreeIte
                 {/* File/Folder Icon */}
                 {file.isFolder ? (
                     <Folder className="w-4 h-4 text-amber-500/70 shrink-0" />
+                ) : file.isEncrypted ? (
+                    <Lock className="w-4 h-4 text-indigo-400 shrink-0" />
                 ) : (
                     <FileText className="w-4 h-4 text-zinc-500 shrink-0" />
                 )}
@@ -150,6 +155,8 @@ export function FileTreeItem({ file, level = 0, onMove, onRefresh }: FileTreeIte
                         fileId={file.id}
                         fileName={file.title}
                         isFolder={file.isFolder}
+                        isEncrypted={file.isEncrypted}
+                        userId={userId || file.userId}
                         onRefresh={onRefresh}
                     />
                 </div>
@@ -159,7 +166,14 @@ export function FileTreeItem({ file, level = 0, onMove, onRefresh }: FileTreeIte
             {file.isFolder && isExpanded && hasChildren && (
                 <ul className="mt-1 space-y-1">
                     {file.children!.map((child) => (
-                        <FileTreeItem key={child.id} file={child} level={level + 1} onMove={onMove} onRefresh={onRefresh} />
+                        <FileTreeItem
+                            key={child.id}
+                            file={child}
+                            level={level + 1}
+                            userId={userId || file.userId}
+                            onMove={onMove}
+                            onRefresh={onRefresh}
+                        />
                     ))}
                 </ul>
             )}

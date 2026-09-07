@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { TIER_LIMITS, getTierDisplayName } from "@/config/tiers.config";
 import { ArrowLeft, User, CreditCard, LogOut, Check } from "lucide-react";
 import { UpgradeButton } from "@/components/subscription/upgrade-button";
+import { VaultSecurityCard } from "@/components/vault";
 
 
 export default async function AccountPage() {
@@ -97,6 +98,9 @@ export default async function AccountPage() {
                             </div>
                         </CardContent>
                     </Card>
+
+                    {/* Vault Security & Trusted Devices */}
+                    <VaultSecurityCard userId={user.id} />
 
                     {/* Subscription Section */}
                     <Card>

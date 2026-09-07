@@ -15,10 +15,13 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { EditorAdapter } from "@/components/editor/markdown/types";
-import { getFile, updateFileContent, renameFile, deleteFile } from "@/server/actions/file-ops";
+import { getFile, updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/server/actions/file-ops";
 import { debounce } from "@/lib/utils";
 import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
 import { useAIStream } from "@/hooks/use-ai-stream";
+import { sessionKeyStore } from "@/lib/sync/session-key-store";
+import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from "@/lib/sync/crypto-worker-bridge";
+import { createClient } from "@/lib/supabase/client";
 import { AIOperationType } from "@/lib/ai/stream-handler";
 import { SyncConflict } from "@/lib/sync/idb-types";
 import { ConflictResolutionPayload } from "@/components/sync/conflict-dialog";
@@ -29,6 +32,7 @@ import {
 } from "@/lib/sync/reconciliation";
 import { AIStreamStatus } from "@/lib/ai/stream-session";
 import { EDITOR_AUTOSAVE_DEBOUNCE_MS } from "@/config/editor.config";
+import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 
 export type WriteStateType =
     | "idle"
@@ -96,9 +100,16 @@ export interface UseEditorOrchestratorReturn {
     /** Exposed for tests and UI gating: whether an auto-save may fire right now. */
     canAutoSave: () => boolean;
     /** Hydration lifecycle of the initial load pipeline for this file. */
-    hydration: "hydrating" | "ready" | "fatal";
+    hydration: "hydrating" | "ready" | "fatal" | "vault_locked";
     syncHook: ReturnType<typeof useSync>;
     handleEditorChange: (newContent: string) => void;
+
+    // 7. Vault State
+    isEncrypted: boolean;
+    isVaultLocked: boolean;
+    isUnlockModalOpen: boolean;
+    setIsUnlockModalOpen: (open: boolean) => void;
+    handleVaultUnlocked: () => Promise<void>;
 }
 
 export function useEditorOrchestrator({
@@ -139,6 +150,10 @@ export function useEditorOrchestrator({
     // Synchronous mirror of the dirty flag, read by the reconciliation policy at
     // decision time without waiting for a React state flush.
     const isDirtyRef = useRef<boolean>(false);
+    const fileIdRef = useRef<string>(fileId);
+    useEffect(() => {
+        fileIdRef.current = fileId;
+    }, [fileId]);
     // File-identity tracking guard: the initial load pipeline (IDB paint + background server fetch
     // + reconciliation) must run exactly once per mounted fileId.
     const loadedFileIdRef = useRef<string | null>(null);
@@ -147,13 +162,38 @@ export function useEditorOrchestrator({
     // loaded from either side (server failure AND no local snapshot).
     const hydratedRef = useRef(false);
     const loadFailureRef = useRef(false);
-    const [hydration, setHydration] = useState<"hydrating" | "ready" | "fatal">("hydrating");
+    const [hydration, setHydration] = useState<"hydrating" | "ready" | "fatal" | "vault_locked">("hydrating");
+
+    // --- 5. Vault Encryption State ---
+    const [isEncrypted, setIsEncrypted] = useState<boolean>(false);
+    const [isVaultLocked, setIsVaultLocked] = useState<boolean>(false);
+    const [isUnlockModalOpen, setIsUnlockModalOpen] = useState<boolean>(false);
+    const isEncryptedRef = useRef<boolean>(false);
+    const fileEncryptionMetadataRef = useRef<any>(null);
+    const pendingEncryptedPayloadRef = useRef<{
+        content: string;
+        metadata: any;
+        title: string;
+        version: number;
+        etag: string | null;
+    } | null>(null);
     // SINGLE-FLIGHT guard: the initial pipeline must never fork into competing
     // getFile server-action cycles when render-scoped identities change.
     const pipelineRef = useRef<Promise<void> | null>(null);
     const markServerPersisted = useCallback((updatedAt?: string | Date | null) => {
         setLastSaved(updatedAt ? new Date(updatedAt) : new Date());
     }, []);
+
+    const resolveEffectiveUserId = useCallback(async (): Promise<string> => {
+        if (userId) return userId;
+        try {
+            const supabase = createClient();
+            const { data: { user } } = await supabase.auth.getUser();
+            return user?.id || '';
+        } catch {
+            return '';
+        }
+    }, [userId]);
 
     // Keep active conflict ref synchronized
     useEffect(() => {
@@ -176,13 +216,37 @@ export function useEditorOrchestrator({
 
     const handleSyncConflict = useCallback(
         async (conflict: SyncConflict): Promise<"local" | "server" | "merge"> => {
-            // Auto-resolve if identical
-            if (
+            // Auto-resolve if identical (supporting decryption of encrypted server content)
+            let isIdentical =
                 conflict.localVersion.content === conflict.serverVersion.content ||
                 (conflict.localVersion.etag &&
                     conflict.serverVersion.etag &&
-                    conflict.localVersion.etag === conflict.serverVersion.etag)
-            ) {
+                    conflict.localVersion.etag === conflict.serverVersion.etag);
+
+            if (!isIdentical && isEncryptedRef.current && conflict.serverVersion.content) {
+                const masterKey = sessionKeyStore.getMasterKeyRaw();
+                if (masterKey && fileEncryptionMetadataRef.current?.iv) {
+                    try {
+                        const ivBytes = base64ToUint8Array(fileEncryptionMetadataRef.current.iv);
+                        const effectiveUid = await resolveEffectiveUserId();
+                        const aad = `vault:file:${effectiveUid}:${fileId}`;
+                        const decryptedServer = await cryptoWorkerBridge.decryptAESGCM(
+                            masterKey,
+                            conflict.serverVersion.content,
+                            ivBytes,
+                            aad
+                        );
+                        wipeBuffer(ivBytes);
+                        if (normalizeMarkdownSource(decryptedServer) === normalizeMarkdownSource(conflict.localVersion.content)) {
+                            isIdentical = true;
+                        }
+                    } catch {
+                        // ignore error
+                    }
+                }
+            }
+
+            if (isIdentical) {
                 console.log("[Orchestrator] Auto-resolving identical conflict without modal");
                 if (syncHookRef.current?.isInitialized) {
                     await syncHookRef.current.saveLocal({
@@ -190,6 +254,8 @@ export function useEditorOrchestrator({
                         content: conflict.serverVersion.content,
                         version: conflict.serverVersion.version,
                         etag: conflict.serverVersion.etag,
+                        isEncrypted: isEncryptedRef.current,
+                        encryptionMetadata: fileEncryptionMetadataRef.current,
                         isDirty: false,
                     });
                 }
@@ -199,20 +265,58 @@ export function useEditorOrchestrator({
                     fileEtagRef.current = conflict.serverVersion.etag;
                     setServerEtag(conflict.serverVersion.etag);
                 }
+                activeConflictRef.current = null;
+                setActiveConflict(null);
+                setIsConflictDialogOpen(false);
                 return "server";
             }
 
             activeConflictRef.current = conflict;
             setActiveConflict(conflict);
             setIsConflictDialogOpen(true);
-            return "server";
+            return "local";
         },
-        [fileId]
+        [fileId, resolveEffectiveUserId]
     );
 
     // --- AI Stream Hook Integration ---
     const aiStream = useAIStream({
-        onCommitSuccess: async ({ version, etag }) => {
+        transformCommitPayload: async (content: string) => {
+            if (!isEncryptedRef.current) {
+                return { content };
+            }
+            const masterKey = sessionKeyStore.getMasterKeyRaw();
+            if (!masterKey) {
+                setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ تعديلات الذكاء الاصطناعي المشفرة.");
+                setIsVaultLocked(true);
+                setIsUnlockModalOpen(true);
+                throw new Error("Vault master key missing from volatile memory");
+            }
+            const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
+            const effectiveUid = await resolveEffectiveUserId();
+            const aad = `vault:file:${effectiveUid}:${fileId}`;
+            const encResult = await cryptoWorkerBridge.encryptAESGCM(
+                masterKey,
+                content,
+                ivBytes,
+                aad
+            );
+            const metaToSend = {
+                version: 1,
+                algorithm: "AES-GCM-256",
+                keyId: "master-v1",
+                salt: "",
+                iv: encResult.ivBase64,
+                kdfIterations: 600000,
+            };
+            fileEncryptionMetadataRef.current = metaToSend;
+            wipeBuffer(ivBytes);
+            return {
+                content: encResult.ciphertextBase64,
+                encryptionMetadata: metaToSend,
+            };
+        },
+        onCommitSuccess: async ({ version, etag, committedContent, encryptionMetadata }) => {
             fileVersionRef.current = version;
             setServerVersion(version);
             fileEtagRef.current = etag;
@@ -224,10 +328,12 @@ export function useEditorOrchestrator({
                 try {
                     await syncHookRef.current.saveLocal({
                         id: fileId,
-                        content: adapterRef.current.getValue(),
+                        content: isEncryptedRef.current && committedContent ? committedContent : adapterRef.current.getValue(),
                         title,
                         version,
                         etag: etag || "",
+                        isEncrypted: isEncryptedRef.current,
+                        encryptionMetadata: isEncryptedRef.current ? (encryptionMetadata ?? fileEncryptionMetadataRef.current) : null,
                         isDirty: false,
                     });
                     pendingLocalSyncRef.current = false;
@@ -415,7 +521,15 @@ export function useEditorOrchestrator({
      * Centralized Server Write with ETag & Version Precondition Guard
      */
     const executeServerWrite = useCallback(
-        async (content: string) => {
+        async (content: string, targetFileId?: string) => {
+            const activeTargetId = targetFileId || fileId;
+            if (activeTargetId !== fileIdRef.current) {
+                console.log("[Orchestrator] Auto-save skipped: target fileId mismatch with active file", {
+                    activeTargetId,
+                    currentFileId: fileIdRef.current,
+                });
+                return;
+            }
             if (!hydratedRef.current) {
                 console.log("[Orchestrator] Auto-save deferred: hydration not complete.");
                 return;
@@ -427,11 +541,53 @@ export function useEditorOrchestrator({
 
             setIsSaving(true);
 
+            let contentToSend = content;
+            let metaToSend = fileEncryptionMetadataRef.current;
+
             try {
-                const saveRes = await updateFileContent(fileId, content, {
-                    expectedVersion: fileVersionRef.current,
-                    expectedETag: fileEtagRef.current || undefined,
-                });
+
+                if (isEncryptedRef.current) {
+                    const masterKey = sessionKeyStore.getMasterKeyRaw();
+                    if (!masterKey) {
+                        console.error("[Orchestrator] Cannot save encrypted file: Master key missing from memory");
+                        setIsSaving(false);
+                        setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ التعديلات المشفرة بأمان.");
+                        setIsVaultLocked(true);
+                        setIsUnlockModalOpen(true);
+                        return;
+                    }
+
+                    const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
+                    const effectiveUid = await resolveEffectiveUserId();
+                    const aad = `vault:file:${effectiveUid}:${fileId}`;
+                    const encResult = await cryptoWorkerBridge.encryptAESGCM(
+                        masterKey,
+                        content,
+                        ivBytes,
+                        aad
+                    );
+                    contentToSend = encResult.ciphertextBase64;
+                    metaToSend = {
+                        version: 1,
+                        algorithm: 'AES-GCM-256',
+                        keyId: 'master-v1',
+                        salt: '',
+                        iv: encResult.ivBase64,
+                        kdfIterations: 600000,
+                    };
+                    fileEncryptionMetadataRef.current = metaToSend;
+                    wipeBuffer(ivBytes);
+                }
+
+                const saveRes = isEncryptedRef.current
+                    ? await toggleFileEncryption(fileId, true, contentToSend, metaToSend, {
+                          expectedVersion: fileVersionRef.current,
+                          expectedETag: fileEtagRef.current || undefined,
+                      })
+                    : await updateFileContent(fileId, contentToSend, {
+                          expectedVersion: fileVersionRef.current,
+                          expectedETag: fileEtagRef.current || undefined,
+                      });
 
                 if (saveRes.success && saveRes.version) {
                     fileVersionRef.current = saveRes.version;
@@ -450,21 +606,49 @@ export function useEditorOrchestrator({
                         etag: saveRes.etag || undefined,
                     });
 
-                    // Update local storage clean
+                    // Update local storage clean (always store ciphertext for encrypted files)
                     if (syncHook.isInitialized) {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content,
+                            content: isEncryptedRef.current ? contentToSend : content,
                             title,
                             version: saveRes.version,
                             etag: saveRes.etag || fileEtagRef.current || "",
+                            isEncrypted: isEncryptedRef.current,
+                            encryptionMetadata: metaToSend,
                             isDirty: false,
                         });
                     }
                 } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
-                    // False conflict check
+                    // False conflict check with encryption support
+                    let isIdenticalContent = content === saveRes.serverVersion.content;
+                    if (!isIdenticalContent && isEncryptedRef.current && saveRes.serverVersion.content) {
+                        const masterKey = sessionKeyStore.getMasterKeyRaw();
+                        const serverMeta = (saveRes.serverVersion as any).encryptionMetadata || fileEncryptionMetadataRef.current;
+                        const serverIvStr = serverMeta?.iv;
+                        if (masterKey && serverIvStr) {
+                            try {
+                                const ivBytes = base64ToUint8Array(serverIvStr);
+                                const effectiveUid = await resolveEffectiveUserId();
+                                const aad = `vault:file:${effectiveUid}:${fileId}`;
+                                const decryptedServer = await cryptoWorkerBridge.decryptAESGCM(
+                                    masterKey,
+                                    saveRes.serverVersion.content,
+                                    ivBytes,
+                                    aad
+                                );
+                                wipeBuffer(ivBytes);
+                                if (normalizeMarkdownSource(decryptedServer) === normalizeMarkdownSource(content)) {
+                                    isIdenticalContent = true;
+                                }
+                            } catch {
+                                // Decryption error, treat as non-identical
+                            }
+                        }
+                    }
+
                     if (
-                        content === saveRes.serverVersion.content ||
+                        isIdenticalContent ||
                         (saveRes.serverVersion.etag && saveRes.serverVersion.etag === fileEtagRef.current)
                     ) {
                         console.log("[Orchestrator] Server conflict has identical content, auto-synchronizing version");
@@ -476,15 +660,21 @@ export function useEditorOrchestrator({
                         if (syncHook.isInitialized) {
                             await syncHook.saveLocal({
                                 id: fileId,
-                                content,
+                                content: isEncryptedRef.current ? contentToSend : content,
                                 title,
                                 version: saveRes.serverVersion.version ?? fileVersionRef.current,
                                 etag: saveRes.serverVersion.etag || "",
+                                isEncrypted: isEncryptedRef.current,
+                                encryptionMetadata: metaToSend,
                                 isDirty: false,
                             });
                         }
                         setIsSaving(false);
                         setIsDirty(false);
+                        isDirtyRef.current = false;
+                        activeConflictRef.current = null;
+                        setActiveConflict(null);
+                        setIsConflictDialogOpen(false);
                         return;
                     }
 
@@ -536,22 +726,26 @@ export function useEditorOrchestrator({
                     if (syncHook.isInitialized) {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content,
+                            content: isEncryptedRef.current ? contentToSend : content,
                             title,
                             version: fileVersionRef.current,
                             etag: fileEtagRef.current || "",
-                            isDirty: true,
+                            isEncrypted: isEncryptedRef.current,
+                            encryptionMetadata: metaToSend,
+                            isDirty: false,
                         });
                     }
                 } else {
-                    // Offline / Network failure -> save dirty locally
+                    // Offline / Network failure -> save dirty locally with ciphertext
                     if (syncHook.isInitialized) {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content,
+                            content: isEncryptedRef.current ? contentToSend : content,
                             title,
                             version: fileVersionRef.current,
                             etag: fileEtagRef.current || "",
+                            isEncrypted: isEncryptedRef.current,
+                            encryptionMetadata: metaToSend,
                             isDirty: true,
                         });
                     }
@@ -562,10 +756,12 @@ export function useEditorOrchestrator({
                     try {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content,
+                            content: isEncryptedRef.current ? contentToSend : content,
                             title,
                             version: fileVersionRef.current,
                             etag: fileEtagRef.current || "",
+                            isEncrypted: isEncryptedRef.current,
+                            encryptionMetadata: metaToSend,
                             isDirty: true,
                         });
                     } catch (dirtySaveErr) {
@@ -576,7 +772,7 @@ export function useEditorOrchestrator({
                 setIsSaving(false);
             }
         },
-        [fileId, title, canAutoSave, syncHook]
+        [fileId, title, canAutoSave, syncHook, resolveEffectiveUserId]
     );
 
     const executeServerWriteRef = useRef(executeServerWrite);
@@ -585,8 +781,8 @@ export function useEditorOrchestrator({
     }, [executeServerWrite]);
 
     const debouncedAutoSaveRef = useRef(
-        debounce((content: string) => {
-            executeServerWriteRef.current(content);
+        debounce((content: string, targetId: string) => {
+            executeServerWriteRef.current(content, targetId);
         }, EDITOR_AUTOSAVE_DEBOUNCE_MS)
     );
 
@@ -630,12 +826,68 @@ export function useEditorOrchestrator({
                 }
             }
 
+            // Touch inactivity timer upon user keystrokes / activity (AUD-04)
+            sessionKeyStore.touch();
+
             editorGenerationRef.current += 1;
             setIsDirty(true);
-            debouncedAutoSaveRef.current(newContent);
+            isDirtyRef.current = true;
+            debouncedAutoSaveRef.current(newContent, fileId);
         },
-        [aiStream]
+        [aiStream, fileId]
     );
+
+    // Vault Unlock Handler: Decrypts pending payload and hydrates editor
+    const handleVaultUnlocked = useCallback(async () => {
+        setIsVaultLocked(false);
+        setIsUnlockModalOpen(false);
+
+        const pending = pendingEncryptedPayloadRef.current;
+        if (!pending) {
+            hydratedRef.current = true;
+            setHydration("ready");
+            if (adapterRef.current) adapterRef.current.setEditable(true);
+            return;
+        }
+
+        const masterKey = sessionKeyStore.getMasterKeyRaw();
+        let contentToDisplay = pending.content;
+
+        if (masterKey && pending.metadata?.iv && pending.content) {
+            try {
+                const ivBytes = base64ToUint8Array(pending.metadata.iv);
+                const effectiveUid = await resolveEffectiveUserId();
+                const aad = `vault:file:${effectiveUid}:${fileId}`;
+                contentToDisplay = await cryptoWorkerBridge.decryptAESGCM(
+                    masterKey,
+                    pending.content,
+                    ivBytes,
+                    aad
+                );
+            } catch (err) {
+                console.warn("[Orchestrator] Content decryption warning (may be plaintext from IDB):", err);
+            }
+        }
+
+        setTitle(pending.title);
+        fileVersionRef.current = pending.version;
+        setServerVersion(pending.version);
+        fileEtagRef.current = pending.etag;
+        setServerEtag(pending.etag);
+        editorGenerationRef.current += 1;
+
+        isProgrammaticUpdateRef.current = true;
+        try {
+            adapterRef.current?.setValue(contentToDisplay);
+        } finally {
+            isProgrammaticUpdateRef.current = false;
+        }
+
+        hydratedRef.current = true;
+        setHydration("ready");
+        if (adapterRef.current) adapterRef.current.setEditable(true);
+        pendingEncryptedPayloadRef.current = null;
+    }, [fileId, userId]);
 
     // Initial Load - Offline-First with Background Server Sync
     useEffect(() => {
@@ -660,10 +912,51 @@ export function useEditorOrchestrator({
                 if (sh?.isInitialized) {
                     const localFile = await sh.loadLocal(fileId);
                     if (!cancelled && localFile) {
+                        const fileIsEncrypted = !!localFile.isEncrypted;
+                        isEncryptedRef.current = fileIsEncrypted;
+                        setIsEncrypted(fileIsEncrypted);
+                        fileEncryptionMetadataRef.current = localFile.encryptionMetadata || null;
+
+                        if (fileIsEncrypted && !sessionKeyStore.hasMasterKey()) {
+                            pendingEncryptedPayloadRef.current = {
+                                content: localFile.content || "",
+                                metadata: localFile.encryptionMetadata,
+                                title: localFile.title,
+                                version: localFile.version || 1,
+                                etag: localFile.etag || null,
+                            };
+                            setTitle(localFile.title);
+                            setIsVaultLocked(true);
+                            setIsUnlockModalOpen(true);
+                            setHydration("vault_locked");
+                            return;
+                        }
+
+                        let initialContent = localFile.content || "";
+                        if (fileIsEncrypted && sessionKeyStore.hasMasterKey() && localFile.encryptionMetadata?.iv && initialContent) {
+                            try {
+                                const masterKey = sessionKeyStore.getMasterKeyRaw();
+                                if (masterKey) {
+                                    const ivBytes = base64ToUint8Array(localFile.encryptionMetadata.iv);
+                                    const effectiveUid = await resolveEffectiveUserId();
+                                    const aad = `vault:file:${effectiveUid}:${fileId}`;
+                                    initialContent = await cryptoWorkerBridge.decryptAESGCM(
+                                        masterKey,
+                                        initialContent,
+                                        ivBytes,
+                                        aad
+                                    );
+                                    wipeBuffer(ivBytes);
+                                }
+                            } catch (decErr) {
+                                console.warn("[Orchestrator] Local IDB decryption fallback (may be legacy plaintext):", decErr);
+                            }
+                        }
+
                         localBaseline = {
                             version: localFile.version || 1,
                             etag: localFile.etag || null,
-                            content: localFile.content || "",
+                            content: initialContent,
                         };
                         setTitle(localFile.title);
                         fileVersionRef.current = localFile.version || 1;
@@ -674,7 +967,7 @@ export function useEditorOrchestrator({
 
                         isProgrammaticUpdateRef.current = true;
                         try {
-                            adapterRef.current?.setValue(localFile.content || "");
+                            adapterRef.current?.setValue(initialContent);
                         } finally {
                             isProgrammaticUpdateRef.current = false;
                         }
@@ -695,10 +988,48 @@ export function useEditorOrchestrator({
                     }
                 } else {
                     const data = result.data;
+                    const remoteIsEncrypted = !!data.isEncrypted;
+                    isEncryptedRef.current = remoteIsEncrypted;
+                    setIsEncrypted(remoteIsEncrypted);
+                    fileEncryptionMetadataRef.current = data.encryptionMetadata || null;
+
                     setTitle(data.title);
                     const remoteVersion = data.version ?? 1;
                     const remoteEtag = data.etag ?? null;
-                    const safeContent = data.content || "";
+                    let safeContent = data.content || "";
+
+                    if (remoteIsEncrypted) {
+                        if (!sessionKeyStore.hasMasterKey()) {
+                            pendingEncryptedPayloadRef.current = {
+                                content: safeContent,
+                                metadata: data.encryptionMetadata,
+                                title: data.title,
+                                version: remoteVersion,
+                                etag: remoteEtag,
+                            };
+                            setIsVaultLocked(true);
+                            setIsUnlockModalOpen(true);
+                            setHydration("vault_locked");
+                            return;
+                        }
+
+                        const masterKey = sessionKeyStore.getMasterKeyRaw();
+                        if (masterKey && data.encryptionMetadata?.iv && safeContent) {
+                            try {
+                                const ivBytes = base64ToUint8Array(data.encryptionMetadata.iv);
+                                const effectiveUid = await resolveEffectiveUserId();
+                                const aad = `vault:file:${effectiveUid}:${fileId}`;
+                                safeContent = await cryptoWorkerBridge.decryptAESGCM(
+                                    masterKey,
+                                    safeContent,
+                                    ivBytes,
+                                    aad
+                                );
+                            } catch (decErr) {
+                                console.warn("[Orchestrator] Remote decrypt fallback:", decErr);
+                            }
+                        }
+                    }
 
                     const decision = classifyRemoteUpdate({
                         localBaseline,
@@ -806,6 +1137,24 @@ export function useEditorOrchestrator({
 
         return () => {
             cancelled = true;
+            // AUD-01 Invariant: Cancel pending delayed auto-save timer for departing file
+            debouncedAutoSaveRef.current?.cancel?.();
+
+            // Durability guard: Flush dirty uncommitted edits locally to IndexedDB before route switch
+            if (isDirtyRef.current && adapterRef.current && syncHookRef.current?.isInitialized) {
+                const departingFileId = fileIdRef.current;
+                const dirtyContent = adapterRef.current.getValue();
+                syncHookRef.current.saveLocal({
+                    id: departingFileId,
+                    content: dirtyContent,
+                    title,
+                    version: fileVersionRef.current,
+                    etag: fileEtagRef.current || "",
+                    isEncrypted: isEncryptedRef.current,
+                    encryptionMetadata: fileEncryptionMetadataRef.current,
+                    isDirty: true,
+                }).catch((err) => console.warn("[Orchestrator] Unmount flush error:", err));
+            }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fileId, currentAdapter]);
@@ -813,7 +1162,72 @@ export function useEditorOrchestrator({
     // Cross-tab synchronization listener
     useEffect(() => {
         const unsubscribe = subscribeCrossTabSync(async (event) => {
+            if (event.type === "vault_unlocked") {
+                if (isEncryptedRef.current && sessionKeyStore.hasMasterKey()) {
+                    setIsVaultLocked(false);
+                    setIsUnlockModalOpen(false);
+                    handleVaultUnlocked();
+                }
+                return;
+            }
+
+            if (event.type === "vault_locked") {
+                if (isEncryptedRef.current) {
+                    setIsVaultLocked(true);
+                    setIsUnlockModalOpen(true);
+                    setHydration("vault_locked");
+                    if (adapterRef.current) {
+                        adapterRef.current.setEditable(false);
+                    }
+                }
+                return;
+            }
+
             if (event.fileId === fileId) {
+                if (event.type === "file_encrypted") {
+                    debouncedAutoSaveRef.current?.cancel?.();
+                    isEncryptedRef.current = true;
+                    setIsEncrypted(true);
+                    if (event.metadata) {
+                        fileEncryptionMetadataRef.current = event.metadata;
+                    }
+                    if (event.version) {
+                        fileVersionRef.current = event.version;
+                        setServerVersion(event.version);
+                    }
+                    if (event.etag) {
+                        fileEtagRef.current = event.etag;
+                        setServerEtag(event.etag);
+                    }
+                    setIsDirty(false);
+                    isDirtyRef.current = false;
+                    activeConflictRef.current = null;
+                    setActiveConflict(null);
+                    setIsConflictDialogOpen(false);
+                    return;
+                }
+
+                if (event.type === "file_decrypted") {
+                    debouncedAutoSaveRef.current?.cancel?.();
+                    isEncryptedRef.current = false;
+                    setIsEncrypted(false);
+                    fileEncryptionMetadataRef.current = null;
+                    if (event.version) {
+                        fileVersionRef.current = event.version;
+                        setServerVersion(event.version);
+                    }
+                    if (event.etag) {
+                        fileEtagRef.current = event.etag;
+                        setServerEtag(event.etag);
+                    }
+                    setIsDirty(false);
+                    isDirtyRef.current = false;
+                    activeConflictRef.current = null;
+                    setActiveConflict(null);
+                    setIsConflictDialogOpen(false);
+                    return;
+                }
+
                 const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
                 const isLocalDirty = localFile?.isDirty || activeConflictRef.current !== null || isDirty;
 
@@ -835,7 +1249,7 @@ export function useEditorOrchestrator({
         return () => {
             unsubscribe();
         };
-    }, [fileId, isDirty, syncHook]);
+    }, [fileId, isDirty, syncHook, handleVaultUnlocked]);
 
     // Navigation & Unload Guard
     useEffect(() => {
@@ -932,13 +1346,58 @@ export function useEditorOrchestrator({
                     return;
                 }
 
+                let contentToSend = resolution.content;
+                let metaToSend = fileEncryptionMetadataRef.current;
+
+                if (isEncryptedRef.current) {
+                    if (typeof resolution.content === "string" && resolution.content.startsWith("gcm:v1:")) {
+                        // Defensive Guard (AUD-03): Server version resolution payload is already authenticated ciphertext.
+                        // Bypass re-encryption to eliminate double-encryption corruption loops.
+                        contentToSend = resolution.content;
+                        metaToSend = (activeConflict.serverVersion as any).encryptionMetadata || fileEncryptionMetadataRef.current;
+                    } else {
+                        const masterKey = sessionKeyStore.getMasterKeyRaw();
+                        if (!masterKey) {
+                            setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ حل التعارض المشفر بأمان.");
+                            setIsResolvingConflict(false);
+                            isResolvingConflictRef.current = false;
+                            return;
+                        }
+                        const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
+                        const effectiveUid = await resolveEffectiveUserId();
+                        const aad = `vault:file:${effectiveUid}:${fileId}`;
+                        const encResult = await cryptoWorkerBridge.encryptAESGCM(
+                            masterKey,
+                            resolution.content,
+                            ivBytes,
+                            aad
+                        );
+                        contentToSend = encResult.ciphertextBase64;
+                        metaToSend = {
+                            version: 1,
+                            algorithm: 'AES-GCM-256',
+                            keyId: 'master-v1',
+                            salt: '',
+                            iv: encResult.ivBase64,
+                            kdfIterations: 600000,
+                        };
+                        fileEncryptionMetadataRef.current = metaToSend;
+                        wipeBuffer(ivBytes);
+                    }
+                }
+
                 const targetExpectedVersion = activeConflict.serverVersion.version;
                 const targetExpectedETag = activeConflict.serverVersion.etag || undefined;
 
-                const saveRes = await updateFileContent(fileId, resolution.content, {
-                    expectedVersion: targetExpectedVersion,
-                    expectedETag: targetExpectedETag,
-                });
+                const saveRes = isEncryptedRef.current
+                    ? await toggleFileEncryption(fileId, true, contentToSend, metaToSend, {
+                          expectedVersion: targetExpectedVersion,
+                          expectedETag: targetExpectedETag,
+                      })
+                    : await updateFileContent(fileId, contentToSend, {
+                          expectedVersion: targetExpectedVersion,
+                          expectedETag: targetExpectedETag,
+                      });
 
                 if (saveRes.success && saveRes.version) {
                     fileVersionRef.current = saveRes.version;
@@ -954,6 +1413,8 @@ export function useEditorOrchestrator({
                         isProgrammaticUpdateRef.current = false;
                     }
 
+                    debouncedAutoSaveRef.current?.cancel?.();
+
                     if (resolution.title && resolution.title !== title) {
                         setTitle(resolution.title);
                         await renameFile(fileId, resolution.title);
@@ -962,16 +1423,19 @@ export function useEditorOrchestrator({
                     if (syncHook.isInitialized) {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content: resolution.content,
+                            content: isEncryptedRef.current ? contentToSend : resolution.content,
                             title: resolution.title || title,
                             version: saveRes.version,
                             etag: saveRes.etag || fileEtagRef.current || "",
+                            isEncrypted: isEncryptedRef.current,
+                            encryptionMetadata: metaToSend,
                             isDirty: false,
                         });
                     }
 
                     setLastSaved(new Date());
                     setIsDirty(false);
+                    isDirtyRef.current = false;
 
                     broadcastCrossTabEvent({
                         type: "conflict_resolved",
@@ -1016,7 +1480,7 @@ export function useEditorOrchestrator({
                 isResolvingConflictRef.current = false;
             }
         },
-        [activeConflict, fileId, title, syncHook, onNavigate]
+        [activeConflict, fileId, title, syncHook, onNavigate, resolveEffectiveUserId]
     );
 
     // Title Change
@@ -1076,5 +1540,12 @@ export function useEditorOrchestrator({
         hydration,
         syncHook,
         handleEditorChange,
+
+        // 7. Vault State
+        isEncrypted,
+        isVaultLocked,
+        isUnlockModalOpen,
+        setIsUnlockModalOpen,
+        handleVaultUnlocked,
     };
 }

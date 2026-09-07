@@ -14,12 +14,13 @@ import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
 import { SearchReplace } from "@/components/editor/search-replace";
 import { countWords, detectTextDirection, countCharacters } from "@/lib/utils";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, Lock } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { SyncIndicator } from "@/components/sync/sync-indicator";
 import { AIStreamStatus } from "@/components/editor/ai-stream-status";
 import { ConflictDialog } from "@/components/sync/conflict-dialog";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
+import { VaultUnlockModal } from "@/components/vault";
 
 export default function EditorPage() {
     const params = useParams();
@@ -107,6 +108,13 @@ export default function EditorPage() {
 
         syncHook,
         handleEditorChange,
+
+        // Vault State
+        isEncrypted,
+        isVaultLocked,
+        isUnlockModalOpen,
+        setIsUnlockModalOpen,
+        handleVaultUnlocked,
     } = useEditorOrchestrator({
         fileId,
         userId,
@@ -350,7 +358,32 @@ export default function EditorPage() {
                         <span className="text-xs text-zinc-400 font-medium">جاري تحميل ومزامنة المستند...</span>
                     </div>
                 )}
-                {hydration === "fatal" ? (
+                {hydration === "vault_locked" ? (
+                    <div className="m-6 p-8 rounded-xl bg-zinc-900 border border-zinc-800 text-center flex flex-col items-center justify-center gap-3 max-w-md mx-auto mt-16 shadow-2xl">
+                        <div className="p-3 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-1">
+                            <Lock className="w-8 h-8" />
+                        </div>
+                        <h3 className="text-base font-semibold text-zinc-100">المستند مشفر ومحمي</h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed max-w-sm">
+                            هذا المستند مشفر طرف-إلى-طرف (Zero-Knowledge). يجب فتح قفل الخزنة لعرض المحتوى وتعديله.
+                        </p>
+                        <div className="flex items-center gap-2 mt-3">
+                            <button
+                                onClick={() => setIsUnlockModalOpen(true)}
+                                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
+                            >
+                                <Lock className="w-3.5 h-3.5" />
+                                <span>فتح قفل الخزنة</span>
+                            </button>
+                            <button
+                                onClick={() => router.push("/workspace")}
+                                className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
+                            >
+                                العودة لمساحة العمل
+                            </button>
+                        </div>
+                    </div>
+                ) : hydration === "fatal" ? (
                     <div className="m-6 p-8 rounded-xl bg-red-950/30 border border-red-800/40 text-center flex flex-col items-center justify-center gap-3 max-w-md mx-auto mt-16">
                         <AlertTriangle className="w-10 h-10 text-red-400" />
                         <h3 className="text-base font-semibold text-red-200">تعذّر فتح المستند</h3>
@@ -389,8 +422,9 @@ export default function EditorPage() {
             {/* Status Bar - Fixed at bottom */}
             <div className="border-t border-zinc-800/50 px-4 py-2 flex items-center justify-between text-xs text-zinc-500 flex-shrink-0">
                 {/* Left: File Title */}
-                <span className="truncate max-w-[200px]" title={title}>
-                    {title || "Untitled"}
+                <span className="truncate max-w-[200px] flex items-center gap-1.5" title={title}>
+                    {isEncrypted && <Lock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                    <span>{title || "Untitled"}</span>
                 </span>
 
                 {/* Center: Save Status & Sync Indicator */}
@@ -441,6 +475,16 @@ export default function EditorPage() {
                     <span className="uppercase">{textDir}</span>
                 </div>
             </div>
+
+            {/* Vault Unlock Modal */}
+            {userId && (
+                <VaultUnlockModal
+                    isOpen={isUnlockModalOpen}
+                    onClose={() => setIsUnlockModalOpen(false)}
+                    onUnlocked={handleVaultUnlocked}
+                    userId={userId}
+                />
+            )}
         </div>
     );
 }

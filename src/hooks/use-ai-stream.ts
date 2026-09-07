@@ -24,7 +24,7 @@ import {
 
 export interface UseAIStreamOptions {
     onStreamStart?: () => void;
-    onCommitSuccess?: (result: { version: number; etag: string }) => void;
+    onCommitSuccess?: (result: { version: number; etag: string; committedContent?: string; encryptionMetadata?: any }) => void;
     onConflict?: (serverVersion?: { version?: number | null; etag?: string | null }) => void;
     onError?: (error: Error) => void;
     getLatestVersion?: () => number;
@@ -35,6 +35,14 @@ export interface UseAIStreamOptions {
      * guard and never misclassify these transactions as manual user edits.
      */
     onProgrammaticTransaction?: (fn: () => void) => void;
+    /**
+     * Optional pre-commit hook (e.g. for Zero-Knowledge client-side encryption).
+     * Transforms the raw Markdown into the persisted payload (ciphertext + metadata).
+     */
+    transformCommitPayload?: (finalContent: string) => Promise<{
+        content: string;
+        encryptionMetadata?: any;
+    }>;
 }
 
 export type EditorInstance = EditorAdapter;
@@ -550,7 +558,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 finalDocumentMarkdown = resultMarkdown;
             }
 
-            // STEP 1: Server Atomic Commit on raw Markdown
+            // STEP 1: Server Atomic Commit (with encryption support if configured)
             const effectiveExpectedVersion = typeof options.getLatestVersion === 'function'
                 ? options.getLatestVersion()
                 : expectedVersion;
@@ -558,12 +566,22 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 ? options.getLatestETag()
                 : originalEtag;
 
+            let contentToCommit = finalDocumentMarkdown;
+            let encryptionMetadataToCommit: any = undefined;
+
+            if (typeof options.transformCommitPayload === 'function') {
+                const transformed = await options.transformCommitPayload(finalDocumentMarkdown);
+                contentToCommit = transformed.content;
+                encryptionMetadataToCommit = transformed.encryptionMetadata;
+            }
+
             const commitResult = await commitAIFileOperation({
                 operationId,
                 fileId,
                 expectedVersion: effectiveExpectedVersion,
                 expectedETag: effectiveExpectedETag || undefined,
-                resultContent: finalDocumentMarkdown,
+                resultContent: contentToCommit,
+                encryptionMetadata: encryptionMetadataToCommit,
                 originalContent: session.originalMarkdown || undefined,
             });
 
@@ -637,6 +655,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             options.onCommitSuccess?.({
                 version: commitResult.version ?? expectedVersion,
                 etag: commitResult.etag ?? (originalEtag || ''),
+                committedContent: contentToCommit,
+                encryptionMetadata: encryptionMetadataToCommit,
             });
         } catch (err) {
             const detailMessage = err instanceof Error ? err.message : 'Preview commit failed';

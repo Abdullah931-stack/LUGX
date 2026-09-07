@@ -20,7 +20,7 @@ export default async function WorkspaceLayout({
     return (
         <div className="h-screen bg-zinc-950 flex overflow-hidden">
             {/* Sidebar */}
-            <Sidebar />
+            <Sidebar userId={user.id} />
 
             {/* Main Area */}
             <div className="flex-1 flex flex-col overflow-hidden">
