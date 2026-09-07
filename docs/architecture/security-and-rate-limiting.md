@@ -105,7 +105,7 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
   - Algorithm: **AES-GCM 256-bit** with CSPRNG 12-byte IV and 16-byte salt.
   - Key Derivation: **PBKDF2-HMAC-SHA256** with **600,000 iterations**.
   - Envelope Schema: `{ version: 1, algorithm: 'AES-GCM-256', keyId, iv, salt, ciphertext, kdfIterations }`.
-- **Mandatory AAD Binding**: Additional Authenticated Data (`userId:fileId`) is bound into the AES-GCM 128-bit authentication tag for all document encryptions/decryptions. Any document substitution or payload tampering throws explicit `AADIntegrityError` or `InvalidCiphertextOrKeyError`.
+- **Mandatory AAD Binding**: Additional Authenticated Data (`vault:file:${userId}:${fileId}`) is bound into the AES-GCM 128-bit authentication tag for all document encryptions/decryptions. Any document substitution or payload tampering throws explicit `AADIntegrityError` or `InvalidCiphertextOrKeyError`.
 
 ### 4.4 Dual Key Wrapping & BIP-39 Recovery Seed
 - **Master Key Dual-Wrapping**: The random 256-bit Vault Master Key is encrypted twice in PostgreSQL:
@@ -115,8 +115,9 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 
 ### 4.5 In-Memory Session Key Store & Auto-Lock (`src/lib/sync/session-key-store.ts`)
 
-- Holds `LocalDeviceKey` and `VaultMasterKey` in volatile memory.
-- Inactivity Auto-Lock timer automatically zeroes and purges keys (`purgeKeys()`) after timeout or on logout / session termination in `useSync`.
+- **Strict Zero-Trace General Default**: The Master Key is stored strictly in volatile RAM Heap memory (`Uint8Array`) and is never written in plaintext to `sessionStorage` or local disk.
+- **Inactivity Auto-Lock**: 1-hour timeout (3,600,000 ms) automatically zeroes and purges keys (`purgeKeys()`) via `wipeBuffer` upon timeout or on logout / session termination.
+- **Activity Touch Integration**: Active typing in CodeMirror dispatches `sessionKeyStore.touch()`, extending the inactivity window seamlessly during active composition.
 
 ### 4.6 Transparent At-Rest Encrypted IndexedDB (`src/lib/sync/indexeddb.ts`)
 
@@ -128,11 +129,30 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 - **Cryptographic AAD Binding**: Binds unique domain contexts to each cipher record (`idb:file:${id}`, `idb:snapshot:${id}`, `idb:op:${opId}`) preventing payload tampering or cross-file substitution attacks.
 - **Fault Resilience & Isolation (`CorruptedLocalRecordError`)**: Automatically isolates damaged or authentication-mismatched records without crashing bulk queries (`getAllFiles`, `getDirtyFiles`).
 - **Seamless Legacy Migration**: In-place fallback that transparently reads legacy unencrypted records and upgrades them to ciphertext on subsequent writes.
+- **Offline Profile & Device Trust Storage**: Manages cached cloud vault profiles (`saveCachedVaultProfile`) and PIN-wrapped envelopes (`saveDeviceTrustEnvelope`, `getDeviceTrustEnvelope`, `clearDeviceTrustEnvelope`) in `sync_metadata`.
 
-### 4.7 Cloud Vault Schema & Migration (`src/lib/db/schema.ts`, `0008_hybrid_vault_schema.sql`)
+### 4.7 Cloud Vault Schema & Migrations (`src/lib/db/schema.ts`, `0008_hybrid_vault_schema.sql`, `0009_add_device_trust_epoch.sql`)
 
-- **`user_vault_profiles` Table**: Persists dual-wrapped master keys (`encrypted_master_key` via password KEK, `recovery_encrypted_master_key` via BIP-39 seed KEK) alongside independent salts (`key_salt`, `recovery_salt`) and PBKDF2 iteration configurations (600,000).
+- **`user_vault_profiles` Table**: Persists dual-wrapped master keys (`encrypted_master_key` via password KEK, `recovery_encrypted_master_key` via BIP-39 seed KEK), independent salts (`key_salt`, `recovery_salt`), PBKDF2 iteration configurations (600,000), and `device_trust_epoch` (integer default 1).
+- **Migration 0009 (`0009_add_device_trust_epoch.sql`)**: Synchronizes the PostgreSQL cloud database with the `device_trust_epoch` counter, ensuring persistent state for remote device trust invalidation across all user devices.
 - **`files` Table Encryption Metadata**: Adds `is_encrypted` boolean flag and structured `encryption_metadata` JSONB column (`version`, `algorithm`, `keyId`, `salt`, `iv`, `kdfIterations`) enabling the backend to identify encrypted assets and enforce Zero-Knowledge AI gatekeepers.
+
+### 4.8 Trusted Device Dual Architecture: Hardware Biometrics (WebAuthn PRF) & 6-Digit PIN (`src/lib/sync/webauthn-prf.ts`, `src/lib/sync/encryption.ts`)
+
+- **Dual-Tier Trust Options**: Users enabling "Trust This Device" can select between:
+  1. **Hardware Biometrics (WebAuthn PRF — Recommended):** Binds the Master Key to the physical platform authenticator (Windows Hello via TPM 2.0, Apple Touch ID / Face ID via Secure Enclave, Android via Titan M2 / StrongBox) using W3C WebAuthentication Level 3 PRF extension (`extension:prf`). Derives an AES-GCM-256 KEK via HKDF-SHA-256 within the secure enclave, delivering complete physical immunity against offline `IndexedDB` disk extraction.
+  2. **6-Digit PIN (Software Fallback):** Derives a KEK via PBKDF2-HMAC-SHA256 (600,000 iterations, 16-byte random salt) strictly validating 6 decimal digits (`/^\d{6}$/`, $10^6$ combinations). Subject to TD-10 offline extraction boundary.
+- **In-Place Dual Selector**: Available in both `TrustDeviceModal` and directly within `VaultUnlockModal` (Password tab), permitting users to enroll, reconfigure, or switch between Biometrics and PIN during standard password unlock.
+- **Real-Time Capability & Diagnostic Feedback (`checkWebAuthnSupportStatus`)**: Dynamically queries `isUserVerifyingPlatformAuthenticatorAvailable()` and `getClientCapabilities()` (supporting both `"extension:prf"` and `"prf"` keys). If unavailable, provides actionable feedback (e.g., reminding users to configure a Windows Hello PIN in OS settings or access via secure localhost/HTTPS).
+- **Device Trust Envelope Schema (`DeviceTrustEnvelope`)**: Persists wrapped key, salt, IV, epoch, and metadata with explicit discriminator `trustType: 'pin' | 'webauthn_prf'` and `credentialId`.
+- **Anti-Brute-Force & Expiration Defense**: Enforces a strict 5-attempt failed-unlock lockout limit (`failedAttempts >= 5`) for PIN envelopes and a 30-day expiration window (`expiresAt = trustedAt + 30 days`).
+- **Global Central Revocation (`revokeAllTrustedDevices`)**: Incrementing `deviceTrustEpoch` on the server atomically invalidates all local device trust envelopes (both PRF and PIN) across all devices simultaneously due to cryptographic AAD mismatch (`trusted_device:${userId}:${deviceTrustEpoch}`) upon unwrap.
+
+### 4.9 Zero-Knowledge Operation & AI Streaming Guards
+
+- **Client-Side Re-Encrypted Copy Engine (`copyFile` / AUD-02)**: Copying an encrypted file decrypts in volatile RAM, generates a new UUID and fresh random IV, and re-encrypts with the target AAD (`vault:file:${userId}:${newFileId}`). Server-side `copyFile` strictly rejects copying encrypted files without valid client-side re-encryption.
+- **Zero-Knowledge AI Streaming Commit Guard (`commitAIFileOperation`)**: When committing AI generation to an encrypted file, the client encrypts the text locally before sending. The server action strictly rejects commits to encrypted files if unencrypted content is supplied without encryption metadata.
+- **Conflict 412 Double-Encryption Prevention (AUD-03)**: Detects pre-authenticated ciphertext (`gcm:v1:...`) during server-version conflict resolution to eliminate double-encryption corruption loops.
 
 ---
 

@@ -50,10 +50,15 @@
 
 | Component | Responsibility |
 |-----------|----------------|
-| `useEditorOrchestrator` | Centralized state controller & single authoritative write gateway (Phase 9) |
+| `useEditorOrchestrator` | Centralized state controller, `vault_locked` hydration gate & single authoritative write gateway |
 | `Editor Page` | Main user interface and Standalone Markdown Editor surface (CodeMirror 6 / EditorAdapter) |
+| `CreateVaultModal` | Zero-Knowledge vault initialization, BIP-39 mnemonic generation & 3-word challenge |
+| `VaultUnlockModal` | Multi-modal unlock interface (Password, BIP-39 Seed, 6-digit PIN) with offline support |
+| `TrustDeviceModal` | 6-digit PIN configuration for local device trust wrapping |
+| `VaultSecurityCard` | Account security settings panel, recovery phrase trigger & global device trust revocation |
+| `FileContextMenu` | Dynamic encryption/decryption toggling and client-side re-encrypted copy execution |
 | `useSync Hook` | Scoped React synchronization integration |
-| `ConflictDialog` | Conflict resolution interactive UI |
+| `ConflictDialog` | Conflict resolution interactive UI with double-encryption guard (AUD-03) |
 | `SyncIndicator` | Visual synchronization status indicator |
 
 ### 2. Business Layer
@@ -61,22 +66,27 @@
 | Component | Responsibility |
 |-----------|----------------|
 | `SyncManager` | Push/Pull coordination |
-| `ConflictResolver` | Conflict detection & resolution |
+| `ConflictResolver` | Conflict detection & 3-way resolution |
 | `ConcurrencyManager` | File-level locking |
 | `ConnectionDetector` | Network monitoring |
+| `Vault Server Actions` (`vault-actions.ts`) | Atomic vault profile CRUD & global device revocation (`deviceTrustEpoch`) |
+| `File Operations` (`file-ops.ts`) | Optimistic `toggleFileEncryption` & client-re-encrypted `copyFile` guard (AUD-02) |
+| `AI Commit Action` (`ai-commit.ts`) | Transactional AI commit with Zero-Knowledge plaintext rejection gate |
 
 ### 3. Data & Cryptography Layer
 
 | Component | Responsibility |
 |-----------|----------------|
-| `IndexedDBManager` | Local document & operations storage |
+| `IndexedDBManager` | Local document & operations storage, offline vault profile & device trust caching |
 | `ETagGenerator` | SHA-256 change detection & optimistic concurrency |
 | `SyncRollback` | State checkpoints & isolated failure recovery |
-| `Encryption` (`EncryptionManager`) | Dual-tier hybrid encryption orchestration (`AES-GCM-256` + AAD) |
+| `Encryption` (`encryption.ts`) | Dual-tier hybrid encryption orchestration (`AES-GCM-256` + AAD `vault:file:${userId}:${fileId}`) |
+| `PIN KEK Engine` (`encryption.ts`) | 6-digit PIN KEK derivation (PBKDF2 600K iterations, $1,000,000$ combinations) |
+| `Device Trust Wrapping` (`encryption.ts`) | AES-GCM-256 PIN wrapping, 30-day expiry, 5-attempt anti-brute-force lockout |
 | `CryptoWorkerBridge` | Typed isomorphic RPC bridge with self-healing circuit breaker & automatic queue drain |
-| `crypto-utils.ts` | Decoupled cryptographic primitives, W3C chunked CSPRNG & RAM sanitization |
+| `crypto-utils.ts` | Decoupled cryptographic primitives, W3C chunked CSPRNG & RAM sanitization (`wipeBuffer`) |
 | `crypto.worker.ts` | Isolated Web Worker for PBKDF2 (600,000 iter) & heavy symmetric offloading |
-| `SessionKeyStore` | Volatile in-memory key manager with deterministic auto-lock |
+| `SessionKeyStore` | Volatile RAM-only key manager with 1-hour auto-lock & CodeMirror keystroke touch |
 | `BIP39 Mnemonic` (`mnemonic.ts`) | Standard 12-word seed generation & 4-bit SHA-256 checksum verification |
 
 ---

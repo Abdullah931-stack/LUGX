@@ -40,7 +40,7 @@ docs/
 | [ai-atomic-commit-architecture.md](./architecture/ai-atomic-commit-architecture.md) | Transactional AI commit binding file update + quota settlement + version guard |
 | [editor-sync-orchestration.md](./architecture/editor-sync-orchestration.md) | Unified editor write controller: autosave gates, reconciliation, AI transaction guard |
 | [ai-streaming-protocol.md](./architecture/ai-streaming-protocol.md) | NDJSON wire protocol, session FSM, adversarial hardening |
-| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, AAD integrity, defensive RAM sanitization), cron purge |
+| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, WebAuthn PRF Hardware Biometrics & 6-digit PIN Trusted Device KEK, AAD integrity, defensive RAM sanitization, device trust revocation via migration 0009), cron purge |
 
 ### Reference (`reference/`)
 
@@ -57,6 +57,7 @@ docs/
 | [phase-14-supabase-storage-removal-closure.md](./reference/phase-14-supabase-storage-removal-closure.md) | Phase 14 closure: Dead-code elimination of unused Supabase Storage, database schema drop of `storage_path`, test fixtures clean-up |
 | [vault-phase-1-crypto-core-closure.md](./reference/vault-phase-1-crypto-core-closure.md) | Vault Phase 1 closure: Isolated Crypto Worker, 600K PBKDF2 iterations, AES-GCM-256 with mandatory AAD binding, BIP-39 12-word seed, SessionKeyStore auto-lock, defensive RAM sanitization |
 | [vault-phase-2-schema-and-storage-closure.md](./reference/vault-phase-2-schema-and-storage-closure.md) | Vault Phase 2 closure: PostgreSQL Cloud Schema, Transparent Encrypted IndexedDB, Zero Plaintext At-Rest, AAD binding, adversarial hardening & anti-overengineering decisions |
+| [vault-phase-3-ui-and-conversion-closure.md](./reference/vault-phase-3-ui-and-conversion-closure.md) | Vault Phase 3 closure: Interactive Dark-Themed Vault Modals, Editor Orchestrator Gating (`vault_locked`), Web Worker Pre-Save Encryption, Offline-First Dynamic File Conversion Engine, Client-Side Re-Encrypted Copy, WebAuthn PRF Hardware Biometrics & 6-Digit PIN, PostgreSQL Migration 0009 & Comprehensive 160-Test Suite |
 | [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Bidi Line Plugin, 3 Direction Modes, Arabic/RTL safe decorations, live preview/source modes |
 | [phase-2-editor-replacement-tooling-closure.md](./reference/phase-2-editor-replacement-tooling-closure.md) | Phase 2 closure: TipTap replacement on editor page, EditorAdapter tooling integration, Multi-Range Search & Replace |
 | [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |
@@ -117,7 +118,7 @@ docs/
 | Document | Scope |
 | :--- | :--- |
 | [CHANGELOG.md](./CHANGELOG.md) | Notable changes per release (append-only) |
-| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Known debt, accepted risks, decisions (TD-01 … TD-07) |
+| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Known debt, accepted risks, decisions (TD-01 … TD-10) |
 
 ---
 
@@ -134,10 +135,10 @@ docs/
 
 ```bash
 npm run lint            # static analysis & ESLint 9 code quality gate
-npx tsc --noEmit        # strict TypeScript type-checking
+npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit and contract test suites (zero DB/network dependencies)
-npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon
+npm run test            # pure unit, contract, and vault cryptographic test suites (45 files, 629 tests via vitest.config.mts)
+npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (via vitest.live.config.mts)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation
 act push --pull=false   # local containerized execution of the 6-stage CI workflow

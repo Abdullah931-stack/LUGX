@@ -2,6 +2,167 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.24.7] - 2026-09-05 (Hardware-Bound Biometric Authentication WebAuthn PRF & In-Place Device Trust)
+
+### Added & Hardened - Hardware-Enclave Key Derivation & Dual Device Trust Architecture
+
+- **WebAuthn PRF Hardware Key Derivation Engine (`src/lib/sync/webauthn-prf.ts`, `src/lib/sync/index.ts`):**
+  - Integrated W3C WebAuthentication Level 3 PRF extension (`extension:prf`) for hardware-bound platform authenticators (Windows Hello TPM 2.0, Apple Touch ID / Face ID Secure Enclave, Android Titan M2 / StrongBox).
+  - Implemented HKDF-SHA-256 derivation to expand raw PRF output into 256-bit AES-GCM Key Encryption Keys (KEK), establishing physical immunity against offline `IndexedDB` extraction attacks.
+  - Universal execution resilience: dynamically resolves `window` vs `globalThis` contexts for seamless execution across browser runtime, Node.js, and Vitest test environments.
+  - Implemented `checkWebAuthnSupportStatus` diagnostic engine: dynamically verifies Secure Context (`isSecureContext`), `PublicKeyCredential`, `isUserVerifyingPlatformAuthenticatorAvailable`, and `"extension:prf"` / `"prf"` client capabilities with actionable user guidance (e.g. Windows Hello PIN configuration reminders).
+- **In-Place Dual Device Trust Selector (`src/components/vault/vault-unlock-modal.tsx`, `src/components/vault/trust-device-modal.tsx`):**
+  - Enhanced `VaultUnlockModal` (Password tab) and `TrustDeviceModal` with dual selector cards: Hardware Biometrics (TPM/Enclave badge) vs 6-Digit PIN (Software protection).
+  - Allowed users to enroll, reconfigure, or switch device trust methods directly during password unlock without requiring separate modal journeys.
+  - Added dedicated biometric unlock tab for one-touch Windows Hello / Touch ID vault unlocking when a `webauthn_prf` envelope is present.
+  - Added explicit error feedback informing users of biometric prompt cancellations or sensor errors instead of silent failure.
+- **PostgreSQL Cloud Schema Migration 0009 (`src/lib/db/migrations/0009_add_device_trust_epoch.sql`):**
+  - Added `device_trust_epoch` column (`INTEGER NOT NULL DEFAULT 1`) to `user_vault_profiles` table.
+  - Resolved `NeonDbError: column "device_trust_epoch" does not exist` (code 42703).
+  - Applied and verified against live Neon database, enabling atomic multi-device revocation via cryptographic AAD binding.
+- **Automated Testing & Full Suite Verification (`src/test/webauthn-prf.unit.test.ts`):**
+  - Added 12 automated unit tests for HKDF expansion, W3C `"extension:prf"` client capability detection, platform checks, and mock enrollment.
+  - Full suite: **45 test files passed, 629/629 tests passed (100% pass rate)**.
+  - TypeScript compilation: `npx tsc --noEmit` exited with code 0 (zero errors).
+
+## [1.24.6] - 2026-09-05 (Native ESM Vitest Architecture & Mixed Exports Resolution)
+
+### Changed & Hardened - Test Environment & Configuration Architecture
+
+- **Eliminated `[MIXED_EXPORTS]` Rollup Warning (`vitest.constants.mts`):**
+  - Extracted shared partitioning arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated single-source-of-truth constants file (`vitest.constants.mts`).
+  - Restricted configuration entry points (`vitest.config.mts` and `vitest.live.config.mts`) strictly to default exports (`export default defineConfig(...)`), resolving the Rollup mixed export collision entirely.
+- **Resolved `configLoader: 'native'` Future Vite Warning (`vitest.config.mts`, `vitest.live.config.mts`, `package.json`):**
+  - Migrated configuration files to `.mts` extension to align with native ES module loading semantics without disturbing Next.js CommonJS boundaries in `package.json`.
+  - Replaced legacy Node CommonJS `__dirname` references with native `import.meta.dirname` (supported in Node.js 20.11+ / 24+).
+  - Explicitly specified `.mjs` import specifier (`./vitest.constants.mjs`) to maintain 100% compliance with TypeScript ESM module resolution and modern Vite standards.
+  - Updated `package.json` test script (`test:live`) to point directly to `vitest.live.config.mts`.
+- **Verification Evidence:**
+  - `npm run test`: **44 test files passed, 617/617 tests passed (100% success rate)** with completely clean terminal output and zero warnings.
+  - `tsc --noEmit`: Exited with code 0 (zero TypeScript errors).
+
+## [1.24.5] - 2026-09-05 (Comprehensive Vault Unit & Cross-Module Integration Test Suites)
+
+### Added - Full-Spectrum Unit Testing & Cross-Module End-to-End Test Suite
+
+- **Vault Server Actions Unit Test Suite (`src/test/vault-actions.unit.test.ts`):**
+  - Added 20 isolated unit tests covering `getUserVaultProfile`, `createUserVaultProfile`, `updateVaultPassword`, and `revokeAllTrustedDevices`.
+  - Validated authentication enforcement, input parameter validation, conflict states (409), not-found states (404), default iteration counts, and database exception resilience.
+- **File Operations Vault Unit Test Suite (`src/test/file-ops-vault.unit.test.ts`):**
+  - Added 10 unit tests covering `toggleFileEncryption` and `copyFile` with encrypted override.
+  - Validated folder encryption rejection, optimistic concurrency version checks (412), ETag validation, atomic metadata setting/clearing, title collision avoidance, and prevention of unauthenticated blind server copying.
+- **Cryptographic Resilience & Fault Tolerance Unit Test Suite (`src/test/vault-crypto-resilience.unit.test.ts`):**
+  - Added 17 unit tests verifying 6-digit PIN length constraints, ciphertext byte tampering detection, IV tampering detection, AAD missing/tampered error handling, RAM zeroization (`wipeBuffer`), and `SessionKeyStore` inactivity touch and tab-isolated locking.
+- **Cross-Module Integration Test Suite (`src/test/vault-cross-module.integration.test.ts`):**
+  - Added 5 end-to-end integration flow tests connecting Server Actions, Web Crypto, IndexedDB, and UI Orchestration:
+    - *Flow 1:* Complete Zero-Knowledge setup, local encryption, server persistence, and round-trip decryption.
+    - *Flow 2:* Client-side re-encrypted copy pipeline with new UUID, fresh IV, and AAD integrity validation.
+    - *Flow 3:* AI stream commit zero-knowledge plaintext rejection and atomic encrypted payload commitment.
+    - *Flow 4:* Conflict 412 double-encryption prevention invariant.
+    - *Flow 5:* Central device trust revocation and local envelope epoch invalidation.
+- **Verification Evidence:**
+  - Full automated suite: **148/148 tests passed (100% success rate)** across all 9 test suites.
+  - TypeScript compilation: `tsc --noEmit` exited with code 0 (zero errors).
+
+## [1.24.4] - 2026-09-05 (Adversarial Code Audit Closure, 6-Digit PIN Upgrade & Encrypted Copy Engine)
+
+### Added & Hardened - Adversarial Code Audit & Cryptographic Edge-Case Mitigations
+
+- **Cross-File Save Race Condition Prevention (`src/hooks/use-editor-orchestrator.ts`):**
+  - Parameterized `debouncedAutoSaveRef` and `executeServerWrite` with `targetFileId`.
+  - Automatically cancels pending debounce timers and flushes uncommitted dirty edits to local IndexedDB (`saveLocal`) during rapid route switching or component unmount.
+- **Client-Side Re-Encrypted Copy Engine (`src/components/files/file-context-menu.tsx`, `src/server/actions/file-ops.ts`):**
+  - Retained the copy feature for encrypted files with client-side zero-knowledge re-encryption.
+  - Added user confirmation and advisory dialog before re-encrypting large or confidential files.
+  - Decrypts original file locally in volatile RAM, generates new UUID and fresh random IV, re-encrypts with `vault:file:${userId}:${newFileId}`, and dispatches atomic copy.
+  - Protected server action `copyFile` from blind server-side copying of encrypted files without valid client-side re-encryption.
+- **Conflict Encryption Metadata Propagation & Double-Encryption Guard (`src/app/api/files/[id]/route.ts`, `src/server/actions/file-ops.ts`, `src/hooks/use-editor-orchestrator.ts`):**
+  - Included `isEncrypted` and `encryptionMetadata` in 412 conflict response bodies across API routes and Server Actions.
+  - Added false conflict decryption using server IV and added defensive guard against double-encrypting already-authenticated ciphertexts (`gcm:v1:...`) during conflict resolution.
+- **Inactivity Timer Local Activity Touch (`src/hooks/use-editor-orchestrator.ts`):**
+  - Hooked `sessionKeyStore.touch()` to editor input events, keeping the active tab alive during active composition.
+- **6-Digit PIN Upgrade (`src/lib/sync/encryption.ts`, `src/components/vault/`, `src/test/vault-orchestration.test.ts`):**
+  - Upgraded Trusted Device PIN requirement from 4 digits to 6 digits (`/^\d{6}$/`), expanding entropy to 1,000,000 combinations.
+  - Synchronized input validation, placeholders, and automated test assertions.
+- **Automated Verification:**
+  - Expanded `src/test/vault-orchestration.test.ts` to 29 tests covering 6-digit PIN, AAD re-encryption integrity, and double-encryption guards. All 96 automated tests pass (100% pass rate).
+
+## [1.24.3] - 2026-09-05 (Strict Zero-Trace Baseline, Trusted Device 4-Digit PIN Architecture & Global Revocation)
+
+### Added - Strict Zero-Trace Default & Trusted Device PIN Ecosystem
+
+- **Strict Zero-Trace General Default Mode (`src/lib/sync/session-key-store.ts`):**
+  - Refactored `SessionKeyStore` to operate purely in volatile RAM Heap memory by default.
+  - Eliminated naive `sessionStorage` plain key writing, ensuring no plaintext master keys or cryptographic artifacts ever touch client disk or DOM storage.
+  - Retained the 1-hour inactivity timeout with automatic defensive RAM zeroing (`wipeBuffer`).
+- **Trusted Device 4-Digit PIN Key Wrapping (`src/lib/sync/encryption.ts`, `src/lib/sync/types/vault.ts`):**
+  - Implemented `wrapMasterKeyWithPin` and `unwrapMasterKeyWithPin`: master keys on explicitly trusted personal devices are wrapped via PBKDF2-HMAC-SHA256 (600,000 iterations, 16-byte random salt, 12-byte IV, AAD binding with userId and epoch).
+  - Enforced 30-day validity window (`expiresAt`) and anti-brute-force rate limiting: 5 failed PIN attempts automatically destroy the local envelope, forcing full password authentication.
+- **IndexedDB Trusted Envelope Storage (`src/lib/sync/indexeddb.ts`):**
+  - Added `saveDeviceTrustEnvelope`, `getDeviceTrustEnvelope`, and `clearDeviceTrustEnvelope` to persist PIN envelopes in `sync_metadata`.
+- **Global Remote Revocation via `deviceTrustEpoch` (`src/lib/db/schema.ts`, `src/server/actions/vault-actions.ts`):**
+  - Added `deviceTrustEpoch` to `userVaultProfiles`.
+  - Implemented `revokeAllTrustedDevices()` server action: atomically increments `deviceTrustEpoch`, immediately invalidating all PIN envelopes across all trusted devices globally upon next authentication or sync.
+- **Interactive UI Components (`src/components/vault/`, `src/app/account/page.tsx`):**
+  - **`TrustDeviceModal`:** Clean dark modal with prominent security disclaimer, legal agreement checkbox, and 4-digit PIN setup/confirmation.
+  - **`VaultSecurityCard`:** Central security management card in Account Settings (`/account`) showing active device status (Strict vs Trusted Device), local revocation button, and global "Revoke All Trusted Devices" action with confirmation dialog.
+  - **`VaultUnlockModal`:** Seamless PIN tab with auto-detection of trusted device envelopes, 4-digit numeric input, remaining attempt counter, and fallback to password/recovery seed.
+- **Automated Verification Suite (`src/test/vault-orchestration.test.ts`):**
+  - Added 7 automated tests for PIN KEK derivation, envelope wrapping/unwrapping, brute-force lockout, 30-day expiry, and global epoch revocation. All 71 vault tests pass (100% pass rate).
+
+## [1.24.2] - 2026-09-04 (1-Hour Inactivity Auto-Lock, Tab-Scoped Session Persistence & Unmount Key Retention)
+
+### Fixed - Repetitive Password Re-Prompts & Tab Session Key Loss
+
+- **1-Hour Inactivity Auto-Lock & Tab-Scoped Session Persistence (`src/lib/sync/session-key-store.ts`):**
+  - Updated the default vault inactivity auto-lock timeout to exactly 1 hour (`3,600,000` ms = `60 * 60 * 1000`).
+  - Integrated tab-scoped `sessionStorage` (`lugx_vault_session_v1`) to securely retain the active Master Key across page reloads and route navigations within the open tab.
+  - Seamlessly rehydrates the in-memory Master Key on demand (`isUnlocked()`, `constructor`) if volatile RAM is cleared, eliminating unwanted password prompts.
+  - Explicit locks and logouts deterministically wipe both volatile RAM (`wipeBuffer`) and `sessionStorage`.
+- **Decoupled Key Lifecycle from Network Sync Unmount (`src/hooks/use-sync.ts`):**
+  - Removed erroneous `sessionKeyStore.purgeKeys()` from `useSync` unmount cleanup, ensuring switching documents or navigating within the workspace preserves the unlocked vault state.
+- **Cross-Tab & Component Vault State Synchronization (`src/lib/sync/cross-tab-sync.ts`, `src/hooks/use-editor-orchestrator.ts`, `src/components/vault/`):**
+  - Added `vault_unlocked` and `vault_locked` broadcast events to synchronize vault status across open editor tabs and file explorer menus.
+  - Updated `useEditorOrchestrator` to reactively unlock encrypted documents and decrypt pending payloads upon receiving `vault_unlocked`.
+- **Automated Test Coverage (`src/test/vault-orchestration.test.ts`):**
+  - Added comprehensive unit tests for 1-hour inactivity timeout, `sessionStorage` persistence/rehydration, and auto-lock expiration. All 64 vault tests pass.
+
+## [1.24.1] - 2026-09-04 (Elimination of Spurious Encryption Conflicts & Guaranteed Conflict Dialog Dismissal Lifecycle)
+
+### Fixed - Encryption Conflict 412 False Positives & Conflict Modal Dismissal Loop
+
+- **Decryption-Aware False Conflict Detection (`src/hooks/use-editor-orchestrator.ts`):**
+  - Eliminated spurious 412 Precondition Failed conflict popups when encrypting an active document: if remote content is encrypted while local baseline holds plaintext, `executeServerWrite` and `handleSyncConflict` decrypt the server ciphertext using the in-memory Master Key to compare against local plaintext. Matching content is auto-synchronized cleanly without prompting the user with a conflict modal.
+- **AutoSave Debounce Cancellation on Encryption (`src/hooks/use-editor-orchestrator.ts`):**
+  - Canceled pending debounced auto-saves (`debouncedAutoSaveRef.current?.cancel?.()`) and cleared active conflict states upon receiving `file_encrypted` or `file_decrypted` cross-tab events, preventing stale version saves from racing against cloud encryption updates.
+- **IndexedDB Pending Operations Queue Purge (`src/components/files/file-context-menu.tsx`, `src/lib/sync/sync-manager.ts`):**
+  - Upon file encryption/decryption, all pending unsynced operations for that file in IndexedDB are marked `synced: true`, preventing `SyncManager` background workers from pushing superseded plaintext edits and triggering recursive 412 loops.
+  - Implemented comprehensive `resolution === 'local'` handling in `SyncManager.handleConflict`, setting `isDirty: false` and clearing uncommitted operations.
+- **Deterministic Conflict Dialog Dismissal (`src/components/sync/conflict-dialog.tsx`):**
+  - Added explicit, immediate `onClose()` invocation inside `handleResolveClick` after `await onResolve(...)`, ensuring the modal cleanly dismisses upon user resolution without relying solely on parent re-render cycles.
+- **Automated Verification (`src/test/vault-orchestration.test.ts`):**
+  - Added integration tests verifying decryption-aware false conflict recognition, local conflict resolution queue purging, and post-encryption operation cleanup. (61/61 tests passing).
+
+## [1.24.0] - 2026-09-04 (Vault Phase 3: Vault UI Components, Editor Orchestration & Dynamic File Conversion Engine)
+
+### Added - Zero-Knowledge Vault UI, Editor Orchestrator Gating & Dynamic File Conversion Engine
+
+- **Interactive Dark-Themed Vault Modals (`src/components/vault/`):**
+  - **`CreateVaultModal`:** Password setting, 12-word BIP-39 recovery seed generation, randomized 3-word challenge test, dual wrapping (`wrapMasterKeyWithPassword`, `wrapMasterKeyWithRecoverySeed`), local `sync_metadata` caching, and defensive buffer wiping (`wipeBuffer`).
+  - **`VaultUnlockModal`:** Fast password unwrap, seamless 12-word seed recovery fallback, local IDB cache retrieval for offline operations, and new password re-wrap capabilities.
+  - **`RecoveryPhraseModal`:** Standalone secure recovery phrase display with clipboard export and security advisories.
+- **Editor Write Orchestrator Gating (`src/hooks/use-editor-orchestrator.ts`):**
+  - **`hydration === "vault_locked"`:** Suspends CodeMirror painting and editing (`adapter.setEditable(false)`) when mounting encrypted files without the Master Key in ephemeral RAM, preventing ciphertext leakage to DOM or clipboard.
+  - **Pre-Save Envelope Encryption:** Plaintext from the editor is encrypted via Web Worker into an `EncryptedEnvelope` before dispatching local IndexedDB saves or remote PUT requests.
+- **Dynamic Offline File Conversion Engine (`src/components/files/file-context-menu.tsx`, `src/server/actions/file-ops.ts`):**
+  - Direct toggle between plaintext and encrypted state from file tree context menus.
+  - **Offline-First Resilience:** If offline, conversions update `IndexedDB` with `isDirty: true`, queuing deferred push synchronization via `SyncManager`.
+  - **Atomic Server Actions:** `toggleFileEncryption` executes optimistic concurrency checks (`expectedVersion`, `expectedETag`), computes updated ETags, and triggers cache revalidation.
+- **Visual File Tree Indicators (`src/components/files/file-tree-item.tsx`, `src/components/layout/sidebar.tsx`):**
+  - Rendered `Lock` icon for encrypted files across the workspace sidebar and editor header.
+- **Automated Verification Suite (`src/test/vault-orchestration.test.ts`):**
+  - 8 automated tests covering dual key wrapping, password unlock/rejection, mnemonic recovery, offline profile caching, and dynamic file conversion in IndexedDB. All 54 vault tests passing (100% success rate).
+
 ## [1.23.3] - 2026-09-04 (Crypto Worker Timeout Elimination, Self-Healing Circuit Breaker, W3C Chunked CSPRNG & Tab Wakeup Durability)
 
 ### Fixed - Web Worker Background Suspension, Timeout Cascades & Desynchronization

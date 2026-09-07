@@ -67,6 +67,12 @@ The system resolves concurrent multi-device and offline-to-online edit discrepan
 - Uses `BroadcastChannel` to propagate save and conflict resolution events across browser tabs.
 - **Dirty State Guard:** Sibling tabs only advance their in-memory `fileVersionRef` if the current tab is clean (`!isDirty && !hasUnresolvedConflict`), preventing silent overwrites of un-saved local drafts.
 
+### 2.6 Zero-Knowledge Encrypted Conflict Resolution (`src/hooks/use-editor-orchestrator.ts`)
+- **Metadata Propagation**: When a 412 Precondition Failed occurs on an encrypted file, the server returns `isEncrypted` and `encryptionMetadata` inside the `serverVersion` payload.
+- **Double-Encryption Guard (AUD-03)**: If the user selects the server version to resolve the conflict, the orchestrator detects if the incoming content is already an authenticated ciphertext envelope (`resolution.content.startsWith("gcm:v1:")`). It bypasses re-encryption entirely to prevent double-encryption corruption loops (`gcm:v1:gcm:v1:`).
+- **Client-Side Plaintext Re-Encryption**: If the user edits/merges the content, the orchestrator re-encrypts the merged plaintext locally in volatile RAM using the Master Key, a fresh random 12-byte IV, and AAD (`vault:file:${userId}:${fileId}`) before dispatching `toggleFileEncryption(fileId, true, contentToSend, metaToSend, { expectedVersion, expectedETag })`.
+- **Local Cache Persistence**: The resolved ciphertext and metadata are atomically persisted to IndexedDB (`saveLocal`) with `isDirty: false`.
+
 ---
 
 ## 3. API & Resolution Contracts
@@ -86,6 +92,8 @@ export interface MergeResult {
 
 ### 3.2 Authoritative Resolution Submission
 Resolutions are committed via a single authoritative write request:
+
+**Standard Unencrypted File:**
 ```http
 PUT /api/files/:id HTTP/1.1
 Content-Type: application/json
@@ -96,6 +104,28 @@ If-Match: "server_etag"
   "expectedVersion": 2
 }
 ```
+
+**Encrypted Vault File:**
+```http
+PUT /api/files/:id HTTP/1.1
+Content-Type: application/json
+If-Match: "server_etag"
+
+{
+  "content": "gcm:v1:base64ciphertext...",
+  "isEncrypted": true,
+  "encryptionMetadata": {
+    "version": 1,
+    "algorithm": "AES-GCM-256",
+    "keyId": "master-v1",
+    "salt": "",
+    "iv": "base64iv...",
+    "kdfIterations": 600000
+  },
+  "expectedVersion": 2
+}
+```
+*(Alternatively committed atomically via `toggleFileEncryption` Server Action).*
 
 ---
 

@@ -92,6 +92,16 @@ All pure synchronous utilities (such as `generateRestoredTitle` and `generateCop
 ### I. BFS Hierarchy Traversal Cycle Guards (`getDescendantIds` & `restoreFile`)
 When recursively collecting descendant file/folder IDs for cascading deletion or tree restoration, BFS queue traversals maintain a `visited = new Set<string>()` guard. If corrupt or cyclic parent pointers exist in the database, the traversal terminates safely without infinite loops or memory exhaustion.
 
+### J. Zero-Knowledge Encryption Toggle Invariants (`toggleFileEncryption`)
+- **Strict Non-Folder Invariant**: Folders cannot be encrypted (`isFolder === false`); attempting to toggle encryption on a folder immediately returns an error.
+- **Optimistic Concurrency Guard**: Validates `expectedVersion` and `expectedETag` against live database state. On mismatch, returns 412 Conflict with the current `serverVersion` including `isEncrypted` and `encryptionMetadata`.
+- **Atomic Metadata & ETag Update**: Inverts `isEncrypted`, sets/clears structured `encryptionMetadata`, updates normalized content, computes strong SHA-256 ETag, and increments version atomically in a single SQL operation.
+
+### K. Encrypted File Copy Guard & Client-Side Re-Encryption (`copyFile` / AUD-02)
+- **Zero-Knowledge Blind Copy Prohibition**: Server-side `copyFile` strictly refuses to copy any file marked `is_encrypted: true` if no client-side `encryptedOverride` is provided. Reusing identical ciphertexts under a different file ID violates AAD integrity constraints (`vault:file:${userId}:${newFileId}`).
+- **Client-Side Re-Encryption Pipeline**: The client decrypts in volatile RAM, generates a new UUID (`newFileId`) and a fresh random 12-byte IV, and re-encrypts with the target AAD. The resulting payload is supplied as `encryptedOverride`.
+- **Selective Folder Copying**: When deep-copying folders with nested children, unencrypted files are copied recursively, while encrypted children are safely skipped unless individually re-encrypted on the client.
+
 ---
 
 ## 4. Verification & Testing Evidence
@@ -101,4 +111,5 @@ When recursively collecting descendant file/folder IDs for cascading deletion or
 - `src/app/api/files/[id]/route.putguard.test.ts`: Verifies lost-update mitigation and atomic ETag/version updates.
 - `src/server/actions/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments.
 - `src/server/actions/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job.
-- Full suite execution: 37 test files, 488 tests passing (100% pass rate).
+- `src/test/file-ops-vault.unit.test.ts`: 10 unit tests covering `toggleFileEncryption` optimistic locking, folder rejection, and `copyFile` zero-knowledge encrypted overrides.
+- Full suite execution: 44 test files, 617 tests passing (100% pass rate).

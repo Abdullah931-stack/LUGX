@@ -45,6 +45,11 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
    - Starting an AI operation immediately cancels any pending background auto-save timers (`debouncedAutoSave.cancel()`) to prevent version collisions.
    - Background autosave and cross-tab sync broadcasts are suppressed while `aiStream.isLoading` / `aiStream.isCommitting` is active **or while the session rests in `preview_ready` awaiting the user's decision**, and resume only after the editor generation and file version are updated with the server's response.
 
+8. **Zero-Knowledge Encrypted AI Commit Invariant (`src/hooks/use-ai-stream.ts`, `src/server/actions/ai-commit.ts`)**:
+   - **Client-Side Envelope Encryption**: When the targeted file is encrypted (`isEncrypted === true`), the client editor intercepts the accepted AI markdown text in `useAIStream`. The content is encrypted locally via the Web Worker using the volatile Master Key, a fresh random 12-byte IV, and AAD (`vault:file:${userId}:${fileId}`).
+   - **Fail-Closed Server Gate**: The server action `commitAIFileOperation` enforces a strict defense-in-depth gatekeeper: if `currentFile.isEncrypted` is true and `params.encryptionMetadata?.iv` is missing, the server strictly rejects the commit with `"Cannot commit unencrypted content to an encrypted file without encryption metadata"`, completely preventing plaintext data leaks to the database.
+   - **Atomic Ciphertext & Metadata Persistence**: The encrypted ciphertext payload and the structured `encryptionMetadata` envelope are updated atomically alongside the version increment, ETag generation, and reservation settlement inside `txDb.transaction`.
+
 ---
 
 ## 3. Component Reference & Flow

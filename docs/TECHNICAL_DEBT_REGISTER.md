@@ -74,21 +74,47 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   The exhaustive `Record<SyncStatus, ...>` display map in `sync-indicator.tsx`
   was trimmed of its dead `error` row accordingly.
 
-## TD-07 — Real-browser E2E coverage for editor recovery journeys (deferred to Phase 19)
+## TD-07 — Real-browser E2E coverage for editor recovery & vault encryption journeys (deferred to Phase 19)
 
 - **Debt:** Phase 11 closure proves reload-during-preview and
   navigation-during-commit semantics via jsdom integration suites
   (`editor-recovery-reload.test.ts`, extended `editor-orchestration.integration.test.ts`)
-  plus a documented manual checklist — but there are no automated real-browser
+  plus a documented manual checklist. Similarly, Phase 18/Vault encryption journeys
+  (vault unlock, 6-digit PIN verification, device trust enrollment/revocation,
+  and cross-tab inactivity locking) are verified through comprehensive jsdom and WebCrypto
+  integration tests (629 tests across 45 suites) — but there are no automated real-browser
   journeys yet (`@playwright/test` is intentionally introduced only in Phase 19).
 - **Interim mitigation:** jsdom hard-reload simulation is semantically faithful
   (zero in-memory state survives; recovery runs from sessionStorage seeds), and
-  the unload-warning path is asserted directly against `beforeunload`.
-- **Decision:** deferred by project lead (2026-08-24). Unblocked when Phase 19
-  adds Playwright + webServer harness; then port the three manual-checklist
-  scenarios into automated E2E specs.
+  the unload-warning path is asserted directly against `beforeunload`. Vault cryptographic
+  integrity (AES-GCM-256, AAD binding, PBKDF2-HMAC-SHA256, and IndexedDB transactions)
+  is verified deterministically with 100% pass rate in local Node/WebCrypto test environments.
+- **Decision:** deferred by project lead (2026-08-24, reaffirmed for Vault in 2026-09-05). Unblocked when Phase 19
+  adds Playwright + webServer harness; then port the manual checklists and end-to-end vault
+  lifecycle scenarios into automated E2E specs.
 
 ## TD-08 — Database Driver Protocol Mismatch in CI Containers — ✅ RESOLVED (2026-08-29)
 
 - **Debt:** `src/lib/db/index.ts` was hardcoded to `@neondatabase/serverless` (`neon-http`), which dispatches queries over HTTPS port 443. When running inside GitHub Actions CI service containers or local Docker (`postgres:16-alpine`), connections failed with `ECONNREFUSED ::1:443`.
 - **Resolution:** Replaced with a Smart Hybrid Database Client in `src/lib/db/index.ts` that dynamically detects the target host: uses `neon-http` for Neon Cloud and standard `pg.Pool` (`drizzle-orm/node-postgres`) over TCP on port 5432 for local Docker and CI containers. All 6 stages of the CI pipeline pass deterministically.
+
+## TD-09 — Rollup Mixed Exports and Vite ConfigLoader Native Deprecation Warnings — ✅ RESOLVED (2026-09-05)
+
+- **Debt:** Running `npm run test` triggered two terminal warnings:
+  1. `[MIXED_EXPORTS] Entry module "vitest.config.ts" is using named and default exports together.`
+  2. `(!) Your Vite config uses features that are unsupported by 'configLoader: native'... ESM syntax in a file loaded as CommonJS...`
+- **Resolution:**
+  - Extracted shared test suite arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated Single Source of Truth (`vitest.constants.mts`), restricting config files strictly to default exports (`export default defineConfig(...)`).
+  - Migrated configuration files to Native ESM (`vitest.config.mts` and `vitest.live.config.mts`), replaced CommonJS `__dirname` with standard `import.meta.dirname`, and specified explicit `.mjs` import extensions for TypeScript module resolution.
+  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All 44 test files and 617 tests execute cleanly with zero warnings.
+
+## TD-10 — Offline Extraction of IndexedDB Device Trust Envelope (Accepted Risk for PIN / Mitigated via WebAuthn PRF)
+
+- **Debt:** In "Trust This Device" mode when selecting the software 6-digit PIN option, the Master Key is wrapped via PBKDF2-HMAC-SHA256 (600,000 iterations) and persisted in browser `IndexedDB` (`device_trust_envelope`). While in-browser access is rate-limited and locked after 5 failed attempts (destroying the envelope), this protection is enforced exclusively by client-side JavaScript. If an adversary gains physical or local OS root access to the machine and extracts the browser's SQLite/LevelDB database files from disk, the software-level attempt counter does not apply offline. An attacker with dedicated GPU resources can brute-force the $10^6$ PIN keyspace offline.
+- **Decision / Status:** **Accepted Risk for PIN / Progressive Enhancement Mitigated** (owner: project lead / architecture). In standard web browser environments without native OS secure hardware enclaves (TPM / Secure Enclave), web storage is inherently bound to host OS security. Implementing server-dependent rate-limiting for PIN entry would violate the application's offline-first architecture.
+- **User Responsibility Invariant:** Physical and device hardware security rests 100% on the user when choosing to enable "Trust This Device" via software PIN. The UI mandates explicit user acknowledgment of this trust boundary before activation.
+- **Implemented Mitigations & Dual Architecture:**
+  - **Hardware-Bound Biometrics (WebAuthn PRF — ✅ IMPLEMENTED 2026-09-05):** Integrated W3C WebAuthentication Level 3 PRF extension (`src/lib/sync/webauthn-prf.ts`). Users on supported platforms (Windows Hello TPM 2.0, Apple Touch ID / Face ID Secure Enclave, Android Titan M2 / StrongBox) can choose Hardware Biometrics instead of a PIN. In this mode, the key encryption key is derived directly within the hardware security chip via HMAC-SHA-256 and HKDF, providing 100% physical immunity against offline `IndexedDB` disk extraction.
+  - **Dual Selector in UI:** Both `TrustDeviceModal` and `VaultUnlockModal` (Password tab) present dual options: Hardware Biometrics (with dynamic hardware capability detection and diagnostic guidance) and 6-Digit PIN (software fallback).
+  - **Default Zero-Trace Policy:** For high-threat environments, shared workstations, or untrusted hardware, users can remain on the default **Level 1: Strict Zero-Trace (Volatile RAM-Only)** mode, where no cryptographic key material or envelope is ever written to disk/storage.
+  - **Remote Central Revocation:** Remote revocation via `deviceTrustEpoch` (backed by PostgreSQL migration `0009_add_device_trust_epoch.sql`) atomically invalidates both PRF and PIN device trust envelopes across all devices simultaneously from any authenticated session via cryptographic AAD binding.

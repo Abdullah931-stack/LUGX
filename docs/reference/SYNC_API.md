@@ -41,6 +41,8 @@ Response shape from `src/app/api/files/sync/route.ts`:
       "version": 5,
       "parentFolderId": "folder-uuid",
       "isFolder": false,
+      "isEncrypted": false,
+      "encryptionMetadata": null,
       "deletedAt": null,
       "updatedAt": "2026-02-01T12:00:00.000Z",
       "createdAt": "2026-01-15T09:30:00.000Z"
@@ -56,6 +58,7 @@ Field notes:
 - `next_cursor`: Base64-encoded JSON `{ updatedAt, id }` keyset cursor; pass it
   back as the `cursor` query parameter. `null` when no more pages.
 - `sync_timestamp`: ISO-8601 string of the server time at query execution.
+- `isEncrypted` & `encryptionMetadata`: Structured envelope `{ version, algorithm, keyId, salt, iv, kdfIterations }` for Zero-Knowledge files; `null` for plaintext files.
 - Soft-deleted files are excluded; there is **no** `deletedIds` field — deletions
   propagate via pull reconciliation against missing/absent files.
 
@@ -89,6 +92,8 @@ Vary: If-None-Match
   "id": "abc123",
   "content": "file content...",
   "title": "Document Title",
+  "isEncrypted": false,
+  "encryptionMetadata": null,
   "etag": "new-etag-value",
   "version": 5,
   "updatedAt": "2026-02-01T12:00:00Z"
@@ -117,6 +122,8 @@ If-Match: "current-etag"
 {
   "content": "updated content...",
   "title": "Updated Title",
+  "isEncrypted": false,
+  "encryptionMetadata": null,
   "expectedVersion": 5
 }
 ```
@@ -147,6 +154,8 @@ ETag: "server-etag"
     "etag": "server-etag",
     "version": 6,
     "content": "# Current Server Title\n\nAuthoritative server markdown content.",
+    "isEncrypted": false,
+    "encryptionMetadata": null,
     "updatedAt": "2026-02-01T12:25:00.000Z"
   }
 }
@@ -282,4 +291,40 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 3. **Single Authoritative Write:** After user resolution (Local, Server, 3-Way Merge, or Restore), exactly one write request is dispatched to the server containing `expectedVersion: serverVersion.version`.
 4. **Verified State Transition:** Editor state (MarkdownEditor / EditorAdapter) and IndexedDB cache are only transitioned to clean (`isDirty: false`) after receiving 200 OK confirmation from the server.
 5. **Autosave Lockout:** Autosave is strictly inhibited whenever an unresolved conflict is active.
+
+---
+
+## Zero-Knowledge Vault Server Actions & Endpoints
+
+### 1. `toggleFileEncryption` (`src/server/actions/file-ops.ts`)
+Converts a file between plaintext and encrypted states:
+- **Signature:**
+  ```typescript
+  toggleFileEncryption(
+    fileId: string,
+    isEncrypted: boolean,
+    content: string,
+    encryptionMetadata?: {
+      version: number;
+      algorithm: string;
+      keyId: string;
+      salt: string;
+      iv: string;
+      kdfIterations?: number;
+    } | null,
+    options?: { expectedVersion?: number; expectedETag?: string }
+  ): Promise<FileOpResult>
+  ```
+- **Invariants:** Folders cannot be encrypted (`isFolder === false`). Preconditions `expectedVersion` and `expectedETag` are verified optimistically; returns 412 with `serverVersion` on conflict.
+
+### 2. `copyFile` with Encrypted Override (`src/server/actions/file-ops.ts` / AUD-02)
+Creates a copy of a document or folder:
+- **Encrypted File Invariant:** If `original.isEncrypted` is true, `copyFile` strictly requires an `encryptedOverride` containing `{ newFileId, content, encryptionMetadata }` re-encrypted on the client with unique AAD. Server-side blind copy is rejected.
+
+### 3. Vault Profile Server Actions (`src/server/actions/vault-actions.ts`)
+Atomic server actions managing zero-knowledge profiles:
+- `getUserVaultProfile()`: Retrieves user's profile (`userVaultProfiles`) or `null`.
+- `createUserVaultProfile(input)`: Atomically inserts dual-wrapped master keys (`encryptedMasterKey` and `recoveryEncryptedMasterKey`) with 409 conflict guard.
+- `updateVaultPassword(input)`: Updates password-wrapped master key and salt with 404 guard.
+- `revokeAllTrustedDevices()`: Atomically increments `deviceTrustEpoch` from $N$ to $N+1$, invalidating all local device PIN envelopes globally.
 
