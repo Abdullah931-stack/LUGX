@@ -71,6 +71,16 @@ export async function POST(req: NextRequest) {
             if (!targetFile) {
                 return new NextResponse("File not found", { status: 404 });
             }
+
+            // Zero-Knowledge AI Gatekeeper: prohibit AI on encrypted files unless user explicitly opted in
+            if (targetFile.isEncrypted) {
+                const vaultProfile = await db.query.userVaultProfiles.findFirst({
+                    where: eq(schema.userVaultProfiles.userId, user.id),
+                });
+                if (!vaultProfile?.allowAIOnEncryptedFiles) {
+                    return new NextResponse("AI_PROHIBITED_ON_ENCRYPTED_FILES", { status: 403 });
+                }
+            }
         }
 
         // 1. Get User Tier

@@ -187,3 +187,40 @@ export async function revokeAllTrustedDevices(): Promise<VaultActionResult<{ new
         return { success: false, status: "error", error: "Failed to revoke trusted devices" };
     }
 }
+
+/**
+ * Updates the user's preference for allowing or prohibiting AI on encrypted documents.
+ */
+export async function updateVaultAISetting(
+    allowAI: boolean
+): Promise<VaultActionResult<{ allowAIOnEncryptedFiles: boolean }>> {
+    try {
+        const user = await getUser();
+        if (!user) {
+            return { success: false, status: "unauthorized", error: "Authentication required" };
+        }
+
+        const existing = await db.query.userVaultProfiles.findFirst({
+            where: eq(schema.userVaultProfiles.userId, user.id),
+        });
+
+        if (!existing) {
+            return { success: false, status: "not_found", error: "Vault profile not found" };
+        }
+
+        const now = new Date();
+        await db
+            .update(schema.userVaultProfiles)
+            .set({
+                allowAIOnEncryptedFiles: allowAI,
+                updatedAt: now,
+            })
+            .where(eq(schema.userVaultProfiles.userId, user.id));
+
+        return { success: true, data: { allowAIOnEncryptedFiles: allowAI } };
+    } catch (error) {
+        console.error("[VaultActions] updateVaultAISetting error:", error);
+        return { success: false, status: "error", error: "Failed to update vault AI setting" };
+    }
+}
+

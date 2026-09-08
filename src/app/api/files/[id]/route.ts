@@ -167,18 +167,46 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         const now = new Date();
         const currentVersion = currentFile.version || 0;
         const newVersion = currentVersion + 1;
-        const newContent = content !== undefined ? normalizeMarkdownSource(content) : currentFile.content;
+        const effectiveIsEncrypted = isEncrypted !== undefined ? isEncrypted : currentFile.isEncrypted;
+        const effectiveMetadata = effectiveIsEncrypted
+            ? (encryptionMetadata !== undefined ? encryptionMetadata : currentFile.encryptionMetadata)
+            : null;
+
+        // Zero-Knowledge Boundary Guard: Encrypted files require valid encryptionMetadata with an IV
+        if (effectiveIsEncrypted && (!effectiveMetadata || !effectiveMetadata.iv)) {
+            return NextResponse.json(
+                { error: "Encrypted files require valid encryptionMetadata with an IV" },
+                { status: 400 }
+            );
+        }
+
+        const newContent = content !== undefined
+            ? (effectiveIsEncrypted ? content : normalizeMarkdownSource(content))
+            : currentFile.content;
         const newTitle = title !== undefined ? title.trim().slice(0, 500) : currentFile.title;
-        const newEtag = generateETagSync({ id: fileId, content: newContent || '', updatedAt: now });
+
+        const newEtag = generateETagSync({
+            id: fileId,
+            content: newContent || '',
+            updatedAt: now,
+            isEncrypted: effectiveIsEncrypted,
+            envelope: effectiveIsEncrypted ? {
+                version: 1,
+                algorithm: 'AES-GCM-256',
+                keyId: effectiveMetadata?.keyId ?? 'master-v1',
+                salt: effectiveMetadata?.salt ?? '',
+                iv: effectiveMetadata?.iv ?? '',
+                kdfIterations: effectiveMetadata?.kdfIterations ?? 600000,
+                ciphertext: newContent || '',
+            } : undefined,
+        });
 
         const [updatedFile] = await db.update(schema.files)
             .set({
                 content: newContent,
                 title: newTitle,
-                isEncrypted: isEncrypted !== undefined ? isEncrypted : currentFile.isEncrypted,
-                encryptionMetadata: isEncrypted !== undefined
-                    ? (isEncrypted ? (encryptionMetadata ?? currentFile.encryptionMetadata) : null)
-                    : (encryptionMetadata !== undefined ? encryptionMetadata : currentFile.encryptionMetadata),
+                isEncrypted: effectiveIsEncrypted,
+                encryptionMetadata: effectiveMetadata,
                 etag: newEtag,
                 version: newVersion,
                 updatedAt: now,

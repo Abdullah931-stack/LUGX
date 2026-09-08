@@ -144,13 +144,30 @@ export async function commitAIFileOperation(
             return { success: false, status: "error", error: "File not found or deleted" };
         }
 
-        // Zero-Knowledge Defense: Disallow committing plaintext to an encrypted file
-        if (currentFile.isEncrypted && !params.encryptionMetadata?.iv) {
-            return {
-                success: false,
-                status: "error",
-                error: "Cannot commit unencrypted content to an encrypted file without encryption metadata",
-            };
+        // Zero-Knowledge AI Gatekeeper Defense:
+        if (currentFile.isEncrypted) {
+            if (typeof db.query?.userVaultProfiles?.findFirst === "function") {
+                const vaultProfile = await db.query.userVaultProfiles.findFirst({
+                    where: eq(schema.userVaultProfiles.userId, user.id),
+                });
+                if (!vaultProfile?.allowAIOnEncryptedFiles) {
+                    await refundAIReservationOp(operationId, user.id).catch(() => {});
+                    return {
+                        success: false,
+                        status: "unauthorized",
+                        error: "AI_PROHIBITED_ON_ENCRYPTED_FILES",
+                    };
+                }
+            }
+
+            if (!params.encryptionMetadata?.iv) {
+                await refundAIReservationOp(operationId, user.id).catch(() => {});
+                return {
+                    success: false,
+                    status: "error",
+                    error: "Cannot commit unencrypted content to an encrypted file without encryption metadata",
+                };
+            }
         }
 
         const normalizeETag = (t?: string | null) => (t ? t.replace(/^W\//, "").replace(/"/g, "") : null);
@@ -158,6 +175,7 @@ export async function commitAIFileOperation(
         let baseVersion = expectedVersion;
 
         const isContentUnchanged =
+            !currentFile.isEncrypted &&
             params.originalContent !== undefined &&
             normalizeMarkdownSource(currentFile.content) === normalizeMarkdownSource(params.originalContent);
 
@@ -199,7 +217,21 @@ export async function commitAIFileOperation(
 
         const now = new Date();
         const newVersion = baseVersion + 1;
-        const newEtag = generateETagSync({ id: fileId, content: resultContent, updatedAt: now });
+        const newEtag = generateETagSync({
+            id: fileId,
+            content: resultContent,
+            updatedAt: now,
+            isEncrypted: currentFile.isEncrypted ?? false,
+            envelope: currentFile.isEncrypted ? {
+                version: 1,
+                algorithm: 'AES-GCM-256',
+                keyId: params.encryptionMetadata?.keyId ?? 'master-v1',
+                salt: params.encryptionMetadata?.salt ?? '',
+                iv: params.encryptionMetadata?.iv ?? '',
+                kdfIterations: params.encryptionMetadata?.kdfIterations ?? 600000,
+                ciphertext: resultContent,
+            } : undefined,
+        });
 
         // Enforce transactional safety in production
         if (process.env.NODE_ENV !== "test" && typeof txDb?.transaction !== "function") {
