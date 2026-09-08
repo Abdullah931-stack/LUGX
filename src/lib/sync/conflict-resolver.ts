@@ -6,6 +6,7 @@
  */
 
 import { IDBFile, SyncConflict } from './idb-types';
+import { validateMarkdownSyntaxIntegrity as validateSyntax } from './syntax-validator';
 
 /**
  * Diff operation types
@@ -737,95 +738,12 @@ export class ConflictResolver {
  */
 export function validateMarkdownSyntaxIntegrity(content: string): { valid: boolean; reason?: string } {
     if (!content) return { valid: true };
-
-    const lines = content.split('\n');
-
-    let inCodeBlock = false;
-    let codeFenceChar = '';
-    let codeFenceLength = 0;
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        // 1. Code Fence Detection
-        const fenceMatch = line.match(/^(\s{0,3})(`{3,}|~{3,})(.*)$/);
-        if (fenceMatch) {
-            const fence = fenceMatch[2];
-            const char = fence[0];
-            const length = fence.length;
-            const rest = fenceMatch[3].trim();
-
-            if (!inCodeBlock) {
-                // Opening fence
-                inCodeBlock = true;
-                codeFenceChar = char;
-                codeFenceLength = length;
-                continue;
-            } else if (char === codeFenceChar && length >= codeFenceLength && rest === '') {
-                // Closing fence
-                inCodeBlock = false;
-                codeFenceChar = '';
-                codeFenceLength = 0;
-                continue;
-            }
-        }
-
-        // If inside a code block, skip table structure checks
-        if (inCodeBlock) {
-            continue;
-        }
-
-        // 2. GFM Table Delimiter Detection
-        // GFM table delimiter row: consists of pipes, dashes, colons, spaces, e.g. | :--- | ---: | :---: |
-        const isTableDelimiter = /^\s*\|?(\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\|?\s*$/.test(line) && line.includes('-');
-
-        if (isTableDelimiter) {
-            // Must have a preceding header line
-            if (i === 0) {
-                return {
-                    valid: false,
-                    reason: 'Malformed GFM table: delimiter row appears at document start without header',
-                };
-            }
-
-            const prevLine = lines[i - 1].trim();
-            if (!prevLine || !prevLine.includes('|')) {
-                return {
-                    valid: false,
-                    reason: 'Malformed GFM table: orphan delimiter row without preceding table header',
-                };
-            }
-
-            // Count columns in header vs delimiter (respecting escaped pipes \|)
-            const getColumns = (row: string) => {
-                let s = row.trim();
-                if (s.startsWith('|')) s = s.slice(1);
-                if (s.endsWith('|')) s = s.slice(0, -1);
-                return s.split(/(?<!\\)\|/).map(c => c.trim());
-            };
-
-            const headerCols = getColumns(prevLine);
-            const delimiterCols = getColumns(line);
-
-            if (headerCols.length !== delimiterCols.length) {
-                return {
-                    valid: false,
-                    reason: `Malformed GFM table: column count mismatch (header: ${headerCols.length}, delimiter: ${delimiterCols.length})`,
-                };
-            }
-        }
-    }
-
-    if (inCodeBlock) {
-        return {
-            valid: false,
-            reason: `Unclosed fenced code block (${codeFenceChar.repeat(codeFenceLength)}) detected after merge`,
-        };
-    }
-
-    return { valid: true };
+    const result = validateSyntax(content);
+    return {
+        valid: result.isValid,
+        reason: result.syntaxErrors?.[0],
+    };
 }
 
 // Export singleton instance
 export const conflictResolver = new ConflictResolver();
-

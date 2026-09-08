@@ -167,6 +167,23 @@ export class SessionKeyStore {
   }
 
   /**
+   * Alias for isUnlocked() explicitly checking Vault unlock state
+   */
+  public isVaultUnlocked(): boolean {
+    return this.isUnlocked();
+  }
+
+  /**
+   * Stores raw Master Key bytes in volatile memory with optional custom timeout in seconds
+   */
+  public storeMasterKeyRaw(key: Uint8Array, timeoutSeconds?: number): void {
+    if (timeoutSeconds && timeoutSeconds > 0) {
+      this.inactivityTimeoutMs = timeoutSeconds * 1000;
+    }
+    this.setMasterKey(key);
+  }
+
+  /**
    * Returns true if Local Device Key is initialized
    */
   public hasLocalDeviceKey(): boolean {

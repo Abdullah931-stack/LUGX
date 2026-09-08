@@ -19,6 +19,66 @@ export function normalizeMarkdownSource(content: string | null | undefined): str
         .normalize('NFC');
 }
 
+import type { EncryptedEnvelope } from './types/vault';
+
+/**
+ * Deterministic canonical property order for EncryptedEnvelope serialization.
+ * Guarantees identical JSON representation across different runtimes and key insertion orders.
+ */
+const CANONICAL_ENVELOPE_KEYS: (keyof EncryptedEnvelope)[] = [
+    'version',
+    'algorithm',
+    'keyId',
+    'salt',
+    'iv',
+    'kdfIterations',
+    'ciphertext',
+];
+
+/**
+ * Serializes an EncryptedEnvelope with deterministic canonical key ordering.
+ */
+export function serializeEncryptedEnvelope(envelope: EncryptedEnvelope | string): string {
+    if (typeof envelope === 'string') {
+        try {
+            const parsed = JSON.parse(envelope);
+            if (parsed && typeof parsed === 'object') {
+                return JSON.stringify(parsed, CANONICAL_ENVELOPE_KEYS);
+            }
+        } catch {
+            // Fall back to returning string as-is if not valid JSON
+        }
+        return envelope;
+    }
+    return JSON.stringify(envelope, CANONICAL_ENVELOPE_KEYS);
+}
+
+/**
+ * Generate a Strong ETag for a serialized EncryptedEnvelope JSON.
+ * Formula: ETag = SHA-256(Serialized EncryptedEnvelope JSON)[0..32]
+ */
+export function generateEncryptedETagSync(envelope: EncryptedEnvelope | string): string {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const crypto = require('crypto');
+    const serialized = serializeEncryptedEnvelope(envelope);
+    return crypto.createHash('sha256').update(serialized).digest('hex').substring(0, 32);
+}
+
+/**
+ * Generate a Strong ETag for a serialized EncryptedEnvelope JSON asynchronously.
+ */
+export async function generateEncryptedETag(envelope: EncryptedEnvelope | string): Promise<string> {
+    const serialized = serializeEncryptedEnvelope(envelope);
+    if (typeof crypto !== 'undefined' && crypto.subtle) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(serialized);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
+    }
+    return generateEncryptedETagSync(envelope);
+}
+
 /**
  * Generate a Strong ETag from file content
  * Uses SHA-256 hash, truncated to 32 characters for storage efficiency
@@ -30,7 +90,13 @@ export async function generateETag(content: {
     id: string;
     content: string;
     updatedAt: Date | number;
+    isEncrypted?: boolean;
+    envelope?: EncryptedEnvelope | string;
 }): Promise<string> {
+    if (content.isEncrypted && (content.envelope || content.content)) {
+        return generateEncryptedETag(content.envelope || content.content);
+    }
+
     const updatedAtStr = content.updatedAt instanceof Date
         ? content.updatedAt.toISOString()
         : new Date(content.updatedAt).toISOString();
@@ -49,7 +115,7 @@ export async function generateETag(content: {
     }
 
     // Fallback for Node.js environment (server-side)
-    throw new Error('Crypto API not available');
+    return generateETagSync(content);
 }
 
 /**
@@ -59,7 +125,13 @@ export function generateETagSync(content: {
     id: string;
     content: string;
     updatedAt: Date | number;
+    isEncrypted?: boolean;
+    envelope?: EncryptedEnvelope | string;
 }): string {
+    if (content.isEncrypted && (content.envelope || content.content)) {
+        return generateEncryptedETagSync(content.envelope || content.content);
+    }
+
     // Dynamic import to avoid bundling issues
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const crypto = require('crypto');
@@ -78,6 +150,7 @@ export function generateETagSync(content: {
 
     return hash.substring(0, 32);
 }
+
 
 /**
  * Validate ETag format

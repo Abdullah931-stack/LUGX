@@ -25,6 +25,7 @@ export interface UserVaultProfile {
   readonly kdfIterations: number;
   readonly keyVersion: number;
   readonly deviceTrustEpoch?: number;
+  readonly allowAIOnEncryptedFiles?: boolean;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
