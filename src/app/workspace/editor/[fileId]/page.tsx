@@ -111,6 +111,7 @@ export default function EditorPage() {
 
         // Vault State
         isEncrypted,
+        allowAIOnEncryptedFiles,
         isUnlockModalOpen,
         setIsUnlockModalOpen,
         handleVaultUnlocked,
@@ -290,6 +291,8 @@ export default function EditorPage() {
                 canRedo={adapter?.canRedo() || false}
                 isLoading={isAIActive}
                 showToPrompt={showToPrompt}
+                isEncrypted={isEncrypted}
+                allowAIOnEncrypted={allowAIOnEncryptedFiles}
             />
 
             {/* Search and Replace Dialog */}

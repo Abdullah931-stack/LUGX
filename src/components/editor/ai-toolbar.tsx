@@ -27,6 +27,7 @@ import {
     Link,
     Eye,
     FileCode,
+    Lock,
 } from "lucide-react";
 
 interface AIToolbarProps {
@@ -50,6 +51,8 @@ interface AIToolbarProps {
     canRedo: boolean;
     isLoading: boolean;
     showToPrompt: boolean;
+    isEncrypted?: boolean;
+    allowAIOnEncrypted?: boolean;
     className?: string;
 }
 
@@ -74,6 +77,8 @@ export function AIToolbar({
     canRedo,
     isLoading,
     showToPrompt,
+    isEncrypted = false,
+    allowAIOnEncrypted = false,
     className,
 }: AIToolbarProps) {
     return (
@@ -192,9 +197,19 @@ export function AIToolbar({
                 </div>
             )}
 
-            {/* AI Tools */}
+            {/* AI Tools / Encrypted Gatekeeper Badge */}
             <div className="flex items-center gap-1 px-2 border-r border-zinc-800/50 flex-shrink-0">
-                {isLoading && onStop ? (
+                {isEncrypted && !allowAIOnEncrypted ? (
+                    <div
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-medium"
+                        title="ميزات الذكاء الاصطناعي معطلة لحماية التشفير الشامل (يمكن تمكينها من إعدادات الخزنة في صفحة الحساب)"
+                        data-testid="ai-encrypted-badge"
+                    >
+                        <Lock className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="hidden sm:inline">ميزات الـ AI معطلة لحماية التشفير</span>
+                        <span className="sm:hidden">التشفير محمي</span>
+                    </div>
+                ) : isLoading && onStop ? (
                     <Button
                         variant="destructive"
                         size="sm"

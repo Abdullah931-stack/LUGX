@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ShieldCheck, ShieldAlert, Laptop, Trash2, Key, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Laptop, Trash2, Key, CheckCircle2, AlertTriangle, Loader2, Sparkles, Lock } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { DeviceTrustEnvelope } from "@/lib/sync/types/vault";
-import { revokeAllTrustedDevices, getUserVaultProfile } from "@/server/actions/vault-actions";
+import { revokeAllTrustedDevices, getUserVaultProfile, updateVaultAISetting } from "@/server/actions/vault-actions";
 import { TrustDeviceModal } from "./trust-device-modal";
 
 interface VaultSecurityCardProps {
@@ -18,31 +18,36 @@ export function VaultSecurityCard({ userId }: VaultSecurityCardProps) {
     const [isLoading, setIsLoading] = useState(true);
     const [isRevokingAll, setIsRevokingAll] = useState(false);
     const [isTrustModalOpen, setIsTrustModalOpen] = useState(false);
+    const [allowAI, setAllowAI] = useState(false);
+    const [isUpdatingAI, setIsUpdatingAI] = useState(false);
     const [showRevokeAllConfirm, setShowRevokeAllConfirm] = useState(false);
     const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+    const [hasVaultProfile, setHasVaultProfile] = useState<boolean | null>(null);
+    const [aiLocalFeedback, setAiLocalFeedback] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
     const refreshDeviceStatus = useCallback(async () => {
         setIsLoading(true);
         try {
+            const profileRes = await getUserVaultProfile();
+            if (profileRes.success && profileRes.data) {
+                setHasVaultProfile(true);
+                setAllowAI(!!profileRes.data.allowAIOnEncryptedFiles);
+            } else {
+                setHasVaultProfile(false);
+                setAllowAI(false);
+            }
+
             const env = await indexedDBManager.getDeviceTrustEnvelope(userId);
             if (env) {
                 // Check expiration
                 if (Date.now() > env.expiresAt) {
                     await indexedDBManager.clearDeviceTrustEnvelope(userId);
                     setEnvelope(null);
+                } else if (profileRes.success && profileRes.data?.deviceTrustEpoch && profileRes.data.deviceTrustEpoch !== env.deviceTrustEpoch) {
+                    await indexedDBManager.clearDeviceTrustEnvelope(userId);
+                    setEnvelope(null);
                 } else {
-                    // Check server epoch
-                    const profileRes = await getUserVaultProfile();
-                    if (profileRes.success && profileRes.data?.deviceTrustEpoch) {
-                        if (profileRes.data.deviceTrustEpoch !== env.deviceTrustEpoch) {
-                            await indexedDBManager.clearDeviceTrustEnvelope(userId);
-                            setEnvelope(null);
-                        } else {
-                            setEnvelope(env);
-                        }
-                    } else {
-                        setEnvelope(env);
-                    }
+                    setEnvelope(env);
                 }
             } else {
                 setEnvelope(null);
@@ -50,6 +55,7 @@ export function VaultSecurityCard({ userId }: VaultSecurityCardProps) {
         } catch (err) {
             console.warn("[VaultSecurityCard] Error checking device trust:", err);
             setEnvelope(null);
+            setHasVaultProfile(false);
         } finally {
             setIsLoading(false);
         }
@@ -97,6 +103,48 @@ export function VaultSecurityCard({ userId }: VaultSecurityCardProps) {
             setFeedbackMessage({ text: "حدث خطأ غير متوقع أثناء إلغاء الأجهزة.", type: "error" });
         } finally {
             setIsRevokingAll(false);
+        }
+    }
+
+    // Toggle AI access on encrypted documents
+    async function handleToggleAI() {
+        if (!hasVaultProfile) {
+            const err = "الخزنة المشفرة غير مهيأة بعد. يجب إنشاء الخزنة وتعيين كلمة المرور أولاً.";
+            setFeedbackMessage({ text: err, type: "error" });
+            setAiLocalFeedback({ text: err, type: "error" });
+            setTimeout(() => setAiLocalFeedback(null), 5000);
+            return;
+        }
+
+        setIsUpdatingAI(true);
+        setAiLocalFeedback(null);
+        try {
+            const nextValue = !allowAI;
+            const res = await updateVaultAISetting(nextValue);
+            if (res.success) {
+                setAllowAI(nextValue);
+                const msg = nextValue
+                    ? "تم تفعيل ميزات الذكاء الاصطناعي على الملفات المشفرة بنجاح."
+                    : "تم حظر ميزات الذكاء الاصطناعي على الملفات المشفرة لضمان الخصوصية الشاملة.";
+                setFeedbackMessage({ text: msg, type: "success" });
+                setAiLocalFeedback({ text: msg, type: "success" });
+                setTimeout(() => {
+                    setFeedbackMessage(null);
+                    setAiLocalFeedback(null);
+                }, 4000);
+            } else {
+                const err = res.error || "فشل تحديث إعدادات الذكاء الاصطناعي.";
+                setFeedbackMessage({ text: err, type: "error" });
+                setAiLocalFeedback({ text: err, type: "error" });
+                setTimeout(() => setAiLocalFeedback(null), 5000);
+            }
+        } catch {
+            const err = "حدث خطأ غير متوقع أثناء تحديث الإعداد.";
+            setFeedbackMessage({ text: err, type: "error" });
+            setAiLocalFeedback({ text: err, type: "error" });
+            setTimeout(() => setAiLocalFeedback(null), 5000);
+        } finally {
+            setIsUpdatingAI(false);
         }
     }
 
@@ -202,6 +250,79 @@ export function VaultSecurityCard({ userId }: VaultSecurityCardProps) {
                             )}
                         </div>
                     </div>
+                </div>
+
+                {/* Encrypted Document AI Access Settings */}
+                <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/60 space-y-3 transition-colors">
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="space-y-1">
+                            <h4 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+                                <Sparkles className="w-4 h-4 text-indigo-400" />
+                                <span>الذكاء الاصطناعي على الملفات المشفرة</span>
+                            </h4>
+                            <p className="text-xs text-zinc-400 leading-relaxed">
+                                {hasVaultProfile === false
+                                    ? "الخزنة المشفرة غير مهيأة بعد في هذا الحساب. يتطلب تفعيل ميزات الذكاء الاصطناعي للملفات المشفرة إنشاء الخزنة وتعيين كلمة المرور أولاً."
+                                    : allowAI
+                                    ? "ميزات الذكاء الاصطناعي مفعّلة داخل المستندات المشفرة. يتم فك تشفير النص مؤقتاً في الذاكرة الحية لإرساله حصرياً إلى مزود خدمة الـ AI، مع بقاء التخزين السحابي مشفراً بالكامل (Zero-Knowledge at Rest)."
+                                    : "ميزات الذكاء الاصطناعي محظورة تماماً على المستندات المشفرة (الوضع الافتراضي الصارم) لضمان الخصوصية الشاملة ومنع مشاركة أي نصوص مع مزودي النماذج."}
+                            </p>
+                        </div>
+
+                        <Button
+                            variant={allowAI ? "default" : "outline"}
+                            size="sm"
+                            onClick={handleToggleAI}
+                            disabled={isUpdatingAI || isLoading || hasVaultProfile === false}
+                            className={`shrink-0 text-xs gap-1.5 transition-all duration-200 ${
+                                hasVaultProfile === false
+                                    ? "border-zinc-800 text-zinc-500 bg-zinc-900/40 cursor-not-allowed"
+                                    : allowAI
+                                    ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm shadow-emerald-600/30"
+                                    : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+                            }`}
+                        >
+                            {isUpdatingAI ? (
+                                <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    <span>جاري التحديث...</span>
+                                </>
+                            ) : hasVaultProfile === false ? (
+                                <>
+                                    <Lock className="w-3.5 h-3.5 text-zinc-500" />
+                                    <span>الخزنة غير مهيأة</span>
+                                </>
+                            ) : allowAI ? (
+                                <>
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>مفعّل (انقر للتعطيل)</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Lock className="w-3.5 h-3.5" />
+                                    <span>محظور (انقر للتفعيل)</span>
+                                </>
+                            )}
+                        </Button>
+                    </div>
+
+                    {/* Local Contextual Feedback */}
+                    {aiLocalFeedback && (
+                        <div
+                            className={`p-2.5 rounded-lg text-xs flex items-center gap-2 transition-all animate-in fade-in slide-in-from-top-1 ${
+                                aiLocalFeedback.type === "success"
+                                    ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
+                                    : "bg-red-500/10 border border-red-500/20 text-red-300"
+                            }`}
+                        >
+                            {aiLocalFeedback.type === "success" ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                            ) : (
+                                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            )}
+                            <span>{aiLocalFeedback.text}</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Global Revocation Danger Zone */}
