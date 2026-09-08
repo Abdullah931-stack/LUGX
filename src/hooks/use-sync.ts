@@ -23,6 +23,7 @@ import {
     OperationsGarbageCollector,
     normalizeMarkdownSource,
     RemoteUpdateEvent,
+    SyncCryptoGateway,
 } from '@/lib/sync';
 import type { UserVaultProfile } from '@/lib/sync/types/vault';
 
@@ -126,6 +127,21 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 if (onConflictRef.current) {
                     scopedSyncManager.setConflictCallback(async (conflict) => {
                         const file = await scopedIdb.getFile(conflict.fileId);
+
+                        let baseContent = file?.baseSnapshot?.content || '';
+                        if (file?.isEncrypted && file.encryptionMetadata?.iv && file.baseSnapshot?.content) {
+                            const baseInbound = await SyncCryptoGateway.decryptInbound({
+                                fileId: conflict.fileId,
+                                content: file.baseSnapshot.content,
+                                isEncrypted: true,
+                                encryptionMetadata: file.encryptionMetadata,
+                                userId: normalizedUserId,
+                            });
+                            if (baseInbound.status === 'decrypted') {
+                                baseContent = baseInbound.content;
+                            }
+                        }
+
                         const syncConflict: SyncConflict = {
                             fileId: conflict.fileId,
                             localVersion: {
@@ -136,6 +152,8 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                                 title: file?.title,
                                 parentFolderId: file?.parentFolderId,
                                 deleted: false,
+                                isEncrypted: file?.isEncrypted ?? conflict.isEncrypted,
+                                encryptionMetadata: file?.encryptionMetadata ?? conflict.encryptionMetadata,
                             },
                             serverVersion: {
                                 content: conflict.serverContent,
@@ -145,15 +163,19 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                                 title: file?.title,
                                 parentFolderId: file?.parentFolderId,
                                 deleted: false,
+                                isEncrypted: conflict.isEncrypted ?? file?.isEncrypted,
+                                encryptionMetadata: conflict.encryptionMetadata ?? file?.encryptionMetadata,
                             },
                             baseVersion: file?.baseSnapshot ? {
-                                content: file.baseSnapshot.content,
+                                content: baseContent,
                                 etag: file.baseSnapshot.etag,
                                 lastModified: file.lastSyncedAt || 0,
                                 version: file.baseSnapshot.version,
                                 title: file.baseSnapshot.title,
                                 parentFolderId: file.baseSnapshot.parentFolderId,
                                 deleted: false,
+                                isEncrypted: file.isEncrypted,
+                                encryptionMetadata: file.encryptionMetadata,
                             } : undefined,
                             operations: [],
                             detectedAt: Date.now(),

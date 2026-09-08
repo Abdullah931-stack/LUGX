@@ -33,7 +33,8 @@ export {
 export { indexedDBManager, IndexedDBManager, createIndexedDBManager } from './indexeddb';
 
 // ETag & Markdown Normalization
-export { generateETag, generateETagSync, isValidETag, compareETags, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from './etag-generator';
+export { generateETag, generateETagSync, generateEncryptedETag, generateEncryptedETagSync, isValidETag, compareETags, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from './etag-generator';
+export { validateMarkdownSyntaxIntegrity } from './syntax-validator';
 
 // Error Handling
 export { SyncErrorType, syncErrorHandler, SyncErrorHandler, isRetryableError } from './error-handler';
@@ -56,7 +57,7 @@ export { syncManager, SyncManager, createSyncManager } from './sync-manager';
 export type { SyncStatus, FileSyncResult, SyncResult, SyncStatusCallback, ConflictCallback, SyncManagerConfig, RemoteUpdateEvent, RemoteUpdateCallback } from './sync-manager';
 
 // Conflict Resolution
-export { conflictResolver, ConflictResolver, validateMarkdownSyntaxIntegrity } from './conflict-resolver';
+export { conflictResolver, ConflictResolver } from './conflict-resolver';
 export type { DiffOp, MergeResult, ResolutionStrategy } from './conflict-resolver';
 
 // Performance
@@ -116,4 +117,8 @@ export {
   derivePrfKek
 } from './webauthn-prf';
 export type { WebAuthnSupportStatus } from './webauthn-prf';
+
+// Inbound/Outbound Cryptographic Gateway
+export { SyncCryptoGateway } from './sync-crypto-gateway';
+export type { InboundPayloadInput, InboundPayloadResult, OutboundPayloadResult } from './sync-crypto-gateway';
 
