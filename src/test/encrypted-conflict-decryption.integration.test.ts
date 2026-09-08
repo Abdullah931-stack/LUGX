@@ -46,7 +46,6 @@ vi.mock("@/server/actions/vault-actions", () => ({
 
 const mockLocalDb: Record<string, Record<string, unknown>> = {};
 let capturedRemoteUpdateCallback: ((event: any) => void) | null = null;
-let capturedConflictCallback: ((conflict: any) => Promise<any>) | null = null;
 
 vi.mock("@/lib/sync", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/sync")>();
@@ -76,9 +75,7 @@ vi.mock("@/lib/sync", async (importOriginal) => {
                 capturedRemoteUpdateCallback = cb;
                 return () => { capturedRemoteUpdateCallback = null; };
             }),
-            setConflictCallback: vi.fn().mockImplementation((cb) => {
-                capturedConflictCallback = cb;
-            }),
+            setConflictCallback: vi.fn(),
         })),
         connectionDetector: {
             init: vi.fn(),
@@ -165,7 +162,6 @@ describe("Encrypted Conflict Decryption & Gateway Integration", () => {
         sessionKeyStore.storeMasterKeyRaw(masterKeyRaw, 3600);
         Object.keys(mockLocalDb).forEach((k) => delete mockLocalDb[k]);
         capturedRemoteUpdateCallback = null;
-        capturedConflictCallback = null;
     });
 
     afterEach(() => {

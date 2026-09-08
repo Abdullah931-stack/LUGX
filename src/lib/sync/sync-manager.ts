@@ -18,7 +18,7 @@ import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from './crypto-wor
 import { validateMarkdownSyntaxIntegrity } from './syntax-validator';
 import { conflictResolver } from './conflict-resolver';
 import { SyncCryptoGateway } from './sync-crypto-gateway';
-import type { PendingEncryptedConflict, EncryptedEnvelope } from './types/vault';
+import type { PendingEncryptedConflict } from './types/vault';
 
 /**
  * Explicit Sync status states

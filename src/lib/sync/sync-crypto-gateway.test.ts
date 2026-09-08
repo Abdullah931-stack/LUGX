@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { SyncCryptoGateway } from './sync-crypto-gateway';
 import { sessionKeyStore } from './session-key-store';
-import { cryptoWorkerBridge } from './crypto-worker-bridge';
 
 describe('SyncCryptoGateway', () => {
     const testUserId = 'user-test-uuid-123';

@@ -273,7 +273,7 @@ export function useEditorOrchestrator({
             }
 
             // Auto-resolve if identical markdown content or identical ETags
-            let isIdentical =
+            const isIdentical =
                 normalizeMarkdownSource(conflict.localVersion.content) ===
                     normalizeMarkdownSource(conflict.serverVersion.content) ||
                 (conflict.localVersion.etag &&
