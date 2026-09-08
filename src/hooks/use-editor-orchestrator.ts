@@ -16,6 +16,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { getFile, updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/server/actions/file-ops";
+import { getUserVaultProfile } from "@/server/actions/vault-actions";
 import type { FileEncryptionMetadata } from "@/lib/db/schema";
 import { debounce } from "@/lib/utils";
 import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
@@ -34,6 +35,7 @@ import {
 import { AIStreamStatus } from "@/lib/ai/stream-session";
 import { EDITOR_AUTOSAVE_DEBOUNCE_MS } from "@/config/editor.config";
 import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";
+import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 
 export type WriteStateType =
     | "idle"
@@ -107,6 +109,7 @@ export interface UseEditorOrchestratorReturn {
 
     // 7. Vault State
     isEncrypted: boolean;
+    allowAIOnEncryptedFiles: boolean;
     isVaultLocked: boolean;
     isUnlockModalOpen: boolean;
     setIsUnlockModalOpen: (open: boolean) => void;
@@ -167,10 +170,32 @@ export function useEditorOrchestrator({
 
     // --- 5. Vault Encryption State ---
     const [isEncrypted, setIsEncrypted] = useState<boolean>(false);
+    const [allowAIOnEncryptedFiles, setAllowAIOnEncryptedFiles] = useState<boolean>(false);
     const [isVaultLocked, setIsVaultLocked] = useState<boolean>(false);
     const [isUnlockModalOpen, setIsUnlockModalOpen] = useState<boolean>(false);
     const isEncryptedRef = useRef<boolean>(false);
+    const allowAIOnEncryptedFilesRef = useRef<boolean>(false);
     const fileEncryptionMetadataRef = useRef<FileEncryptionMetadata | null>(null);
+
+    useEffect(() => {
+        allowAIOnEncryptedFilesRef.current = allowAIOnEncryptedFiles;
+    }, [allowAIOnEncryptedFiles]);
+
+    useEffect(() => {
+        async function fetchVaultProfile() {
+            try {
+                const res = await getUserVaultProfile();
+                if (res.success && res.data) {
+                    const allowed = !!res.data.allowAIOnEncryptedFiles;
+                    setAllowAIOnEncryptedFiles(allowed);
+                    allowAIOnEncryptedFilesRef.current = allowed;
+                }
+            } catch {
+                // Ignore profile load errors in offline mode
+            }
+        }
+        fetchVaultProfile();
+    }, [userId]);
     const pendingEncryptedPayloadRef = useRef<{
         content: string;
         metadata: FileEncryptionMetadata | null;
@@ -217,35 +242,43 @@ export function useEditorOrchestrator({
 
     const handleSyncConflict = useCallback(
         async (conflict: SyncConflict): Promise<"local" | "server" | "merge"> => {
-            // Auto-resolve if identical (supporting decryption of encrypted server content)
+            const effectiveUid = await resolveEffectiveUserId();
+
+            // Decrypt server version if encrypted and not yet decrypted
+            if (isEncryptedRef.current || conflict.serverVersion.isEncrypted) {
+                const serverInbound = await SyncCryptoGateway.decryptInbound({
+                    fileId,
+                    content: conflict.serverVersion.content,
+                    isEncrypted: true,
+                    encryptionMetadata: conflict.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
+                    userId: effectiveUid,
+                });
+                if (serverInbound.status === "decrypted") {
+                    conflict.serverVersion.content = serverInbound.content;
+                }
+            }
+
+            // Decrypt base version if present and encrypted
+            if (conflict.baseVersion?.content && (isEncryptedRef.current || conflict.baseVersion.isEncrypted)) {
+                const baseInbound = await SyncCryptoGateway.decryptInbound({
+                    fileId,
+                    content: conflict.baseVersion.content,
+                    isEncrypted: true,
+                    encryptionMetadata: conflict.baseVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
+                    userId: effectiveUid,
+                });
+                if (baseInbound.status === "decrypted") {
+                    conflict.baseVersion.content = baseInbound.content;
+                }
+            }
+
+            // Auto-resolve if identical markdown content or identical ETags
             let isIdentical =
-                conflict.localVersion.content === conflict.serverVersion.content ||
+                normalizeMarkdownSource(conflict.localVersion.content) ===
+                    normalizeMarkdownSource(conflict.serverVersion.content) ||
                 (conflict.localVersion.etag &&
                     conflict.serverVersion.etag &&
                     conflict.localVersion.etag === conflict.serverVersion.etag);
-
-            if (!isIdentical && isEncryptedRef.current && conflict.serverVersion.content) {
-                const masterKey = sessionKeyStore.getMasterKeyRaw();
-                if (masterKey && fileEncryptionMetadataRef.current?.iv) {
-                    try {
-                        const ivBytes = base64ToUint8Array(fileEncryptionMetadataRef.current.iv);
-                        const effectiveUid = await resolveEffectiveUserId();
-                        const aad = `vault:file:${effectiveUid}:${fileId}`;
-                        const decryptedServer = await cryptoWorkerBridge.decryptAESGCM(
-                            masterKey,
-                            conflict.serverVersion.content,
-                            ivBytes,
-                            aad
-                        );
-                        wipeBuffer(ivBytes);
-                        if (normalizeMarkdownSource(decryptedServer) === normalizeMarkdownSource(conflict.localVersion.content)) {
-                            isIdentical = true;
-                        }
-                    } catch {
-                        // ignore error
-                    }
-                }
-            }
 
             if (isIdentical) {
                 console.log("[Orchestrator] Auto-resolving identical conflict without modal");
@@ -383,6 +416,9 @@ export function useEditorOrchestrator({
             title?: string;
             parentFolderId?: string | null;
             updatedAt: string;
+            isEncrypted?: boolean;
+            isVaultLocked?: boolean;
+            encryptionMetadata?: FileEncryptionMetadata | null;
         }) => {
             if (event.fileId !== fileId) return;
 
@@ -408,6 +444,43 @@ export function useEditorOrchestrator({
                 return;
             }
 
+            let safeContent = event.content;
+            if (isEncryptedRef.current || event.isEncrypted) {
+                if (event.isVaultLocked || !sessionKeyStore.hasMasterKey()) {
+                    console.warn("[Orchestrator] Remote update received for encrypted file while vault is locked. Preserving locked state.");
+                    pendingEncryptedPayloadRef.current = {
+                        content: event.content,
+                        metadata: event.encryptionMetadata || fileEncryptionMetadataRef.current,
+                        title: event.title || title,
+                        version: event.version,
+                        etag: event.etag,
+                    };
+                    setIsVaultLocked(true);
+                    setIsUnlockModalOpen(true);
+                    return;
+                }
+
+                const effectiveUid = await resolveEffectiveUserId();
+                const inbound = await SyncCryptoGateway.decryptInbound({
+                    fileId,
+                    content: event.content,
+                    isEncrypted: true,
+                    encryptionMetadata: event.encryptionMetadata || fileEncryptionMetadataRef.current,
+                    userId: effectiveUid,
+                });
+
+                if (inbound.status === "decrypted") {
+                    safeContent = inbound.content;
+                    if (inbound.encryptionMetadata) {
+                        fileEncryptionMetadataRef.current = inbound.encryptionMetadata;
+                    }
+                } else if (inbound.status === "locked") {
+                    setIsVaultLocked(true);
+                    setIsUnlockModalOpen(true);
+                    return;
+                }
+            }
+
             const currentLocalContent = adapterRef.current?.getValue() ?? "";
             const localBaseline: LocalBaseline = {
                 version: fileVersionRef.current,
@@ -420,7 +493,7 @@ export function useEditorOrchestrator({
                 isDirty: isDirtyRef.current,
                 remoteVersion: event.version,
                 remoteEtag: event.etag,
-                remoteContent: event.content,
+                remoteContent: safeContent,
             });
 
             if (decision.action === "apply") {
@@ -436,9 +509,9 @@ export function useEditorOrchestrator({
 
                 isProgrammaticUpdateRef.current = true;
                 try {
-                    adapterRef.current?.setValue(event.content);
+                    adapterRef.current?.setValue(safeContent);
                     if (prevSelection && hadFocus) {
-                        const maxLen = event.content.length;
+                        const maxLen = safeContent.length;
                         adapterRef.current?.setSelection(
                             Math.min(prevSelection.from, maxLen),
                             Math.min(prevSelection.to, maxLen)
@@ -466,7 +539,7 @@ export function useEditorOrchestrator({
                 );
             }
         },
-        [fileId, title, aiStream.isLoading, aiStream.isStreaming, aiStream.isCommitting, aiStream.status, markServerPersisted]
+        [fileId, title, aiStream.isLoading, aiStream.isStreaming, aiStream.isCommitting, aiStream.status, markServerPersisted, resolveEffectiveUserId]
     );
 
     const syncHook = useSync({
@@ -621,32 +694,25 @@ export function useEditorOrchestrator({
                         });
                     }
                 } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
-                    // False conflict check with encryption support
-                    let isIdenticalContent = content === saveRes.serverVersion.content;
-                    if (!isIdenticalContent && isEncryptedRef.current && saveRes.serverVersion.content) {
-                        const masterKey = sessionKeyStore.getMasterKeyRaw();
-                        const serverMeta = saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current;
-                        const serverIvStr = serverMeta?.iv;
-                        if (masterKey && serverIvStr) {
-                            try {
-                                const ivBytes = base64ToUint8Array(serverIvStr);
-                                const effectiveUid = await resolveEffectiveUserId();
-                                const aad = `vault:file:${effectiveUid}:${fileId}`;
-                                const decryptedServer = await cryptoWorkerBridge.decryptAESGCM(
-                                    masterKey,
-                                    saveRes.serverVersion.content,
-                                    ivBytes,
-                                    aad
-                                );
-                                wipeBuffer(ivBytes);
-                                if (normalizeMarkdownSource(decryptedServer) === normalizeMarkdownSource(content)) {
-                                    isIdenticalContent = true;
-                                }
-                            } catch {
-                                // Decryption error, treat as non-identical
-                            }
+                    const effectiveUid = await resolveEffectiveUserId();
+                    let decryptedServerContent = saveRes.serverVersion.content || "";
+
+                    if (isEncryptedRef.current || saveRes.serverVersion.isEncrypted) {
+                        const serverInbound = await SyncCryptoGateway.decryptInbound({
+                            fileId,
+                            content: saveRes.serverVersion.content || "",
+                            isEncrypted: true,
+                            encryptionMetadata: saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
+                            userId: effectiveUid,
+                        });
+                        if (serverInbound.status === "decrypted") {
+                            decryptedServerContent = serverInbound.content;
                         }
                     }
+
+                    // False conflict check with decrypted content
+                    const isIdenticalContent =
+                        normalizeMarkdownSource(decryptedServerContent) === normalizeMarkdownSource(content);
 
                     if (
                         isIdenticalContent ||
@@ -682,6 +748,21 @@ export function useEditorOrchestrator({
                     // True conflict (412 Precondition Failed)
                     console.warn("[Orchestrator] 412 Sync conflict detected during save:", saveRes.serverVersion);
                     const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
+
+                    let baseContent = localFile?.baseSnapshot?.content;
+                    if (baseContent && (isEncryptedRef.current || localFile?.baseSnapshot?.isEncrypted)) {
+                        const baseInbound = await SyncCryptoGateway.decryptInbound({
+                            fileId,
+                            content: baseContent,
+                            isEncrypted: true,
+                            encryptionMetadata: localFile?.encryptionMetadata || fileEncryptionMetadataRef.current,
+                            userId: effectiveUid,
+                        });
+                        if (baseInbound.status === "decrypted") {
+                            baseContent = baseInbound.content;
+                        }
+                    }
+
                     const conflictObj: SyncConflict = {
                         fileId,
                         localVersion: {
@@ -692,9 +773,11 @@ export function useEditorOrchestrator({
                             title,
                             parentFolderId: null,
                             deleted: false,
+                            isEncrypted: isEncryptedRef.current,
+                            encryptionMetadata: fileEncryptionMetadataRef.current,
                         },
                         serverVersion: {
-                            content: saveRes.serverVersion.content || "",
+                            content: decryptedServerContent,
                             etag: saveRes.serverVersion.etag || "",
                             lastModified: saveRes.serverVersion.updatedAt
                                 ? new Date(saveRes.serverVersion.updatedAt).getTime()
@@ -703,16 +786,20 @@ export function useEditorOrchestrator({
                             title,
                             parentFolderId: null,
                             deleted: false,
+                            isEncrypted: saveRes.serverVersion.isEncrypted ?? isEncryptedRef.current,
+                            encryptionMetadata: saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
                         },
                         baseVersion: localFile?.baseSnapshot
                             ? {
-                                  content: localFile.baseSnapshot.content,
+                                  content: baseContent || "",
                                   etag: localFile.baseSnapshot.etag,
                                   lastModified: localFile.lastSyncedAt || 0,
                                   version: localFile.baseSnapshot.version,
                                   title: localFile.baseSnapshot.title,
                                   parentFolderId: localFile.baseSnapshot.parentFolderId,
                                   deleted: false,
+                                  isEncrypted: isEncryptedRef.current,
+                                  encryptionMetadata: localFile.encryptionMetadata,
                               }
                             : undefined,
                         operations: [],
@@ -1313,6 +1400,12 @@ export function useEditorOrchestrator({
         async (operation: AIOperationType) => {
             if (!adapterRef.current) return;
 
+            // Zero-Knowledge AI Gatekeeper: block AI operations on encrypted files if user has not opted-in
+            if (isEncryptedRef.current && !allowAIOnEncryptedFilesRef.current) {
+                console.warn("[Orchestrator] AI operations are prohibited on encrypted files by vault privacy policy");
+                return;
+            }
+
             // Invariant: cancel any pending auto-save before launching AI stream
             debouncedAutoSaveRef.current?.cancel?.();
 
@@ -1352,40 +1445,22 @@ export function useEditorOrchestrator({
                 let metaToSend = fileEncryptionMetadataRef.current;
 
                 if (isEncryptedRef.current) {
-                    if (typeof resolution.content === "string" && resolution.content.startsWith("gcm:v1:")) {
-                        // Defensive Guard (AUD-03): Server version resolution payload is already authenticated ciphertext.
-                        // Bypass re-encryption to eliminate double-encryption corruption loops.
-                        contentToSend = resolution.content;
-                        metaToSend = activeConflict.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current;
-                    } else {
-                        const masterKey = sessionKeyStore.getMasterKeyRaw();
-                        if (!masterKey) {
-                            setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ حل التعارض المشفر بأمان.");
-                            setIsResolvingConflict(false);
-                            isResolvingConflictRef.current = false;
-                            return;
-                        }
-                        const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
-                        const effectiveUid = await resolveEffectiveUserId();
-                        const aad = `vault:file:${effectiveUid}:${fileId}`;
-                        const encResult = await cryptoWorkerBridge.encryptAESGCM(
-                            masterKey,
-                            resolution.content,
-                            ivBytes,
-                            aad
-                        );
-                        contentToSend = encResult.ciphertextBase64;
-                        metaToSend = {
-                            version: 1,
-                            algorithm: 'AES-GCM-256',
-                            keyId: 'master-v1',
-                            salt: '',
-                            iv: encResult.ivBase64,
-                            kdfIterations: 600000,
-                        };
-                        fileEncryptionMetadataRef.current = metaToSend;
-                        wipeBuffer(ivBytes);
+                    const masterKey = sessionKeyStore.getMasterKeyRaw();
+                    if (!masterKey) {
+                        setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ حل التعارض المشفر بأمان.");
+                        setIsResolvingConflict(false);
+                        isResolvingConflictRef.current = false;
+                        return;
                     }
+                    const effectiveUid = await resolveEffectiveUserId();
+                    const encResult = await SyncCryptoGateway.encryptOutbound(
+                        fileId,
+                        resolution.content,
+                        effectiveUid
+                    );
+                    contentToSend = encResult.ciphertextBase64;
+                    metaToSend = encResult.encryptionMetadata;
+                    fileEncryptionMetadataRef.current = metaToSend;
                 }
 
                 const targetExpectedVersion = activeConflict.serverVersion.version;
@@ -1450,10 +1525,25 @@ export function useEditorOrchestrator({
                     setActiveConflict(null);
                     setIsConflictDialogOpen(false);
                 } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
+                    let newServerContent = saveRes.serverVersion.content || "";
+                    if (isEncryptedRef.current || saveRes.serverVersion.isEncrypted) {
+                        const effectiveUid = await resolveEffectiveUserId();
+                        const inbound = await SyncCryptoGateway.decryptInbound({
+                            fileId,
+                            content: newServerContent,
+                            isEncrypted: true,
+                            encryptionMetadata: saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
+                            userId: effectiveUid,
+                        });
+                        if (inbound.status === "decrypted") {
+                            newServerContent = inbound.content;
+                        }
+                    }
+
                     const updatedConflict: SyncConflict = {
                         ...activeConflict,
                         serverVersion: {
-                            content: saveRes.serverVersion.content || "",
+                            content: newServerContent,
                             etag: saveRes.serverVersion.etag || "",
                             lastModified: saveRes.serverVersion.updatedAt
                                 ? new Date(saveRes.serverVersion.updatedAt).getTime()
@@ -1462,6 +1552,8 @@ export function useEditorOrchestrator({
                             title: activeConflict.serverVersion.title,
                             parentFolderId: activeConflict.serverVersion.parentFolderId,
                             deleted: false,
+                            isEncrypted: saveRes.serverVersion.isEncrypted ?? isEncryptedRef.current,
+                            encryptionMetadata: saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
                         },
                         detectedAt: Date.now(),
                     };
@@ -1545,6 +1637,7 @@ export function useEditorOrchestrator({
 
         // 7. Vault State
         isEncrypted,
+        allowAIOnEncryptedFiles,
         isVaultLocked,
         isUnlockModalOpen,
         setIsUnlockModalOpen,
