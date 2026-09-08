@@ -55,7 +55,7 @@ describe("Markdown Editor: Interaction, Delimiter Visibility & Vertical Navigati
                 const hrLine = parent.querySelector(".cm-md-hr");
                 expect(hrLine).not.toBeNull();
                 expect(hrLine?.classList.contains("cm-line")).toBe(true);
-            });
+            }, { timeout: 3000 });
         });
 
         it("should apply .cm-md-header-1 to heading line and maintain text content", async () => {

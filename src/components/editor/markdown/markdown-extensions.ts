@@ -11,7 +11,7 @@ import {
     KeyBinding,
 } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { syntaxTree } from "@codemirror/language";
+import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import {
     defaultKeymap,
     history,
@@ -161,14 +161,37 @@ function isCursorInside(selection: EditorState["selection"], from: number, to: n
 }
 
 /**
+ * Safely obtain syntax tree up to document length with synchronous parsing budget
+ */
+function getEffectiveSyntaxTree(state: EditorState, docLen: number) {
+    return ensureSyntaxTree(state, docLen, 50) || syntaxTree(state);
+}
+
+/**
+ * Returns effective visible ranges, falling back to viewport or full document if unmeasured (e.g. JSDOM/headless)
+ */
+function getEffectiveVisibleRanges(view: EditorView, docLen: number): readonly { from: number; to: number }[] {
+    const ranges = view.visibleRanges;
+    if (ranges && ranges.length > 0 && ranges.some((r) => r.to > r.from)) {
+        return ranges;
+    }
+    const vp = view.viewport;
+    if (vp && vp.to > vp.from) {
+        return [vp];
+    }
+    return [{ from: 0, to: docLen }];
+}
+
+/**
  * Build decorations set from the Lezer Markdown syntax tree
  */
 function buildMarkdownDecorations(view: EditorView): DecorationSet {
     const builder = new RangeSetBuilder<Decoration>();
-    const tree = syntaxTree(view.state);
-    const selection = view.state.selection;
     const doc = view.state.doc;
     const docLen = doc.length;
+    const tree = getEffectiveSyntaxTree(view.state, docLen);
+    const selection = view.state.selection;
+    const visibleRanges = getEffectiveVisibleRanges(view, docLen);
 
     // Track line decorations to prevent applying multiple line decorations to the same line
     const decoratedLines = new Set<number>();
@@ -183,7 +206,7 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
     const pending: PendingDeco[] = [];
 
     // Traverse the syntax tree
-    for (const { from, to } of view.visibleRanges) {
+    for (const { from, to } of visibleRanges) {
         const safeVisibleFrom = Math.min(Math.max(0, from), docLen);
         const safeVisibleTo = Math.min(Math.max(safeVisibleFrom, to), docLen);
 
@@ -381,7 +404,8 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
             if (
                 update.docChanged ||
                 update.selectionSet ||
-                update.viewportChanged
+                update.viewportChanged ||
+                update.geometryChanged
             ) {
                 this.decorations = buildMarkdownDecorations(update.view);
             }
@@ -399,18 +423,19 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
 function buildBidiLineDecorations(view: EditorView): DecorationSet {
     const builder = new RangeSetBuilder<Decoration>();
     const doc = view.state.doc;
+    const docLen = doc.length;
     const settings = view.state.field(directionSettingsState, false) ?? {
         mode: "auto" as TextDirectionMode,
         lockCodeBlocksLTR: true,
     };
     const { mode, lockCodeBlocksLTR } = settings;
+    const visibleRanges = getEffectiveVisibleRanges(view, docLen);
 
     // Collect fenced code line ranges if code block LTR locking is enabled
     const fencedLines = new Set<number>();
-    const docLen = doc.length;
     if (lockCodeBlocksLTR) {
-        const tree = syntaxTree(view.state);
-        for (const { from, to } of view.visibleRanges) {
+        const tree = getEffectiveSyntaxTree(view.state, docLen);
+        for (const { from, to } of visibleRanges) {
             const safeVisibleFrom = Math.min(Math.max(0, from), docLen);
             const safeVisibleTo = Math.min(Math.max(safeVisibleFrom, to), docLen);
 
@@ -436,7 +461,7 @@ function buildBidiLineDecorations(view: EditorView): DecorationSet {
 
     const processedLines = new Set<number>();
 
-    for (const { from, to } of view.visibleRanges) {
+    for (const { from, to } of visibleRanges) {
         const safeVisibleFrom = Math.min(Math.max(0, from), docLen);
         const safeVisibleTo = Math.min(Math.max(safeVisibleFrom, to), docLen);
         const startLine = doc.lineAt(safeVisibleFrom).number;
@@ -490,6 +515,7 @@ export const bidiLinePlugin = ViewPlugin.fromClass(
             if (
                 update.docChanged ||
                 update.viewportChanged ||
+                update.geometryChanged ||
                 settingsChanged
             ) {
                 this.decorations = buildBidiLineDecorations(update.view);
