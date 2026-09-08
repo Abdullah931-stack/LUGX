@@ -141,6 +141,14 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 - **Risk**: Concurrent abort and reader cancellation exceptions causing `onError` or `onComplete` to fire multiple times.
 - **Protection**: `stream-handler.ts` employs `isTerminalCallbackEmitted` ensuring strictly one terminal callback invocation per session.
 
+### 4.8 Zero-Knowledge AI Gatekeeper & User Privacy Opt-In (`allowAIOnEncryptedFiles`)
+- **Risk**: Automated or accidental invocation of external AI models on end-to-end encrypted files, breaching Zero-Knowledge guarantees and leaking private plaintext.
+- **Protection**:
+  - **Server Route Gatekeeper (`/api/ai/stream`)**: When `targetFile.isEncrypted === true`, checks `userVaultProfiles.allowAIOnEncryptedFiles`. If `false` (default) or profile missing: immediately rejects with HTTP 403 `AI_PROHIBITED_ON_ENCRYPTED_FILES` prior to token consumption or quota reservation.
+  - **Strict Transport Isolation**: When user explicitly opts in, decrypted plaintext in browser RAM is streamed over TLS directly to the AI provider without server persistence.
+  - **Re-Encryption on Commit**: `commitAIFileOperation` strictly rejects plaintext commits to encrypted files if `encryptionMetadata.iv` is omitted. The editor orchestrator re-encrypts generated Markdown in browser RAM with the Master Key before committing over the network.
+  - **UI Shield Badge**: `AIToolbar` renders an amber privacy badge (`data-testid="ai-encrypted-badge"`) disabling AI actions when opting in is disabled on encrypted files.
+
 ---
 
 ## 5. Verification & Test Evidence
@@ -148,3 +156,4 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 The implementation is verified with automated tests covering all parser, FSM, and adversarial edge cases:
 - `src/test/ai-stream-parser.test.ts`: 11 tests covering NDJSON framing, multi-byte UTF-8, incomplete EOF (`failed_incomplete_stream`), duplicate `done`, unknown frames, buffer overflow (`stream_buffer_overflow`), and signal aborts.
 - `src/test/ai-stream-session.test.ts`: 12 tests covering canonical FSM lifecycle, terminal state identification, illegal transitions, generation/version mismatch assertions, conflict rollback, and preview buffer boundaries.
+- `src/test/vault-sync-ai-gate.test.ts`: 28 tests verifying Zero-Knowledge AI route rejection, atomic commit re-encryption guard, user vault setting updates, syntax validator, non-blocking sync conflict isolation, and adversarial multi-device edge cases.

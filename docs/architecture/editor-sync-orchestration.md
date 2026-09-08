@@ -387,13 +387,21 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
    - The copy engine decrypts the source file locally in volatile RAM, prompts the user with an advisory dialog for large files, generates a new UUID (`newFileId`) and a fresh random 12-byte IV, and re-encrypts the payload with the target AAD (`vault:file:${userId}:${newFileId}`).
    - The resulting `encryptedOverride` is passed to `copyFile`, and server-side `copyFile` strictly rejects copying encrypted files without valid client-side re-encryption.
 
-6. **Conflict 412 Metadata Propagation & Double-Encryption Guard (AUD-03):**
-   - When an auto-save or manual save encounters HTTP 412 Precondition Failed, the server returns `isEncrypted` and `encryptionMetadata` inside the `serverVersion` payload.
-   - If the user selects the server version during conflict resolution, the orchestrator inspects the content: if the payload begins with `gcm:v1:...` (already authenticated ciphertext), it bypasses re-encryption entirely, preventing double-encryption corruption loops.
-   - If the user provides merged plaintext, the orchestrator re-encrypts it with the volatile Master Key and a fresh random IV before dispatching `toggleFileEncryption`.
+6. **Conflict 412 Server IV Ingestion & Plaintext Conflict Resolution (`SyncCryptoGateway`):**
+   - When an auto-save or manual save encounters HTTP 412 Precondition Failed, the server returns `serverVersion` containing remote ciphertext and `encryptionMetadata` with the specific remote IV.
+   - Rather than erroneously attempting decryption using the local client IV, the orchestrator invokes `SyncCryptoGateway.decryptInbound` using `saveRes.serverVersion.encryptionMetadata.iv` and the volatile Master Key with file AAD binding (`vault:file:${userId}:${fileId}`).
+   - The orchestrator checks for false conflicts on the decrypted plaintext against local edits; if identical, it seamlessly adopts the remote version and ETag without UI disruption.
+   - For true conflicts, `SyncConflict.serverVersion.content` is strictly populated with decrypted plaintext Markdown, ensuring Diff3 line merge and side-by-side diffing operate on human-readable text.
+   - In `handleResolveConflict`, the chosen content (`"mine"`, `"server"`, or `"merge"`) is applied directly to CodeMirror as clean plaintext (`adapter.setValue(resolution.content)`).
+   - If the file is encrypted, the chosen plaintext is symmetrically re-encrypted via `SyncCryptoGateway.encryptOutbound` with a fresh 12-byte CSPRNG IV before server dispatch (`toggleFileEncryption`) and IndexedDB persistence, guaranteeing clean editor buffers and eliminating double encryption loops.
 
 7. **Inactivity Timer Local Activity Touch (AUD-04):**
    - To prevent unexpected vault auto-locks during active composition, editor keystroke events in CodeMirror trigger `sessionKeyStore.touch()`, extending the 1-hour inactivity timeout seamlessly without requiring background timers or intrusive prompts.
+
+8. **Inbound Remote Update Decryption Interceptor (`handleRemoteUpdate`):**
+   - Inbound background updates dispatched by `SyncManager.onRemoteUpdate` are intercepted by `SyncCryptoGateway.decryptInbound`.
+   - If the file is encrypted and the vault is unlocked, the payload is transparently decrypted into clean Markdown plaintext before updating the editor surface (`adapter.setValue(remote.content)`).
+   - If the vault is locked, the update is safely isolated without mutating the editor, preserving the `vault_locked` barrier and preventing raw ciphertext leakage into CodeMirror or the DOM.
 
 ---
 
@@ -420,8 +428,11 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
     - `src/test/file-ops-vault.unit.test.ts` (10/10 passing - encryption toggle, optimistic concurrency, copy with re-encrypted override)
     - `src/test/vault-crypto-resilience.unit.test.ts` (17/17 passing - 6-digit PIN, tampering detection, RAM wipeBuffer, SessionKeyStore auto-lock & touch)
     - `src/test/vault-cross-module.integration.test.ts` (5/5 passing - E2E zero-knowledge lifecycle, re-encrypted copy, AI commit, conflict 412, epoch invalidation)
-  - **Vault Subsystem Total:** 9/9 test files, 148/148 tests passing (100% success rate).
-  - **Project Full Test Suite:** 44/44 test files, 617/617 tests passing (100% success rate) via `vitest.config.mts`.
+    - `src/test/vault-sync-ai-gate.test.ts` (28/28 passing - dual-layer AI safety barriers, non-blocking sync with CONFLICT_LOCKED quarantine, Markdown syntax validator)
+    - `src/lib/sync/sync-crypto-gateway.test.ts` (5/5 passing - transparent inbound decryption gateway, fresh outbound CSPRNG IV re-encryption, vault-lock quarantine)
+    - `src/test/encrypted-conflict-decryption.integration.test.ts` (4/4 passing - end-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution)
+  - **Vault Subsystem Total:** 10/10 test files, 157/157 tests passing (100% success rate).
+  - **Project Full Test Suite:** 48/48 test files, 666/666 tests passing (100% success rate) via `vitest.config.mts`.
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).
 
 

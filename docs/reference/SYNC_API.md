@@ -112,7 +112,7 @@ ETag: "stored-etag"
 
 Update a file with Optimistic Locking.
 
-#### Request
+#### Request (Standard Markdown)
 ```http
 PUT /api/files/abc123
 Authorization: Bearer <token>
@@ -127,6 +127,31 @@ If-Match: "current-etag"
   "expectedVersion": 5
 }
 ```
+
+#### Request (Zero-Knowledge Encrypted Vault File)
+```http
+PUT /api/files/abc123
+Authorization: Bearer <token>
+Content-Type: application/json
+If-Match: "current-etag"
+
+{
+  "content": "base64ciphertext...",
+  "title": "Document Title",
+  "isEncrypted": true,
+  "encryptionMetadata": {
+    "version": 1,
+    "algorithm": "AES-GCM-256",
+    "keyId": "master-v1",
+    "salt": "",
+    "iv": "base64iv...",
+    "kdfIterations": 600000
+  },
+  "expectedVersion": 5
+}
+```
+
+> **Note on Normalization:** For unencrypted files, `content` undergoes `normalizeMarkdownSource` (Unicode NFC, LF newline conversion, and null-byte stripping). For encrypted files, raw ciphertext Base64 strings bypass Markdown normalization to prevent tampering with cryptographic encoding.
 
 #### Response (200 OK)
 ```http
@@ -172,12 +197,13 @@ sources (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`,
 
 | Status | Actual response body | Trigger |
 |--------|----------------------|---------|
-| 400 | `{ "error": "<validation message>" }` | Invalid request parameters |
+| 400 | `{ "error": "Encrypted files require valid encryptionMetadata with an IV" }` | PUT on encrypted file without valid `encryptionMetadata.iv` |
+| 400 | `{ "error": "<validation message>" }` | Invalid request parameters or updating a folder's content |
 | 401 | `{ "error": "Authentication required" }` | Missing/expired server session |
 | 403 | `{ "error": "<forbidden message>" }` | Not authorized |
 | 404 | `{ "error": "File not found" }` | File missing or soft-deleted |
 | 409 | `{ "error": "<conflict message>" }` | Semantic conflict |
-| 412 | `{ "error": "Precondition Failed: version mismatch", "serverVersion": { etag, version, content, updatedAt } }` | Stale ETag/version on PUT |
+| 412 | `{ "error": "Precondition Failed: version mismatch", "serverVersion": { etag, version, content, isEncrypted, encryptionMetadata, updatedAt } }` | Stale ETag/version on PUT |
 | 428 | `{ "error": "Precondition Required: If-Match header or expectedVersion is required for file updates" }` | Missing precondition on PUT |
 | 429 | `{ "error": "Too Many Requests", "message": "Rate limit exceeded. Please try again later.", "retryAfter": <epoch-seconds> }` | Rate limiter exhausted (`rateLimitExceededResponse`) |
 | 500 | `{ "error": "Internal server error" }` | Unhandled server exception |
@@ -327,4 +353,80 @@ Atomic server actions managing zero-knowledge profiles:
 - `createUserVaultProfile(input)`: Atomically inserts dual-wrapped master keys (`encryptedMasterKey` and `recoveryEncryptedMasterKey`) with 409 conflict guard.
 - `updateVaultPassword(input)`: Updates password-wrapped master key and salt with 404 guard.
 - `revokeAllTrustedDevices()`: Atomically increments `deviceTrustEpoch` from $N$ to $N+1$, invalidating all local device PIN envelopes globally.
+
+---
+
+## Client-Side Sync Contracts & Cryptographic Interfaces (`src/lib/sync`)
+
+### 1. `RemoteUpdateEvent`
+Dispatched when remote updates are pulled or broadcast:
+```typescript
+export interface RemoteUpdateEvent {
+    fileId: string;
+    content: string;
+    etag: string;
+    version: number;
+    updatedAt: number;
+    isEncrypted?: boolean;
+    encryptionMetadata?: EncryptedEnvelopeMetadata | null;
+}
+```
+
+### 2. `SyncConflict` Interface
+Passed to `onConflict` handler when optimistic concurrency fails (HTTP 412 / 409):
+```typescript
+export interface SyncConflict {
+    fileId: string;
+    localVersion: {
+        content: string;
+        etag: string;
+        version: number;
+        title?: string;
+    };
+    serverVersion: {
+        content: string; // Plaintext Markdown after inbound gateway decryption
+        etag: string;
+        version: number;
+        title?: string;
+        updatedAt?: string;
+        isEncrypted?: boolean;
+        encryptionMetadata?: EncryptedEnvelopeMetadata | null;
+    };
+    baseVersion?: {
+        content: string;
+        etag: string;
+        version: number;
+        title?: string;
+    };
+    isEncrypted?: boolean;
+    encryptionMetadata?: EncryptedEnvelopeMetadata | null;
+}
+```
+
+### 3. `SyncCryptoGateway` Contracts
+Inbound and outbound data transformations between ciphertext envelopes and Markdown plaintext:
+```typescript
+export interface InboundPayloadInput {
+    fileId: string;
+    content: string;
+    isEncrypted?: boolean;
+    encryptionMetadata?: EncryptedEnvelopeMetadata | Partial<EncryptedEnvelopeMetadata> | null;
+    userId?: string;
+}
+
+export interface InboundPayloadResult {
+    fileId: string;
+    content: string;
+    isEncrypted: boolean;
+    isVaultLocked: boolean;
+    status: 'plaintext' | 'decrypted' | 'locked' | 'error';
+    encryptionMetadata: EncryptedEnvelopeMetadata | null;
+    error?: string;
+}
+
+export interface OutboundPayloadResult {
+    ciphertextBase64: string;
+    encryptionMetadata: EncryptedEnvelopeMetadata;
+}
+```
 

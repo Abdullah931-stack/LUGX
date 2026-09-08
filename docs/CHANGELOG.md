@@ -2,6 +2,58 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.25.1] - 2026-09-08 (Zero-Knowledge Encrypted Inbound Decryption & Conflict Plaintext Resolution)
+
+### Fixed & Hardened - Encrypted Conflict Ingestion & Editor Surface Integrity
+
+- **Inbound Cryptographic Gateway (`src/lib/sync/sync-crypto-gateway.ts`, `src/lib/sync/index.ts`):**
+  - Implemented `SyncCryptoGateway` providing decoupled, deterministic inbound decryption (`decryptInbound`) and outbound re-encryption (`encryptOutbound`).
+  - Bound cryptographic operations to the volatile Master Key in `SessionKeyStore`, remote IV extraction, and per-file AAD integrity (`vault:file:${userId}:${fileId}`).
+  - Transparently decodes incoming remote updates and conflict payloads into clean Markdown plaintext before delivery to consumers.
+- **Server IV Extraction & Plaintext 412 Conflict Decryption (`src/hooks/use-editor-orchestrator.ts`):**
+  - Fixed cryptographic tag mismatch defect where the orchestrator attempted to decrypt HTTP 412 `serverVersion.content` using the local client IV instead of `saveRes.serverVersion.encryptionMetadata.iv`.
+  - Added plaintext false-conflict elimination: compares decrypted remote Markdown against local dirty plaintext, auto-advancing version/ETag when payloads match.
+  - Populates `SyncConflict.serverVersion.content` with clean Markdown plaintext, restoring Diff3 line-based merge and side-by-side diffing functionality in `ConflictDialog`.
+- **Editor Surface Sanitization & Symmetric Re-Encryption (`src/hooks/use-editor-orchestrator.ts`):**
+  - Replaced legacy flawed server-strategy guard that injected raw ciphertext into CodeMirror with clean plaintext assignment (`adapter.setValue(resolution.content)`).
+  - Enforced universal outbound re-encryption for all conflict resolution strategies (`"mine"`, `"server"`, `"merge"`) using fresh 12-byte CSPRNG IVs, eliminating nested double-encryption hazards (`gcm:v1:gcm:v1:...`).
+- **Remote Inbound Update Decryption (`src/lib/sync/sync-manager.ts`, `src/hooks/use-sync.ts`):**
+  - Extended `RemoteUpdateEvent` and `onRemoteUpdate` callback signatures with `isEncrypted` and `encryptionMetadata`.
+  - Intercepts remote background pulls and polling updates, decrypting to plaintext before CodeMirror insertion and safely isolating updates when the vault is locked.
+- **Verification Evidence & Test Expansion:**
+  - Added unit test suite `src/lib/sync/sync-crypto-gateway.test.ts` (5 tests passing).
+  - Added end-to-end integration suite `src/test/encrypted-conflict-decryption.integration.test.ts` (4 tests passing).
+  - Full automated test suite: **48 passed files (48), 666 passed tests (666)** (100% pass rate).
+  - Strict TypeScript compilation: `npx tsc --noEmit` exits with code 0 (zero errors).
+
+## [1.25.0] - 2026-09-08 (Vault Phase 4: Zero-Knowledge AI Gatekeepers, Non-Blocking Sync with Conflict Isolation & Syntax Integrity)
+
+### Added & Hardened - Zero-Knowledge AI Safety Gatekeepers & Non-Blocking Encrypted Sync
+
+- **Dual-Layer Zero-Knowledge AI Safety Gatekeepers (`src/app/api/ai/stream/route.ts`, `src/hooks/use-editor-orchestrator.ts`, `src/components/editor/ai-toolbar.tsx`):**
+  - Enforced server-side HTTP 403 `AI_PROHIBITED_ON_ENCRYPTED_FILES` prior to quota deduction when targeting encrypted notes without user opt-in.
+  - Added pre-flight client gatekeeper in `useEditorOrchestrator` and amber shield privacy badge (`data-testid="ai-encrypted-badge"`) in `AIToolbar` that suppresses all AI actions on encrypted notes.
+  - Implemented `updateVaultAISetting` server action and interactive toggle switch in `VaultSecurityCard` backed by PostgreSQL migration `0010_add_vault_ai_setting.sql` (`allow_ai_on_encrypted_files`).
+  - Added atomic AI commit validation in `commitAIFileOperation`: automatically triggers `refundAIReservation` and rejects commits of unencrypted plaintext without `encryptionMetadata.iv` to encrypted files.
+- **Deterministic Strong Encrypted ETag Generator (`src/lib/sync/etag-generator.ts`):**
+  - Implemented canonical JSON key sorting (`CANONICAL_ENVELOPE_KEYS`) and 32-character SHA-256 hash generation for `EncryptedEnvelope` payloads:
+    $$\text{ETag} = \text{SHA-256}(\text{serializeEncryptedEnvelope}(\text{envelope}))[0..32]$$
+  - Guarantees deterministic ETag evaluation across client and server runtimes regardless of JSON key serialization ordering.
+- **Non-Blocking Encrypted Sync & Conflict Isolation (`src/lib/sync/sync-manager.ts`):**
+  - Quarantines HTTP 412 Precondition Failed and 409 Conflict responses on encrypted files into `pendingEncryptedConflicts` under `CONFLICT_LOCKED` when the vault is locked.
+  - Preserves dirty unencrypted synchronization: `pushDirtyFiles` explicitly filters out quarantined files, preventing locked encrypted conflicts from blocking independent document synchronization.
+  - Reactive unlock auto-resolution: listens to `sessionKeyStore` unlock events, decrypts 3-way in RAM, executes Diff3 merge, verifies Markdown syntax integrity, re-encrypts with fresh CSPRNG IV, and authoritatively pushes to `/api/files/[id]`.
+  - Implemented safe eviction from quarantine upon push rejection to eliminate infinite retry loops.
+- **Markdown Syntax Integrity Validation (`src/lib/sync/syntax-validator.ts`):**
+  - Validates CommonMark code fence balance (``` and ~~~), GFM table column alignment with escaped pipe support (`\|`), null byte `\0` blocking, and conflict marker detection (`<<<<<<<`, `=======`, `>>>>>>>`).
+  - Integrated into `conflict-resolver.ts` to prevent corrupted 3-way auto-merges and escalate safely to manual UI resolution.
+- **Stateless REST Boundary Check (`src/app/api/files/[id]/route.ts`):**
+  - Enforced `encryptionMetadata.iv` requirement on encrypted PUT requests (HTTP 400), and bypassed redundant `normalizeMarkdownSource` for Base64 ciphertext payloads.
+- **Verification Evidence & Test Suite Expansion:**
+  - Added 28-test comprehensive suite `src/test/vault-sync-ai-gate.test.ts`.
+  - Full automated test suite: **46 passed files (46), 657 passed tests (657)** (100% pass rate).
+  - TypeScript compilation: `npx tsc --noEmit` exits with code 0 (zero errors).
+
 ## [1.24.7] - 2026-09-05 (Hardware-Bound Biometric Authentication WebAuthn PRF & In-Place Device Trust)
 
 ### Added & Hardened - Hardware-Enclave Key Derivation & Dual Device Trust Architecture

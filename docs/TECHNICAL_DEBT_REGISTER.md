@@ -82,7 +82,7 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   plus a documented manual checklist. Similarly, Phase 18/Vault encryption journeys
   (vault unlock, 6-digit PIN verification, device trust enrollment/revocation,
   and cross-tab inactivity locking) are verified through comprehensive jsdom and WebCrypto
-  integration tests (629 tests across 45 suites) — but there are no automated real-browser
+  integration tests (657 tests across 46 suites) — but there are no automated real-browser
   journeys yet (`@playwright/test` is intentionally introduced only in Phase 19).
 - **Interim mitigation:** jsdom hard-reload simulation is semantically faithful
   (zero in-memory state survives; recovery runs from sessionStorage seeds), and
@@ -126,4 +126,15 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   - Strongly typed all cryptographic worker RPC action payloads (`CryptoWorkerResponsePayloads`), indexedDB vault profiles (`UserVaultProfile`), and database encryption metadata (`FileEncryptionMetadata`).
   - Pruned all unused imports, variables, and dead mocks across server actions, sync engines, UI modals, and test suites.
   - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
-  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all 45 test suites (629 tests green).
+  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all 46 test suites (657 tests green).
+
+## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session
+
+- **Debt:** When signing out via `signOut()` (`src/server/actions/auth-actions.ts`), the action performs `redirect("/")` without executing `revalidatePath("/", "layout")` and without explicitly clearing Supabase auth session cookies from `cookieStore`. Additionally, `src/proxy.ts` calls `supabase.auth.getUser()` on all routes (including the public `/` path) without an AbortSignal timeout watchdog, and drops cookie-deletion headers on `NextResponse.redirect`.
+- **Impact:** When a revoked or stale session token is sent by the browser post-logout, `@supabase/ssr` attempts token recovery over the network, incurring high latency (~7.5s) before failing with `AuthApiError: Invalid Refresh Token`. Rapid browser reloads/retries cause client aborts, leaving up to 6 sockets trapped in `CLOSE_WAIT` on Chromium-based browsers (Chrome & Brave). This saturates Chromium's per-host socket pool (`kDefaultMaxSocketsPerGroup = 6`), causing subsequent requests (even in incognito windows) to hang indefinitely ("Waiting for available socket") until `.next/cache` is purged and socket pools are flushed.
+- **Decision / Status:** **Recorded & Deferred** (owner: project lead / architecture). Implementation is deferred pending explicit user instruction.
+- **Planned Mitigation & Architecture Hardening:**
+  1. Add `revalidatePath("/", "layout")` in `signOut()` to invalidate stale RSC layouts and router cache.
+  2. Explicitly wipe all `sb-*-auth-token` cookies in `cookieStore` inside `signOut()`.
+  3. Introduce Fast-Path routing in `src/proxy.ts` to bypass `getUser()` on public routes (`/`) and conditionalize `/login` checks on cookie presence.
+  4. Equip `getUser()` with an `AbortSignal.timeout(2500)` watchdog and propagate `Set-Cookie` deletion headers through `NextResponse.redirect`.

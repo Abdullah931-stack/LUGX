@@ -24,6 +24,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | **G8** | Multi-byte UTF-8 split boundary tests, NDJSON line framing tests, and 412 conflict tests. | `src/test/ai-stream-parser.test.ts`<br>`src/test/ai-stream-session.test.ts`<br>`src/test/editor-atomic-commit.test.ts` | **Implemented** |
 | **G9** | Editor orchestration and authoritative write integration tests with zero regression. | `src/test/editor-orchestration.integration.test.ts`<br>[`docs/architecture/editor-sync-orchestration.md`](../architecture/editor-sync-orchestration.md) | **Validated** |
 | **G10** | Feature Flag gating (`AI_STREAMING_ENABLED = false` by default) with zero sensitive prompt leakage in server logs. | `src/config/features.config.ts`<br>`src/app/api/ai/stream/route.ts` | **Implemented & Enforced (v1.5.0)** — the route now branches on the flag with `processWithAI` as a buffered NDJSON fallback |
+| **G11** | Zero-Knowledge AI Safety Gatekeeper: amber UI privacy badge (`ai-encrypted-badge`), HTTP 403 pre-reservation route check (`AI_PROHIBITED_ON_ENCRYPTED_FILES`), and commit IV re-encryption guard. | `src/components/editor/ai-toolbar.tsx`<br>`src/hooks/use-editor-orchestrator.ts`<br>`src/app/api/ai/stream/route.ts`<br>`src/server/actions/ai-commit.ts` | **Implemented & Enforced (v1.25.0)** |
 
 ---
 
@@ -31,24 +32,22 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 
 To prevent distributed transaction failure modes, the system decouples commit into two deterministic phases:
 
-```
-[Client Session: completed]
-        │
-        ▼ (Step 1: Server Commit)
-[POST commitAIFileOperation]
-        ├─ Verify ai_reservations status == 'reserved'
-        ├─ Verify files.version == expectedVersion
-        ├─ UPDATE files (content, version + 1, new etag)
-        └─ UPDATE ai_reservations (status = 'committed')
-        │
-        ├─ [If Version Conflict / 412] ──► Rollback ephemeral state & refund quota
-        │
-        ▼ [If Success (200 OK)] (Step 2: Local Commit)
-[Apply Single Atomic Editor Transaction]
-        ├─ Dismantle Ephemeral Preview Overlay
-        ├─ adapter.replaceRange(from, to, previewMarkdown)
-        ├─ Push 1 History Stack Entry (Undoable with single Ctrl+Z)
-        └─ Sync to local IndexedDB with server ETag
+```mermaid
+flowchart TD
+    Client["Client Session: completed"] --> Step1["Step 1: Server Commit (commitAIFileOperation)"]
+    Step1 --> VerifyRes["Verify ai_reservations status == 'reserved'"]
+    Step1 --> VerifyVer["Verify files.version == expectedVersion"]
+    Step1 --> VerifyZK["Verify Vault Opt-In & Encryption Metadata (if encrypted)"]
+    
+    VerifyRes & VerifyVer & VerifyZK --> TxCommit["UPDATE files (content, version + 1, new etag)<br/>UPDATE ai_reservations (status = 'committed')"]
+    
+    TxCommit -->|Version Conflict / 412 or Security Error| Rollback["Rollback ephemeral state & refund quota (refundAIReservation)"]
+    TxCommit -->|Success (200 OK)| Step2["Step 2: Local Commit (Single Atomic Transaction)"]
+    
+    Step2 --> Dismantle["Dismantle Ephemeral Preview Overlay"]
+    Step2 --> Replace["adapter.replaceRange(from, to, previewMarkdown)"]
+    Step2 --> Undo["Push 1 History Stack Entry (Undoable with single Ctrl+Z)"]
+    Step2 --> IDBSync["Sync to local IndexedDB with server ETag"]
 ```
 
 ---
