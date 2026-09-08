@@ -386,6 +386,12 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
             reservedUnits: 10,
         };
 
+        // Mock user vault profile with AI opt-in enabled for Flow 3
+        vi.mocked(db.query.userVaultProfiles.findFirst).mockResolvedValue({
+            userId: testUserId,
+            allowAIOnEncryptedFiles: true,
+        } as any);
+
         // 1. Invariant: Committing plaintext to an encrypted file without metadata must be rejected
         vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce(reservationRecord as any);
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce(encryptedFileRecord as any);
