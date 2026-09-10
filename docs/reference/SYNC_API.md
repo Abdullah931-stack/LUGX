@@ -430,3 +430,110 @@ export interface OutboundPayloadResult {
 }
 ```
 
+---
+
+### 4. `LogSanitizer` Interface & Contracts (`src/lib/sync/log-sanitizer.ts`)
+Zero-Knowledge log hygiene module preventing document plaintext, ciphertext envelopes, encryption keys, BIP-39 recovery seeds, passwords, PINs, and raw buffers from leaking into console output, telemetry, or in-memory error/metric stores:
+
+```typescript
+export const REDACTED = '[REDACTED]';
+
+export function isSensitiveLogKey(key: string): boolean;
+export function sanitizeLogMessage(message: string): string;
+export function sanitizeLogValue(value: unknown, seen?: Set<object>): unknown;
+export function sanitizeMetadata(metadata?: Record<string, unknown> | unknown): Record<string, unknown> | undefined;
+```
+
+#### Core Invariants:
+1. **Token-Boundary Isolation**: Evaluates short cryptographic abbreviations (`iv`, `pin`, `aad`, `kek`, `pwd`) strictly on exact token boundaries (`(?:^|[^a-zA-Z0-9_])`) to eliminate false-positive redaction of benign properties (e.g. `activity`, `archive`, `privacy`).
+2. **Multi-Word Secret Scrubbing**: Colon-separated regex scrubbers consume non-delimiter sequences (`[^,;\n}\]]+`), ensuring multi-word secrets (such as 12-word BIP-39 mnemonic seeds) are completely redacted instead of stopping at the first space.
+3. **DAG Cycle Prevention**: Recursive traversal utilizes enter-and-exit depth-first tracking (`seen.delete(obj)` in `finally`) to eliminate infinite recursion on cyclic structures while correctly traversing shared diamond nodes in Directed Acyclic Graphs.
+4. **Sanitized Stack Preservation**: When sanitizing `Error` instances, call stack lines are preserved for diagnostic observability while scrubbed of embedded sensitive credentials or tokens.
+
+---
+
+### 5. `SyncErrorHandler` Contracts (`src/lib/sync/error-handler.ts`)
+Centralized error handling and recovery dispatch for the synchronization system:
+
+```typescript
+export enum SyncErrorType {
+    NETWORK_ERROR = 'NETWORK_ERROR',
+    AUTH_ERROR = 'AUTH_ERROR',
+    CONFLICT_ERROR = 'CONFLICT_ERROR',
+    VALIDATION_ERROR = 'VALIDATION_ERROR',
+    STORAGE_ERROR = 'STORAGE_ERROR',
+    RATE_LIMIT_ERROR = 'RATE_LIMIT_ERROR',
+    SERVER_ERROR = 'SERVER_ERROR',
+    QUOTA_EXCEEDED = 'QUOTA_EXCEEDED',
+    CIRCUIT_BREAKER_OPEN = 'CIRCUIT_BREAKER_OPEN',
+    OPERATION_ABORTED = 'OPERATION_ABORTED',
+    UNKNOWN_ERROR = 'UNKNOWN_ERROR',
+}
+
+export interface SyncError {
+    type: SyncErrorType;
+    message: string;
+    recoverable: boolean;
+    retryAfter?: number;
+    statusCode?: number;
+    metadata?: Record<string, unknown>;
+    originalError?: Error;
+    timestamp: number;
+}
+```
+
+#### Invariants:
+- All error creations (`createSyncError`) and event dispatches (`handle(error)`) pass message, metadata, and original errors through `logSanitizer` before logging to `console.error` or storing in memory.
+- Registered `ErrorCallback` listeners receive sanitized errors, preventing consumer callbacks from accidentally leaking cryptographic secrets to external monitoring tools.
+
+---
+
+### 6. `SyncPerformanceMonitor` Contracts (`src/lib/sync/performance-monitor.ts`)
+In-memory performance metric tracking and latency profiling:
+
+```typescript
+export type MetricType =
+    | 'sync_duration'
+    | 'push_duration'
+    | 'pull_duration'
+    | 'conflict_resolution'
+    | 'indexeddb_read'
+    | 'indexeddb_write'
+    | 'network_request';
+
+export interface PerformanceMetric {
+    type: MetricType;
+    duration: number;
+    timestamp: number;
+    metadata?: Record<string, unknown>;
+}
+```
+
+#### Invariants:
+- **Ingestion Sanitization**: Both `recordMetric` and `stopTimer` sanitize incoming `metadata` through `sanitizeMetadata()` before recording to `this.metrics`.
+- Generated metrics and summaries (`getMetricsByType`, `getAverageDuration`) are guaranteed free of plaintext Markdown and cryptographic keys.
+
+---
+
+### 7. `SessionKeyStore` Memory Contracts (`src/lib/sync/session-key-store.ts`)
+Volatile in-memory Master Key management with strict inactivity enforcement:
+
+```typescript
+export class SessionKeyStore {
+    public isUnlocked(): boolean;
+    public getMasterKey(): CryptoKey | null;
+    public getMasterKeyRaw(): Uint8Array | null;
+    public setMasterKey(key: Uint8Array): void;
+    public storeMasterKeyRaw(key: Uint8Array): void;
+    public lock(): void;
+    public purgeKeys(): void;
+    public touch(): void;
+    public subscribe(listener: KeyStoreListener): () => void;
+}
+```
+
+#### Invariants:
+1. **Volatile RAM Only**: Raw Master Key bytes (`masterKeyRaw`) and derived WebCrypto keys are held strictly in memory and are never serialized to `localStorage`, `sessionStorage`, or `IndexedDB`.
+2. **Deterministic Auto-Lock**: Enforces a strict 1-hour inactivity window (3,600,000 ms). `storeMasterKeyRaw(key)` operates purely in memory without allowing callers to mutate the global inactivity timeout.
+3. **Caller Buffer Independence**: Modals and derivation routines wipe their local key buffers (`wipeBuffer(localKey)`) in `finally` blocks without zeroing the persistent `masterKeyRaw` instance held within `SessionKeyStore`.
+

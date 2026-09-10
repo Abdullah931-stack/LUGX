@@ -222,10 +222,10 @@ export class ConflictResolver {
         let syntaxFailureReason: string | undefined;
 
         if (contentMerge.success && contentMerge.content !== undefined) {
-            const integrity = validateMarkdownSyntaxIntegrity(contentMerge.content);
-            if (!integrity.valid) {
+            const integrity = validateSyntax(contentMerge.content);
+            if (!integrity.isValid) {
                 syntaxIntegrityFailed = true;
-                syntaxFailureReason = integrity.reason;
+                syntaxFailureReason = integrity.syntaxErrors?.[0];
             }
         }
 
@@ -726,23 +726,6 @@ export class ConflictResolver {
                 throw new Error(`Unknown resolution strategy: ${strategy}`);
         }
     }
-}
-
-/**
- * Markdown Syntax Integrity Validator
- * 
- * Verifies that automated three-way merges did not produce structurally corrupt Markdown,
- * specifically checking for:
- * 1. Unclosed fenced code blocks (``` or ~~~)
- * 2. Malformed / broken GFM tables (orphan delimiters, column count mismatches)
- */
-export function validateMarkdownSyntaxIntegrity(content: string): { valid: boolean; reason?: string } {
-    if (!content) return { valid: true };
-    const result = validateSyntax(content);
-    return {
-        valid: result.isValid,
-        reason: result.syntaxErrors?.[0],
-    };
 }
 
 // Export singleton instance

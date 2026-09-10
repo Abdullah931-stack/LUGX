@@ -18,6 +18,7 @@ import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from './crypto-wor
 import { validateMarkdownSyntaxIntegrity } from './syntax-validator';
 import { conflictResolver } from './conflict-resolver';
 import { SyncCryptoGateway } from './sync-crypto-gateway';
+import { sanitizeLogValue } from './log-sanitizer';
 import type { PendingEncryptedConflict } from './types/vault';
 
 /**
@@ -270,7 +271,7 @@ class SyncManager {
                     try {
                         await this.resolvePendingEncryptedConflict(fileId);
                     } catch (err) {
-                        console.error(`[SyncManager] Auto-resolution failed for ${fileId}:`, err);
+                        console.error(`[SyncManager] Auto-resolution failed for ${fileId}:`, sanitizeLogValue(err));
                     }
                 }
             }
@@ -561,7 +562,7 @@ class SyncManager {
                     newEtag: finalEtag,
                 };
             } catch (err) {
-                console.error(`[SyncManager] Error resolving encrypted conflict for ${fileId}:`, err);
+                console.error(`[SyncManager] Error resolving encrypted conflict for ${fileId}:`, sanitizeLogValue(err));
                 return {
                     fileId,
                     success: false,

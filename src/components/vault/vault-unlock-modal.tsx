@@ -145,6 +145,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
         setIsLoading(true);
         setError(null);
 
+        let unwrappedMasterKey: Uint8Array | null = null;
         try {
             // Check server epoch if online
             try {
@@ -163,7 +164,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                 // If offline, continue with local verification
             }
 
-            const unwrappedMasterKey = await unwrapMasterKeyWithWebAuthnPrf(deviceEnvelope, userId);
+            unwrappedMasterKey = await unwrapMasterKeyWithWebAuthnPrf(deviceEnvelope, userId);
 
             sessionKeyStore.setMasterKey(unwrappedMasterKey, 1);
 
@@ -180,6 +181,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
             console.error("[VaultUnlockModal] Biometric unlock error:", err);
             setError((err as Error)?.message || "فشلت المصادقة العتادية. يمكنك استخدام كلمة المرور بدلاً من ذلك.");
         } finally {
+            if (unwrappedMasterKey) wipeBuffer(unwrappedMasterKey);
             setIsLoading(false);
         }
     }
@@ -256,6 +258,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                 setError(`رمز PIN غير صحيح. متبقي ${remaining} ${remaining === 1 ? 'محاولة واحدة' : 'محاولات'}.`);
             }
         } finally {
+            if (unwrappedMasterKey) wipeBuffer(unwrappedMasterKey);
             setIsLoading(false);
         }
     }
@@ -373,6 +376,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
             if (passBytes) wipeBuffer(passBytes);
             if (saltBytes) wipeBuffer(saltBytes);
             if (kekPass) wipeBuffer(kekPass);
+            if (unwrappedMasterKey) wipeBuffer(unwrappedMasterKey);
             setIsLoading(false);
         }
     }
@@ -390,6 +394,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
         setIsLoading(true);
         setError(null);
 
+        let unwrappedMasterKey: Uint8Array | null = null;
         try {
             // Validate mnemonic checksum
             const validation = await cryptoWorkerBridge.validateMnemonic(cleanedSeed);
@@ -417,7 +422,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
             const ivBytes = base64ToUint8Array(wrappedObj.iv);
 
             // Unwrap Master Key
-            const unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
+            unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
                 kekSeed,
                 wrappedObj.ciphertext,
                 ivBytes,
@@ -436,6 +441,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
             console.error("[VaultUnlockModal] Recovery seed unlock failure:", err);
             setError("بذرة الاسترجاع غير صحيحة أو تالفة. يرجى التأكد من الكلمات.");
         } finally {
+            if (unwrappedMasterKey) wipeBuffer(unwrappedMasterKey);
             setIsLoading(false);
         }
     }

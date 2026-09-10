@@ -10,6 +10,7 @@
 
 import { wipeBuffer } from './crypto-worker-bridge';
 import { SessionKeyStoreError } from './types/vault';
+import { sanitizeLogValue } from './log-sanitizer';
 
 export type KeyStoreListener = (isUnlocked: boolean) => void;
 
@@ -174,12 +175,9 @@ export class SessionKeyStore {
   }
 
   /**
-   * Stores raw Master Key bytes in volatile memory with optional custom timeout in seconds
+   * Stores raw Master Key bytes in volatile memory
    */
-  public storeMasterKeyRaw(key: Uint8Array, timeoutSeconds?: number): void {
-    if (timeoutSeconds && timeoutSeconds > 0) {
-      this.inactivityTimeoutMs = timeoutSeconds * 1000;
-    }
+  public storeMasterKeyRaw(key: Uint8Array, _timeoutSeconds?: number): void {
     this.setMasterKey(key);
   }
 
@@ -267,7 +265,7 @@ export class SessionKeyStore {
       try {
         listener(isUnlocked);
       } catch (err) {
-        console.error('SessionKeyStore listener error:', err);
+        console.error('SessionKeyStore listener error:', sanitizeLogValue(err));
       }
     }
   }

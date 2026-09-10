@@ -231,6 +231,7 @@ export function CreateVaultModal({ isOpen, onClose, onSuccess, userId }: CreateV
             if (kekSeed) wipeBuffer(kekSeed);
             if (ivPass) wipeBuffer(ivPass);
             if (ivSeed) wipeBuffer(ivSeed);
+            if (masterKeyRaw) wipeBuffer(masterKeyRaw);
             setIsLoading(false);
         }
     }

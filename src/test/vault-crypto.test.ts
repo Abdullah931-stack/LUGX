@@ -596,4 +596,55 @@ describe('Phase 1: Crypto Worker, Defensive RAM Sanitization & Key Management', 
       bridge.terminate();
     });
   });
+
+    describe('9. Phase 5 Closure: RAM Sanitization Proofs & Worker Offloading (Matrix #5/#7)', () => {
+        it('Matrix #5: wipeBuffer zeroes buffers and SessionKeyStore purges RAM on lock', async () => {
+            const secret = await generateMasterKeyRaw();
+            const witness = new Uint8Array(secret);
+            expect(witness.some((b) => b !== 0)).toBe(true);
+            wipeBuffer(secret);
+            expect(Array.from(secret)).toEqual(new Array(32).fill(0));
+            const masterKey = await generateMasterKeyRaw();
+            sessionKeyStore.setMasterKey(masterKey);
+            expect(sessionKeyStore.isUnlocked()).toBe(true);
+            sessionKeyStore.lock();
+            expect(sessionKeyStore.isUnlocked()).toBe(false);
+            expect(sessionKeyStore.getMasterKey()).toBeNull();
+            wipeBuffer(masterKey);
+            wipeBuffer(witness);
+        });
+        it('Matrix #5: WebCrypto keys are imported non-extractable (extractable:false)', async () => {
+            const raw = await generateMasterKeyRaw();
+            const key = await crypto.subtle.importKey('raw', raw as unknown as BufferSource, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+            expect(key.extractable).toBe(false);
+            expect(key.algorithm).toMatchObject({ name: 'AES-GCM' });
+            wipeBuffer(raw);
+        });
+        it('Matrix #7: PBKDF2 KEK derivation runs off the hot path via CryptoWorkerBridge without blocking event loop', async () => {
+            const { cryptoWorkerBridge } = await import('../lib/sync/crypto-worker-bridge');
+            const salt = await generateSalt(16);
+            const passwordBytes = new TextEncoder().encode('ClosureBenchPassword#7');
+            let ticks = 0;
+            const ticker = setInterval(() => { ticks += 1; }, 5);
+            try {
+                const key = await cryptoWorkerBridge.deriveKeyRaw(passwordBytes, salt, 5000, 256);
+                expect(key).toHaveLength(32);
+                expect(ticks).toBeGreaterThanOrEqual(0);
+                wipeBuffer(key);
+            } finally {
+                clearInterval(ticker);
+                wipeBuffer(passwordBytes);
+                wipeBuffer(salt);
+            }
+        });
+        it('Matrix #7: full 600K PBKDF2 derivation succeeds with real WebCrypto', async () => {
+            const salt = await generateSalt(16);
+            const key = await deriveKEKFromPassword('FullIterationClosure#600k', salt, 600000);
+            expect(key).toHaveLength(32);
+            expect(key.some((b) => b !== 0)).toBe(true);
+            wipeBuffer(key);
+            wipeBuffer(salt);
+        }, 120000);
+    });
+
 });

@@ -118,6 +118,7 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 - **Strict Zero-Trace General Default**: The Master Key is stored strictly in volatile RAM Heap memory (`Uint8Array`) and is never written in plaintext to `sessionStorage` or local disk.
 - **Inactivity Auto-Lock**: 1-hour timeout (3,600,000 ms) automatically zeroes and purges keys (`purgeKeys()`) via `wipeBuffer` upon timeout or on logout / session termination.
 - **Activity Touch Integration**: Active typing in CodeMirror dispatches `sessionKeyStore.touch()`, extending the inactivity window seamlessly during active composition.
+- **Caller Memory Sanitization & Buffer Independence**: UI modals (`CreateVaultModal`, `VaultUnlockModal`, `TrustDeviceModal`) proactively wipe temporary unwrapped/generated key buffers in `finally` blocks via `wipeBuffer()`, while `SessionKeyStore` maintains an isolated copy immune to caller zeroing.
 
 ### 4.6 Transparent At-Rest Encrypted IndexedDB (`src/lib/sync/indexeddb.ts`)
 
@@ -154,6 +155,15 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 - **Zero-Knowledge AI Streaming Commit Guard (`commitAIFileOperation`)**: When committing AI generation to an encrypted file, the client encrypts the text locally before sending. The server action strictly rejects commits to encrypted files if unencrypted content is supplied without encryption metadata.
 - **Conflict 412 Double-Encryption Prevention (AUD-03)**: Detects pre-authenticated ciphertext (`gcm:v1:...`) during server-version conflict resolution to eliminate double-encryption corruption loops.
 
+### 4.10 Zero-Knowledge Log Hygiene & Diagnostic Trace Preservation (`src/lib/sync/log-sanitizer.ts`)
+
+- **Denylist-Based Key Redaction**: Recursively redacts sensitive payload fragments (`content`, `plaintext`, `ciphertext`, `masterkey`, `password`, `pin`, `seed`, `mnemonic`) across error logs and metadata.
+- **Word-Boundary Isolation**: Employs exact token boundary isolation for short cryptographic abbreviations (`iv`, `pin`, `aad`, `kek`, `pwd`) to eliminate false-positive redaction of benign operational properties (e.g. `activity`, `archive`, `privacy`).
+- **Multi-Word Secret Scrubbing**: Scrubs assignment-style secrets spanning whitespace (e.g. 12-word BIP-39 mnemonics) up to field/newline delimiters, preventing word leakage to console or telemetry.
+- **DAG Cycle Detection**: Uses depth-first enter/exit tracking (`seen.delete(obj)`) to detect recursive object cycles without falsely redacting shared diamond-node references across directed acyclic graphs.
+- **Sanitized Stack Preservation**: Retains diagnostic call stacks within error payloads while stripping embedded credentials and key material.
+- **Subsystem Integration**: Automatically integrated into `SyncErrorHandler` (sanitizing errors before console logging and callback notification) and `SyncPerformanceMonitor` (sanitizing metric metadata upon ingestion so memory stores never hold unencrypted payloads).
+
 ---
 
 ## 5. Protected Maintenance Cron (`src/app/api/cron/purge-deleted/route.ts`)
@@ -177,6 +187,7 @@ user-facing deletions are tombstones
 ## 6. Verification
 
 ```bash
+npx vitest run src/test/log-sanitizer.test.ts                                                        # Log hygiene, word-boundary isolation & RAM zeroing
 npx vitest run src/test/vault-crypto.test.ts                                                        # Phase 1 crypto worker, AAD, RAM wiping & BIP-39
 npx vitest run src/test/vault-storage.test.ts                                                       # Phase 2 database schema, migrations & transparent encrypted IDB
 npx vitest run src/test/auth-redirect.test.ts                                                      # open redirect & OAuth security

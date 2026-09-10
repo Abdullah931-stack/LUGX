@@ -11,7 +11,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ConflictResolver, validateMarkdownSyntaxIntegrity } from './conflict-resolver';
+import { ConflictResolver } from './conflict-resolver';
+import { validateMarkdownSyntaxIntegrity } from './syntax-validator';
 import { IDBFile, SyncConflict } from './idb-types';
 
 describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
@@ -410,41 +411,41 @@ describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
         it('should validate clean Markdown with balanced code blocks and valid GFM tables', () => {
             const content = `# Title\n\n\`\`\`typescript\nconst x = 10;\n\`\`\`\n\n| Col 1 | Col 2 |\n| :--- | ---: |\n| Val 1 | Val 2 |\n`;
             const check = validateMarkdownSyntaxIntegrity(content);
-            expect(check.valid).toBe(true);
+            expect(check.isValid).toBe(true);
         });
 
         it('should detect unclosed fenced code block with backticks', () => {
             const unclosed = `# Title\n\`\`\`javascript\nconst a = 1;\nconsole.log(a);\n`;
             const check = validateMarkdownSyntaxIntegrity(unclosed);
-            expect(check.valid).toBe(false);
-            expect(check.reason).toContain('Unclosed fenced code block');
+            expect(check.isValid).toBe(false);
+            expect(check.syntaxErrors?.[0]).toContain('Unclosed fenced code block');
         });
 
         it('should detect unclosed fenced code block with tildes', () => {
             const unclosed = `# Title\n~~~python\ndef hello():\n    pass\n`;
             const check = validateMarkdownSyntaxIntegrity(unclosed);
-            expect(check.valid).toBe(false);
-            expect(check.reason).toContain('Unclosed fenced code block');
+            expect(check.isValid).toBe(false);
+            expect(check.syntaxErrors?.[0]).toContain('Unclosed fenced code block');
         });
 
         it('should ignore table delimiters inside closed code blocks', () => {
             const codeBlockWithTable = `# Code Block\n\`\`\`markdown\n| Not | A | Real | Table |\n| --- | - | ---- | ----- |\n\`\`\`\n`;
             const check = validateMarkdownSyntaxIntegrity(codeBlockWithTable);
-            expect(check.valid).toBe(true);
+            expect(check.isValid).toBe(true);
         });
 
         it('should detect orphan table delimiter row with no header', () => {
             const orphanTable = `# Section\n\n| :--- | ---: |\n| Val 1 | Val 2 |\n`;
             const check = validateMarkdownSyntaxIntegrity(orphanTable);
-            expect(check.valid).toBe(false);
-            expect(check.reason).toContain('Malformed GFM table');
+            expect(check.isValid).toBe(false);
+            expect(check.syntaxErrors?.[0]).toContain('Malformed GFM table');
         });
 
         it('should detect table delimiter column count mismatch', () => {
             const brokenColumns = `| Header 1 | Header 2 | Header 3 |\n| :--- | ---: |\n| Cell 1 | Cell 2 | Cell 3 |\n`;
             const check = validateMarkdownSyntaxIntegrity(brokenColumns);
-            expect(check.valid).toBe(false);
-            expect(check.reason).toContain('column count mismatch');
+            expect(check.isValid).toBe(false);
+            expect(check.syntaxErrors?.[0]).toContain('column count mismatch');
         });
 
         it('should cancel automatic 3-way merge if merge output produces unclosed code block', () => {
@@ -506,7 +507,7 @@ describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
         it('Adversarial Test: should correctly handle GFM tables containing escaped pipes in headers without false column mismatch', () => {
             const tableWithEscapedPipes = `| Function \\| Flag | Description |\n| :--- | :--- |\n| \`test(a \\| b)\` | Evaluates a or b |\n`;
             const check = validateMarkdownSyntaxIntegrity(tableWithEscapedPipes);
-            expect(check.valid).toBe(true);
+            expect(check.isValid).toBe(true);
 
             // Three-way merge with escaped pipes in table header
             const base = `# Docs\n\n| Function \\| Flag | Description |\n| :--- | :--- |\n| \`test()\` | Baseline |\n\nFooter`;
@@ -570,8 +571,8 @@ describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
             // Header has 2 real columns (with 1 escaped pipe in col 1). Delimiter has 3 columns -> true mismatch
             const brokenTableWithEscapedPipes = `| Command (-a \\| -b) | Action |\n| :--- | :--- | :--- |\n| run | start |\n`;
             const check = validateMarkdownSyntaxIntegrity(brokenTableWithEscapedPipes);
-            expect(check.valid).toBe(false);
-            expect(check.reason).toContain('column count mismatch (header: 2, delimiter: 3)');
+            expect(check.isValid).toBe(false);
+            expect(check.syntaxErrors?.[0]).toContain('column count mismatch (header: 2, delimiter: 3)');
         });
 
         it('Adversarial Test: should cleanly handle pure insertion in the middle between common prefix and suffix', () => {

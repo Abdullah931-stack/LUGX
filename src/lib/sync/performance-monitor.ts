@@ -1,6 +1,12 @@
 /**
  * Performance Monitor for Sync System
+ *
+ * Zero-Knowledge log hygiene: metric metadata is sanitized on ingestion so
+ * document plaintext, ciphertext, keys, seeds, and binary buffers never
+ * persist in the in-memory metric store or generated reports.
  */
+
+import { sanitizeMetadata } from './log-sanitizer';
 
 export type MetricType = 'sync_duration' | 'push_duration' | 'pull_duration' | 'conflict_resolution' | 'indexeddb_read' | 'indexeddb_write' | 'network_request';
 
@@ -49,7 +55,7 @@ export class SyncPerformanceMonitor {
         if (startTime === undefined) return 0;
 
         const duration = performance.now() - startTime;
-        this.recordMetric(type, duration, metadata);
+        this.recordMetric(type, duration, sanitizeMetadata(metadata));
         if (success) {
             this.successCount++;
         } else {
@@ -59,7 +65,7 @@ export class SyncPerformanceMonitor {
     }
 
     recordMetric(type: MetricType, duration: number, metadata?: Record<string, unknown>): void {
-        this.metrics.push({ type, duration, timestamp: Date.now(), metadata });
+        this.metrics.push({ type, duration, timestamp: Date.now(), metadata: sanitizeMetadata(metadata) });
         if (this.metrics.length > this.maxMetrics) this.metrics = this.metrics.slice(-this.maxMetrics);
     }
 

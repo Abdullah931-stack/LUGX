@@ -1,9 +1,15 @@
 /**
  * Sync Error Handler
- * 
+ *
  * Centralized error handling for the synchronization system.
  * Provides typed errors, recovery strategies, and user notifications.
+ *
+ * Zero-Knowledge log hygiene: all messages, metadata, and original errors are
+ * passed through sanitizeMetadata() so document plaintext, ciphertext, keys,
+ * seeds, and passwords never reach console output or the in-memory error log.
  */
+
+import { sanitizeMetadata, sanitizeLogMessage } from './log-sanitizer';
 
 /**
  * Types of sync errors
@@ -83,12 +89,18 @@ export class SyncErrorHandler {
     ): SyncError {
         return {
             type,
-            message,
+            message: sanitizeLogMessage(message),
             recoverable: options.recoverable ?? this.isRecoverableType(type),
             retryAfter: options.retryAfter,
             statusCode: options.statusCode,
-            metadata: options.metadata,
-            originalError: options.originalError,
+            metadata: sanitizeMetadata(options.metadata),
+            originalError: options.originalError
+                ? (sanitizeMetadata({
+                    name: options.originalError.name,
+                    message: options.originalError.message,
+                    stack: options.originalError.stack ? sanitizeLogMessage(options.originalError.stack) : undefined,
+                }) as unknown as Error)
+                : undefined,
             timestamp: Date.now(),
         };
     }
@@ -139,28 +151,34 @@ export class SyncErrorHandler {
      * Handle a sync error
      */
     async handle(error: SyncError): Promise<void> {
+        // Sanitize before persistence/console so callbacks and logs never see secrets
+        const safeError: SyncError = {
+            ...error,
+            message: sanitizeLogMessage(error.message),
+            metadata: sanitizeMetadata(error.metadata),
+        };
         // Log the error
-        this.logError(error);
-        console.error('[Sync Error]', error.type, error.message, error.metadata);
+        this.logError(safeError);
+        console.error('[Sync Error]', safeError.type, safeError.message, safeError.metadata);
 
         // Notify all registered callbacks
         for (const callback of this.errorCallbacks) {
             try {
-                callback(error);
+                callback(safeError);
             } catch (callbackError) {
-                console.error('[Sync Error] Callback error:', callbackError);
+                console.error('[Sync Error] Callback error:', sanitizeMetadata(callbackError));
             }
         }
 
         // Handle specific error types
-        switch (error.type) {
+        switch (safeError.type) {
             case SyncErrorType.AUTH_ERROR:
                 // Auth errors should redirect to login
-                await this.handleAuthError(error);
+                await this.handleAuthError(safeError);
                 break;
             case SyncErrorType.QUOTA_EXCEEDED:
                 // Quota errors need user intervention
-                await this.handleQuotaError(error);
+                await this.handleQuotaError(safeError);
                 break;
             case SyncErrorType.CONFLICT_ERROR:
                 // Conflicts are handled by the conflict resolver
@@ -175,7 +193,7 @@ export class SyncErrorHandler {
      * Handle authentication errors
      */
     private async handleAuthError(error: SyncError): Promise<void> {
-        console.warn('[Sync] Auth error - user may need to re-login', error);
+        console.warn('[Sync] Auth error - user may need to re-login', sanitizeMetadata({ type: error.type }));
         // The UI layer should handle redirecting to login
     }
 
@@ -183,7 +201,7 @@ export class SyncErrorHandler {
      * Handle quota exceeded errors
      */
     private async handleQuotaError(error: SyncError): Promise<void> {
-        console.warn('[Sync] Storage quota exceeded', error);
+        console.warn('[Sync] Storage quota exceeded', sanitizeMetadata({ type: error.type }));
         // The UI layer should prompt user to clean up storage
     }
 

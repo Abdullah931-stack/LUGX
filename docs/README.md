@@ -18,6 +18,7 @@ docs/
 ├── TECHNICAL_DEBT_REGISTER.md   ← living debt & decision register
 ├── architecture/                ← subsystem designs, protocols, state machines
 ├── reference/                   ← API references & implementation specs
+│   └── phase-16/                ← Phase 16: Hybrid Encryption & Zero-Knowledge Vault closure records
 ├── specs/                       ← design blueprints & requirements
 ├── guides/                      ← how-to guides & feature walkthroughs
 ├── records/                     ← dated engineering records (immutable history)
@@ -34,20 +35,20 @@ docs/
 | :--- | :--- |
 | [sync-lifecycle-architecture.md](./architecture/sync-lifecycle-architecture.md) | Offline sync lifecycle, user-scoped partitioning, explicit `SyncStatus` state machine, cryptographic gateway (`SyncCryptoGateway`) |
 | [queue-gc-rollback-architecture.md](./architecture/queue-gc-rollback-architecture.md) | Operations queue, exponential backoff/dead-letter, state-safe GC, rollback isolation |
-| [three-way-conflict-resolution.md](./architecture/three-way-conflict-resolution.md) | 3-way merge engine, base snapshots, false-conflict elimination, encrypted inbound gateway (`SyncCryptoGateway`) & conflict dialog |
+| [three-way-conflict-resolution.md](./architecture/three-way-conflict-resolution.md) | 3-way merge engine, base snapshots, false-conflict elimination, encrypted inbound gateway (`SyncCryptoGateway`), conflict dialog, and centralized syntax validation (`syntax-validator.ts`) |
 | [file-ownership-and-versioning.md](./architecture/file-ownership-and-versioning.md) | Server-side ownership enforcement, hierarchy safety, optimistic locking (412/428) |
 | [ai-quota-reservation-lifecycle.md](./architecture/ai-quota-reservation-lifecycle.md) | AI quota reservations, deduplication, 24h key rotation, settlement matrix (§4-D) |
 | [ai-atomic-commit-architecture.md](./architecture/ai-atomic-commit-architecture.md) | Transactional AI commit binding file update + quota settlement + version guard |
 | [editor-sync-orchestration.md](./architecture/editor-sync-orchestration.md) | Unified editor write controller: autosave gates, reconciliation, AI transaction guard, inbound remote decryption |
 | [ai-streaming-protocol.md](./architecture/ai-streaming-protocol.md) | NDJSON wire protocol, session FSM, adversarial hardening |
-| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, WebAuthn PRF Hardware Biometrics & 6-digit PIN Trusted Device KEK, AAD integrity, defensive RAM sanitization, device trust revocation via migration 0009, AI opt-in via migration 0010), cron purge |
+| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, WebAuthn PRF Hardware Biometrics & 6-digit PIN Trusted Device KEK, AAD integrity, defensive RAM sanitization, device trust revocation via migration 0009, AI opt-in via migration 0010, Zero-Knowledge log hygiene & volatile caller RAM zeroing), cron purge |
 
 ### Reference (`reference/`)
 
 | Document | Scope |
 | :--- | :--- |
-| [SYNC_API.md](./reference/SYNC_API.md) | REST contract for `/api/files/sync` and `/api/files/:id`, client-side sync events and cryptographic interfaces |
-| [SYNC_ARCHITECTURE.md](./reference/SYNC_ARCHITECTURE.md) | Layered sync system overview with Mermaid architecture & sequence flows, actual `useSync` hook contract, Phase 4 sync components, and `SyncCryptoGateway` |
+| [SYNC_API.md](./reference/SYNC_API.md) | REST contract for `/api/files/sync` and `/api/files/:id`, client-side sync events, cryptographic interfaces, `LogSanitizer`, `SyncErrorHandler` & `SyncPerformanceMonitor` contracts |
+| [SYNC_ARCHITECTURE.md](./reference/SYNC_ARCHITECTURE.md) | Layered sync system overview with Mermaid architecture & sequence flows, actual `useSync` hook contract, Phase 4 sync components, `SyncCryptoGateway`, `LogSanitizer`, and volatile caller buffer wiping |
 | [SYNC_SYSTEM.md](./reference/SYNC_SYSTEM.md) | Original sync delivery snapshot *(historical banner inside)* |
 | [UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md](./reference/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md) | G1–G11 readiness-gate compliance matrix, dual atomicity model, feature flags |
 | [test-database-isolation.md](./reference/test-database-isolation.md) | Phase 10: isolated Neon test branch — fail-closed guard, `test` vs `test:live` split, CI multi-stage pipeline, closure evidence |
@@ -55,10 +56,11 @@ docs/
 | [phase-12-auth-ownership-closure.md](./reference/phase-12-auth-ownership-closure.md) | Phase 12 closure: Open Redirect elimination, OAuth callback hardening, 404 anti-enumeration error mapping, atomic user sync |
 | [phase-13-stripe-webhooks-subscriptions-closure.md](./reference/phase-13-stripe-webhooks-subscriptions-closure.md) | Phase 13 closure: Durable idempotency ledger (`subscription_events`), atomic ACID transitions, terminal state protection, accurate period calculation |
 | [phase-14-supabase-storage-removal-closure.md](./reference/phase-14-supabase-storage-removal-closure.md) | Phase 14 closure: Dead-code elimination of unused Supabase Storage, database schema drop of `storage_path`, test fixtures clean-up |
-| [vault-phase-1-crypto-core-closure.md](./reference/vault-phase-1-crypto-core-closure.md) | Vault Phase 1 closure: Isolated Crypto Worker, 600K PBKDF2 iterations, AES-GCM-256 with mandatory AAD binding, BIP-39 12-word seed, SessionKeyStore auto-lock, defensive RAM sanitization |
-| [vault-phase-2-schema-and-storage-closure.md](./reference/vault-phase-2-schema-and-storage-closure.md) | Vault Phase 2 closure: PostgreSQL Cloud Schema, Transparent Encrypted IndexedDB, Zero Plaintext At-Rest, AAD binding, adversarial hardening & anti-overengineering decisions |
-| [vault-phase-3-ui-and-conversion-closure.md](./reference/vault-phase-3-ui-and-conversion-closure.md) | Vault Phase 3 closure: Interactive Dark-Themed Vault Modals, Editor Orchestrator Gating (`vault_locked`), Web Worker Pre-Save Encryption, Offline-First Dynamic File Conversion Engine, Client-Side Re-Encrypted Copy, WebAuthn PRF Hardware Biometrics & 6-Digit PIN, PostgreSQL Migration 0009 & Comprehensive 160-Test Suite |
-| [vault-phase-4-ai-gates-sync-closure.md](./reference/vault-phase-4-ai-gates-sync-closure.md) | Vault Phase 4 closure: Dual-Layer Zero-Knowledge AI Safety Gatekeepers (UI badge + HTTP 403 route + commit re-encryption), Non-Blocking Sync with Encrypted Conflict Isolation (`CONFLICT_LOCKED`), Strong Deterministic Encrypted ETag Generator, Markdown Syntax Integrity Validator (`syntax-validator.ts`), PostgreSQL Migration 0010 & 28-Test Suite |
+| [vault-phase-1-crypto-core-closure.md](./reference/phase-16/vault-phase-1-crypto-core-closure.md) | Vault Phase 1 closure: Isolated Crypto Worker, 600K PBKDF2 iterations, AES-GCM-256 with mandatory AAD binding, BIP-39 12-word seed, SessionKeyStore auto-lock, defensive RAM sanitization |
+| [vault-phase-2-schema-and-storage-closure.md](./reference/phase-16/vault-phase-2-schema-and-storage-closure.md) | Vault Phase 2 closure: PostgreSQL Cloud Schema, Transparent Encrypted IndexedDB, Zero Plaintext At-Rest, AAD binding, adversarial hardening & anti-overengineering decisions |
+| [vault-phase-3-ui-and-conversion-closure.md](./reference/phase-16/vault-phase-3-ui-and-conversion-closure.md) | Vault Phase 3 closure: Interactive Dark-Themed Vault Modals, Editor Orchestrator Gating (`vault_locked`), Web Worker Pre-Save Encryption, Offline-First Dynamic File Conversion Engine, Client-Side Re-Encrypted Copy, WebAuthn PRF Hardware Biometrics & 6-Digit PIN, PostgreSQL Migration 0009 & Comprehensive 160-Test Suite |
+| [vault-phase-4-ai-gates-sync-closure.md](./reference/phase-16/vault-phase-4-ai-gates-sync-closure.md) | Vault Phase 4 closure: Dual-Layer Zero-Knowledge AI Safety Gatekeepers (UI badge + HTTP 403 route + commit re-encryption), Non-Blocking Sync with Encrypted Conflict Isolation (`CONFLICT_LOCKED`), Strong Deterministic Encrypted ETag Generator, Markdown Syntax Integrity Validator (`syntax-validator.ts`), PostgreSQL Migration 0010 & 28-Test Suite |
+| [vault-phase-5-closure-test-matrix.md](./reference/phase-16/vault-phase-5-closure-test-matrix.md) | Vault Phase 5 closure: 10-Point Closure Test Matrix verification, Zero-Knowledge Log Sanitizer, Word-Boundary isolation, Volatile RAM Hygiene in modals, SessionKeyStore lock-in, and Official Plan Closure |
 | [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Bidi Line Plugin, 3 Direction Modes, Arabic/RTL safe decorations, live preview/source modes |
 | [phase-2-editor-replacement-tooling-closure.md](./reference/phase-2-editor-replacement-tooling-closure.md) | Phase 2 closure: TipTap replacement on editor page, EditorAdapter tooling integration, Multi-Range Search & Replace |
 | [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |

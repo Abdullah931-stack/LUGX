@@ -62,25 +62,25 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
 
     if (!isOpen) return null;
 
-    async function ensureMasterKey(): Promise<Uint8Array | null> {
-        let masterKeyRaw = sessionKeyStore.getMasterKeyRaw();
-        if (masterKeyRaw) return masterKeyRaw;
+    async function ensureMasterKey(): Promise<boolean> {
+        if (sessionKeyStore.isUnlocked()) return true;
 
         if (!password) {
             setError("يرجى إدخال كلمة مرور الخزنة الرئيسية لتأكيد التوثيق.");
-            return null;
+            return false;
         }
 
         const profileRes = await getUserVaultProfile();
         if (!profileRes.success || !profileRes.data) {
             setError("تعذر العثور على ملف تعريف الخزنة.");
-            return null;
+            return false;
         }
         const profile = profileRes.data;
 
         const passBytes = new TextEncoder().encode(password);
         const saltBytes = base64ToUint8Array(profile.keySalt);
         let kekPass: Uint8Array | null = null;
+        let masterKeyRaw: Uint8Array | null = null;
         try {
             kekPass = await cryptoWorkerBridge.deriveKeyRaw(
                 passBytes,
@@ -99,14 +99,15 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
                 `vault:pass:${userId}`
             );
             sessionKeyStore.setMasterKey(masterKeyRaw, profile.keyVersion || 1);
-            return masterKeyRaw;
+            return true;
         } catch {
             setError("كلمة مرور الخزنة غير صحيحة.");
-            return null;
+            return false;
         } finally {
             wipeBuffer(passBytes);
             wipeBuffer(saltBytes);
             if (kekPass) wipeBuffer(kekPass);
+            if (masterKeyRaw) wipeBuffer(masterKeyRaw);
         }
     }
 
@@ -132,8 +133,15 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
 
         setIsLoading(true);
         try {
-            const masterKeyRaw = await ensureMasterKey();
+            const isReady = await ensureMasterKey();
+            if (!isReady) {
+                setIsLoading(false);
+                return;
+            }
+
+            const masterKeyRaw = sessionKeyStore.getMasterKeyRaw();
             if (!masterKeyRaw) {
+                setError("تعذر الوصول إلى مفتاح الخزنة في الذاكرة.");
                 setIsLoading(false);
                 return;
             }

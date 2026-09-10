@@ -40,6 +40,9 @@ export { validateMarkdownSyntaxIntegrity } from './syntax-validator';
 export { SyncErrorType, syncErrorHandler, SyncErrorHandler, isRetryableError } from './error-handler';
 export type { SyncError, ErrorCallback } from './error-handler';
 
+// Log Sanitizer (Zero-Knowledge hygiene for logs and metric metadata)
+export { sanitizeLogMessage, sanitizeLogValue, sanitizeMetadata, isSensitiveLogKey, REDACTED } from './log-sanitizer';
+
 // Rollback
 export { syncRollback, SyncRollback, createSyncRollback } from './rollback';
 export type { SyncCheckpoint } from './rollback';

@@ -34,9 +34,9 @@ graph TD
 | `useEditorOrchestrator` | Centralized state controller, `vault_locked` hydration gate, pre-flight AI gating, and authoritative write gateway |
 | `Editor Page` | Main user interface and Standalone Markdown Editor surface (CodeMirror 6 / EditorAdapter) |
 | `AIToolbar` | Formatting tools, direction controls, and Zero-Knowledge AI shield privacy badge (`ai-encrypted-badge`) |
-| `CreateVaultModal` | Zero-Knowledge vault initialization, BIP-39 mnemonic generation & 3-word challenge |
-| `VaultUnlockModal` | Multi-modal unlock interface (Password, BIP-39 Seed, Hardware Biometrics PRF, 6-digit PIN) |
-| `TrustDeviceModal` | Dual-mode trusted device setup (Hardware Biometrics WebAuthn PRF or 6-digit PIN) |
+| `CreateVaultModal` | Zero-Knowledge vault initialization, BIP-39 mnemonic generation & 3-word challenge, volatile RAM zeroing in `finally` |
+| `VaultUnlockModal` | Multi-modal unlock interface (Password, BIP-39 Seed, Hardware Biometrics PRF, 6-digit PIN) with defensive `finally` buffer wiping |
+| `TrustDeviceModal` | Dual-mode trusted device setup (Hardware Biometrics WebAuthn PRF or 6-digit PIN) with read-only store access and local buffer wiping |
 | `VaultSecurityCard` | Account security settings panel, AI opt-in toggle (`allowAIOnEncryptedFiles`), and device trust revocation |
 | `FileContextMenu` | Dynamic encryption/decryption toggling and client-side re-encrypted copy execution |
 | `useSync Hook` | Scoped React synchronization integration |
@@ -49,7 +49,10 @@ graph TD
 |-----------|----------------|
 | `SyncManager` | Push/Pull coordination, non-blocking sync with `CONFLICT_LOCKED` quarantine, and reactive unlock auto-resolution |
 | `ConflictResolver` | Conflict detection, 3-way merge orchestration (LCS delta engine), and false conflict elimination |
-| `SyntaxValidator` (`syntax-validator.ts`) | Post-merge Markdown syntax integrity verification (code fence pairing, GFM table alignment, null-byte prevention) |
+| `SyntaxValidator` (`syntax-validator.ts`) | Centralized post-merge Markdown syntax integrity verification (code fence pairing, GFM table alignment, null-byte prevention) |
+| `LogSanitizer` (`log-sanitizer.ts`) | Zero-Knowledge log/metric hygiene, token boundary regex masking, DAG cycle-breaking, and sanitized stack preservation |
+| `SyncErrorHandler` (`error-handler.ts`) | Centralized typed error management, recovery strategies, and listener callbacks with automatic log sanitization |
+| `SyncPerformanceMonitor` (`performance-monitor.ts`) | In-memory performance metric profiling with metadata sanitization on ingestion |
 | `ConcurrencyManager` | In-memory mutex promise locking per file ID |
 | `ConnectionDetector` | Network monitoring with exponential backoff and jitter |
 | `Vault Server Actions` (`vault-actions.ts`) | Atomic vault profile CRUD, AI setting persistence (`updateVaultAISetting`), and remote device revocation |
@@ -71,7 +74,7 @@ graph TD
 | `SyncCryptoGateway` (`sync-crypto-gateway.ts`) | Transparent inbound decryption (server IV + MasterKey) & fresh outbound CSPRNG IV re-encryption |
 | `crypto-utils.ts` | Decoupled cryptographic primitives, W3C chunked CSPRNG & RAM sanitization (`wipeBuffer`) |
 | `crypto.worker.ts` | Isolated Web Worker for PBKDF2 (600,000 iter) & heavy symmetric offloading |
-| `SessionKeyStore` | Volatile RAM-only key manager with 1-hour auto-lock, unlock event subscription, and CodeMirror keystroke touch |
+| `SessionKeyStore` | Volatile RAM-only key manager with fixed 1-hour auto-lock, unlock event subscription, keystroke touch, and caller buffer isolation |
 | `BIP39 Mnemonic` (`mnemonic.ts`) | Standard 12-word seed generation & 4-bit SHA-256 checksum verification |
 
 ---

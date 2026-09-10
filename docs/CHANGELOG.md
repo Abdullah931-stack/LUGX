@@ -2,6 +2,37 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.25.2] - 2026-09-11 (Vault Phase 5 Closure: Hardened Verification, Security Auditing & 10-Point Test Matrix)
+
+### Hardened & Fixed - Zero-Knowledge Defense-in-Depth & Key Store Resilience
+
+- **Formal Closure of Vault Plan Phase 5 ([`docs/reference/phase-16/vault-phase-5-closure-test-matrix.md`](reference/phase-16/vault-phase-5-closure-test-matrix.md)):**
+  - Completed and verified all 10 criteria of the Closure Test Matrix from the Hybrid Vault Execution Plan (§4.5): Lazy-Unlock & Login, First Encrypt Setup with 3-word challenge, Vault Activation, BIP-39 Seed Recovery, RAM Sanitization, AI Hard Block, Worker Offloading (600K PBKDF2), Non-Blocking Conflict Isolation (`CONFLICT_LOCKED`), Syntax-Safe Diff3 Merge, and Zero-Knowledge Log Sanitation.
+  - Formally declared Phase 16 (Hybrid Encryption & Zero-Knowledge Vault - M1 through M5) as **CLOSED**.
+- **Zero-Knowledge Log Hygiene Engine (`src/lib/sync/log-sanitizer.ts`, `src/lib/sync/index.ts`):**
+  - Implemented `LogSanitizer` utility functions (`sanitizeLogMessage`, `sanitizeLogValue`, `sanitizeMetadata`, `isSensitiveLogKey`) and the canonical `REDACTED = '[REDACTED]'` token.
+  - Implemented exact token-boundary regex isolation (`(?:^|[^a-zA-Z0-9_])`) for short cryptographic abbreviations (`iv`, `pin`, `aad`, `kek`, `pwd`), eliminating false-positive redactions on benign operational properties (e.g. `activity`, `archive`, `privacy`).
+  - Implemented multi-word delimiter-bounded secret scrubbing (`[^,;\n}\]]+`), preventing whitespace truncation leaks in 12-word BIP-39 mnemonic seeds.
+  - Resolved circular object recursion using depth-first enter/exit tracking (`seen.delete(obj)` in `finally`), avoiding false redactions of shared diamond references in Directed Acyclic Graphs.
+  - Fixed duplicate quotation wrapping bug (`"$1${fragment}$1": $2${REDACTED}$2`), guaranteeing valid JSON structures post-sanitization.
+  - Preserved diagnostic call stacks on sanitized `Error` instances while stripping embedded credentials and secrets.
+- **Subsystem Log Sanitization Integration (`error-handler.ts`, `performance-monitor.ts`, `sync-manager.ts`, `session-key-store.ts`):**
+  - Sanitized `message`, `metadata`, and `originalError` across all `SyncErrorHandler.createSyncError` and `handle` execution paths, preventing secrets from reaching console output or callback listeners.
+  - Integrated `sanitizeMetadata` into `SyncPerformanceMonitor` (`recordMetric`, `stopTimer`), ensuring in-memory metric collections and diagnostic reports never retain document plaintext, ciphertext, or keys.
+  - Sanitized console error dispatches in `SyncManager` auto-resolution loops and `SessionKeyStore` listener notifications.
+- **Volatile Caller Memory Hygiene & RAM Wiping (`create-vault-modal.tsx`, `vault-unlock-modal.tsx`, `trust-device-modal.tsx`):**
+  - Enforced proactive memory zeroing of temporary derived/unwrapped Master Key buffers (`masterKeyRaw`, `unwrappedMasterKey`) across all unlock pathways (Password, BIP-39 Seed, Biometrics PRF, 6-digit PIN) inside `finally` blocks via `wipeBuffer`/`zeroSensitiveBuffer`.
+  - Refactored `TrustDeviceModal.ensureMasterKey` to return a boolean status, zeroing its local derivation buffer in `finally` while `handleSaveDeviceTrust` retrieves `sessionKeyStore.getMasterKeyRaw()` as a read-only reference without caller-side buffer wiping.
+- **Inactivity Timeout Mutation Elimination (`src/lib/sync/session-key-store.ts`):**
+  - Removed global `this.inactivityTimeoutMs` mutation from `storeMasterKeyRaw(key: Uint8Array)`, strictly locking the inactivity auto-lock window to 1 hour (3,600,000 ms) and eliminating accidental timeout corruption by arbitrary caller parameters.
+- **Centralized Markdown Syntax Integrity Architecture (`src/lib/sync/conflict-resolver.ts`, `src/lib/sync/syntax-validator.ts`):**
+  - Centralized structural Markdown verification in `syntax-validator.ts`, importing `validateMarkdownSyntaxIntegrity as validateSyntax` into `ConflictResolver` and pruning redundant legacy function duplicates.
+- **Comprehensive Verification & Testing:**
+  - Added unit test suite `src/test/log-sanitizer.test.ts` (12 tests passing).
+  - Added RAM sanitization, non-extractable WebCrypto key, and worker offloading tests to `src/test/vault-crypto.test.ts` (section 9).
+  - All 101 tests across vault and sync test suites pass (100% pass rate).
+  - `npx tsc --noEmit` exits clean with 0 errors.
+
 ## [1.25.1] - 2026-09-08 (Zero-Knowledge Encrypted Inbound Decryption & Conflict Plaintext Resolution)
 
 ### Fixed & Hardened - Encrypted Conflict Ingestion & Editor Surface Integrity
