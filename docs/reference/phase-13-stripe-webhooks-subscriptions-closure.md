@@ -10,46 +10,22 @@ The objective was to transform Stripe webhook ingestion and subscription lifecyc
 
 ## 2. Key Architectural Invariants & Upgrades
 
-```
-                       +-----------------------------------+
-                       |    Incoming Stripe Webhook POST   |
-                       +-----------------+-----------------+
-                                         |
-                                         v
-                       +-----------------------------------+
-                       | Signature & Timestamp Tolerance   |
-                       | (Fail-Closed: 300s window)        |
-                       +-----------------+-----------------+
-                                         |
-                                         v
-                       +-----------------------------------+
-                       | Idempotency Gate:                 |
-                       | 1. Fast-path in-memory Set        |
-                       | 2. Durable `subscription_events`  |
-                       +-----------------+-----------------+
-                                         |
-                        +----------------+----------------+
-                        | (If new event)                  | (If already recorded)
-                        v                                 v
-        +-------------------------------+   +-----------------------------+
-        | Atomic ACID Transaction (`tx`)|   | Return 200                  |
-        | - Terminal State Guard Check  |   | { received: true,           |
-        | - Period Extraction (end>start)|   |   duplicate: true }         |
-        | - Local DB Subscription Sync  |   +-----------------------------+
-        | - User Tier & Sub Upsert      |
-        | - Record `subscription_events`|
-        +---------------+---------------+
-                        |
-                        v
-        +-------------------------------+
-        | Update In-Memory Fast-Path    |
-        | (Zero-Allocation Set Eviction)|
-        +---------------+---------------+
-                        |
-                        v
-        +-------------------------------+
-        | Return 200 { received: true } |
-        +-------------------------------+
+```mermaid
+flowchart TD
+    A["Incoming Stripe Webhook POST"] --> B["Signature & Timestamp Tolerance<br/>(Fail-Closed: 300s window)"]
+    B --> C["Idempotency Gate:<br/>1. Fast-path in-memory Set<br/>2. Durable subscription_events"]
+    C -->|If already recorded| D["Return 200<br/>{ received: true, duplicate: true }"]
+    C -->|If new event| E["Atomic ACID Transaction (tx)<br/>• Terminal State Guard Check<br/>• Period Extraction (end > start)<br/>• Local DB Subscription Sync<br/>• User Tier & Sub Upsert<br/>• Record subscription_events"]
+    E --> F["Update In-Memory Fast-Path<br/>(Zero-Allocation Set Eviction)"]
+    F --> G["Return 200 { received: true }"]
+
+    style A fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    style B fill:#FFF3E0,stroke:#E65100,stroke-width:1.5px
+    style C fill:#EDE7F6,stroke:#512DA8,stroke-width:1.5px
+    style D fill:#ECEFF1,stroke:#455A64,stroke-width:1.5px
+    style E fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    style F fill:#F1F8E9,stroke:#558B2F,stroke-width:1.5px
+    style G fill:#E8F5E9,stroke:#2E7D32,stroke-width:1.5px
 ```
 
 ### 2.1 Durable Idempotency Ledger (`subscription_events`)

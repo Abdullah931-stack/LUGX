@@ -29,7 +29,7 @@ export interface EncryptedEnvelope {
 ```
 
 ### B. Mandatory AAD Binding
-Every file encryption binds Additional Authenticated Data formatted as `userId:fileId`. Decryption with mismatched AAD immediately throws `AADIntegrityError`, eliminating file swapping and tampering attacks.
+Every file encryption binds Additional Authenticated Data formatted with the domain prefix: `vault:file:${userId}:${fileId}`. Decryption with mismatched AAD immediately throws `AADIntegrityError`, eliminating file swapping and tampering attacks.
 
 ### C. Master Key Wrapping
 - **Password KEK**: `deriveKEKFromPassword(password.normalize('NFKC'), salt, 600000)`

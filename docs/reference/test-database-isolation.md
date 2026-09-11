@@ -23,10 +23,10 @@ remain in place as a **second layer of defense**, not a substitute.
 | `src/test/test-db-guard.ts` | Pure fail-closed guard (`assertSafeTestDatabaseUrl`) + identity helpers (`extractDbHost`, `extractNeonEndpointId`). No pg imports — unit-testable. |
 | `src/test/test-db.ts` | Calls the guard BEFORE creating the pg Pool and prints the branch identity line. |
 | `drizzle.config.test.ts` | `drizzle-kit push` target resolved from `TEST_DATABASE_URL ?? DATABASE_URL`. |
-| `src/test/test-db.isolation.test.ts` | Unit tests for guard rejection paths and env-loader leak prevention. |
-| `vitest.live.config.ts` | LIVE suite config. Owns `LIVE_TEST_FILES` — the single source of truth for suites requiring real environments (isolated Neon branch / live AI keys). |
+| `vitest.constants.mts` | Defines `LIVE_TEST_FILES` — the single source of truth for suites requiring real environments (isolated Neon branch / live AI keys). |
+| `vitest.live.config.mts` | LIVE suite config importing `LIVE_TEST_FILES`. |
 | `vitest.live.global-setup.ts` | Fail-closed gate for `test:live`: verifies guard rules AND branch reachability up front; refuses to start otherwise (no silent skips). |
-| `vitest.config.ts` | Default config — excludes every `LIVE_TEST_FILES` entry, so plain `npm run test` can structurally never touch a real environment. |
+| `vitest.config.mts` | Default config — excludes every `LIVE_TEST_FILES` entry, so plain `npm run test` can structurally never touch a real environment. |
 
 ## 2.1 Test execution commands
 
@@ -36,7 +36,7 @@ remain in place as a **second layer of defense**, not a substitute.
 | `npm run test:live` | The 15 hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch. |
 | `npm run test:all` | Both, sequentially. |
 
-LIVE suites registered in `vitest.live.config.ts` (15 hermetic database suites):
+LIVE suites registered in `vitest.constants.mts` (15 hermetic database suites):
 
 1. `src/app/api/files/[id]/route.putguard.test.ts`
 2. `src/server/actions/ai-ops.integrity.test.ts`

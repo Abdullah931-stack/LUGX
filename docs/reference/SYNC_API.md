@@ -17,14 +17,14 @@ Retrieve files modified since a specific timestamp.
 
 #### Request
 ```http
-GET /api/files/sync?since=1706745600000&cursor=abc&limit=50
+GET /api/files/sync?updated_after=2026-02-01T00:00:00.000Z&cursor=abc&limit=50
 Authorization: Bearer <token>
 ```
 
 #### Parameters
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `since` | number | ✓ | Unix timestamp (ms) |
+| `updated_after` | string | ✗ | ISO-8601 timestamp (e.g. `2026-02-01T00:00:00.000Z`) |
 | `cursor` | string | ✗ | Pagination cursor |
 | `limit` | number | ✗ | Max items (default: 50, max: 100) |
 
@@ -264,14 +264,14 @@ X-RateLimit-Reset: <epoch-seconds>
 
 ### Fetch updates since last sync
 ```typescript
-const response = await fetch('/api/files/sync?since=' + lastSyncedAt, {
+const response = await fetch('/api/files/sync?updated_after=' + encodeURIComponent(lastSyncedAtIso), {
   credentials: 'include', // Supabase session cookie
 });
 
 const { files, has_more, next_cursor, sync_timestamp } = await response.json();
 if (has_more && next_cursor) {
   // Fetch the next page
-  const next = await fetch(`/api/files/sync?since=${lastSyncedAt}&cursor=${encodeURIComponent(next_cursor)}`, {
+  const next = await fetch(`/api/files/sync?updated_after=${encodeURIComponent(lastSyncedAtIso)}&cursor=${encodeURIComponent(next_cursor)}`, {
     credentials: 'include',
   });
 }

@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-37%20Suites%20·%20488%2F488%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 488 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-53%20Suites%20·%20694%2F694%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 694 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
 </p>
 
@@ -45,6 +45,7 @@
   - [4. Smart Hybrid Database Client & Neon Isolated Test Infrastructure](#4-smart-hybrid-database-client--neon-isolated-test-infrastructure)
   - [5. Fail-Closed Stripe Subscription Lifecycle & State Machine](#5-fail-closed-stripe-subscription-lifecycle--state-machine)
   - [6. Scheduled Maintenance & Cron Automation](#6-scheduled-maintenance--cron-automation)
+  - [7. Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem](#7-zero-knowledge-cloud-vault--client-side-hybrid-encryption-subsystem)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -64,6 +65,7 @@
 - 🤖 **Resilient AI NDJSON Streaming:** High-performance inline preview card (`CMStreamingGhostWidget`) positioned at exact document offsets with 60fps in-place DOM updates, 3-state decision triggers (`Accept`, `Reject`, `Retry`), and a distributed 3-state circuit breaker with multi-key API rotation.
 - 💳 **Fail-Closed Stripe Subscriptions:** 8-state exhaustive webhook state machine with database-level uniqueness constraints preventing duplicate entitlements.
 - 🛡️ **Smart Hybrid Database Client:** Dual-protocol architecture supporting `@neondatabase/serverless` (HTTP/WebSocket) for Neon Cloud serverless edges and `pg.Pool` (TCP) for local Docker, CI, and development environments.
+- 🔒 **Zero-Knowledge Cloud Vault & Hybrid Encryption:** Client-side end-to-end encryption (`AES-GCM-256` with domain AAD `vault:file:${userId}:${fileId}`), Web Worker-isolated key derivation (`PBKDF2-SHA256` with 600K iterations), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, 12-word BIP-39 recovery seed, transparent local IndexedDB encryption, and dual-layer AI safety gatekeepers.
 
 ---
 
@@ -106,7 +108,7 @@ _In summary, adopting the custom synchronization engine reflects deliberate engi
 >
 > LUGX is designed, architected, and directed entirely by Abdullah through deliberate AI orchestration — every technical decision (data model, concurrency strategy, security posture, and trade-off analyses such as the Yjs evaluation in the [Architectural Statement](#architectural-statement-custom-ground-up-synchronization-engine)) originates from human judgment, domain expertise, and rigorous feasibility studies.
 >
-> Code implementation itself is delegated to and coordinated across advanced AI models under structured, specification-driven direction, with correctness enforced through systematic review gates (type-checking, linting, and a 488-test verification suite) backed by targeted manual review of critical logic paths — rather than manual line-by-line authorship. This is a conscious engineering methodology choice: the discipline demonstrated throughout [`docs/`](./docs) — the phased execution protocol, the living technical debt register, and the design-vs-reality divergence log — reflects the same rigor a hands-on implementation requires, combined with the proven capability to orchestrate, audit, and systematically steer LLMs to produce robust, rigorously tested software.
+> Code implementation itself is delegated to and coordinated across advanced AI models under structured, specification-driven direction, with correctness enforced through systematic review gates (type-checking, linting, and a 694-test verification suite) backed by targeted manual review of critical logic paths — rather than manual line-by-line authorship. This is a conscious engineering methodology choice: the discipline demonstrated throughout [`docs/`](./docs) — the phased execution protocol, the living technical debt register, and the design-vs-reality divergence log — reflects the same rigor a hands-on implementation requires, combined with the proven capability to orchestrate, audit, and systematically steer LLMs to produce robust, rigorously tested software.
 
 ---
 
@@ -118,13 +120,14 @@ _In summary, adopting the custom synchronization engine reflects deliberate engi
 | **Language & Typings**      | TypeScript 5 (Strict Mode)                                   | Full type-safety across client hooks, server actions, and DB schemas                              |
 | **Styling & Design System** | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons          | Dark Glassmorphism, tailored typography, and accessible UI controls                               |
 | **Markdown Editor & Bidi**  | Standalone CodeMirror 6 (`MarkdownEditor` & `EditorAdapter`) | Live AST preview decorations, line-level Bidi isolation, LTR code block lock                      |
-| **Database & ORM**          | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0007 (`src/lib/db/migrations/`) |
+| **Database & ORM**          | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0010 (`src/lib/db/migrations/`) |
 | **Authentication & Proxy**  | Supabase Auth SSR · Next.js 16 Edge Proxy (`src/proxy.ts`)   | Deep-link preservation, session renewal, and protected route gating                               |
 | **Offline Synchronization** | Custom Engine · IndexedDB (`textai_db_${userId}`)            | 3-Way Merge, ETag optimistic locks (HTTP 412), Bounded Queue, GC, DLQ                             |
 | **AI LLM Engine**           | Google Gemini SDK (`@google/generative-ai`)                  | NDJSON streaming, 2-phase quota reservation, 3-state circuit breaker                              |
+| **Client-Side Cryptography**| Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                  |
 | **Payment & Billing**       | Stripe SDK · Webhook Signature Verification                  | 8-state fail-closed state machine, partial unique constraint idempotency                          |
 | **Rate Limiting & Cache**   | Upstash Redis · Sliding Window Algorithm                     | Tier-based rate limiting on Auth, File Operations, and AI Streaming                               |
-| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | 37 unit/contract test suites (488 tests) + 15 live database test suites                           |
+| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | 53 unit, contract, and cryptographic test suites (694 tests) + 15 live database test suites        |
 
 ---
 
@@ -137,9 +140,10 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.23.0)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.25.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
+│   ├── Plans/                     # Code-derived roadmap & technical execution plans
 │   ├── architecture/              # Subsystem designs (sync, bidi, quota, streaming, security, etc.)
 │   ├── foundation/                # Verbatim founding design records & DESIGN_VS_REALITY.md
 │   ├── guides/                    # Operational how-tos (Stripe, AI models, Editor Bidi enhancements)
@@ -158,22 +162,26 @@ lugx/
 │   │   ├── editor/                # Toolbar, direction menu, search-replace, streaming ghost widget
 │   │   │   └── markdown/          # Standalone CodeMirror 6 editor, adapter, and Bidi plugins
 │   │   ├── sync/                  # Conflict resolution split-diff dialog and sync status indicators
-│   │   └── ui/                    # Base Radix UI primitives and modal dialogs
+│   │   ├── ui/                    # Base Radix UI primitives and modal dialogs
+│   │   └── vault/                 # Zero-Knowledge vault unlock, setup, PIN, and trust modals
 │   ├── config/                    # Static configuration (models.config.json, tiers.config.ts)
-│   ├── hooks/                     # Custom React hooks (useSync, useEditorOrchestrator, useAIStream)
+│   ├── hooks/                     # Custom React hooks (useSync, useEditorOrchestrator, useAIStream, useVault)
 │   ├── lib/
 │   │   ├── ai/                    # Gemini client, NDJSON stream handler, key rotation, prompts
 │   │   ├── db/                    # Drizzle schema, Smart Hybrid Client, and transactional runner
-│   │   │   └── migrations/        # Versioned Drizzle SQL migrations (0001–0007)
+│   │   │   └── migrations/        # Versioned Drizzle SQL migrations (0001–0010)
 │   │   ├── exporters/             # Pure Markdown and Plain Text file export strategies
 │   │   ├── parsers/               # File import validators, stream parsers, and PDF/Text extractors
 │   │   ├── stripe/                # Stripe client initialization and webhook handlers
-│   │   └── sync/                  # IndexedDB manager, 3-way merge, GC, rollback, and ETag engine
-│   ├── server/actions/            # Authenticated Next.js Server Actions (file-ops, ai-ops, ai-commit)
+│   │   ├── sync/                  # IndexedDB manager, 3-way merge, GC, rollback, and ETag engine
+│   │   ├── vault/                 # Vault schemas, key derivation, and local cache helpers
+│   │   └── workers/               # Isolated Crypto Web Worker (PBKDF2 600K & AES-GCM)
+│   ├── server/actions/            # Authenticated Next.js Server Actions (file-ops, ai-ops, ai-commit, vault-actions)
 │   ├── test/                      # Database integration test harnesses, fixtures, and unit suites
 │   └── proxy.ts                   # Next.js 16 Edge proxy for session validation and deep-link routing
-├── vitest.config.ts                # Default unit/contract test runner (isolated, fast feedback)
-├── vitest.live.config.ts           # LIVE integration test runner (isolated Neon test branch)
+├── vitest.config.mts              # Default unit/contract test runner (isolated, fast feedback)
+├── vitest.constants.mts           # Single source of truth for LIVE test suite registration
+├── vitest.live.config.mts         # LIVE integration test runner (isolated Neon test branch)
 └── package.json
 ```
 
@@ -265,7 +273,7 @@ The test suite is partitioned into two isolated tiers to prevent local tests fro
 | `npm run test:all`  | Both suites sequentially     | Comprehensive pre-deployment verification.                             |
 
 ```bash
-# Execute unit/contract test suites (37 test files, 488 tests)
+# Execute unit/contract test suites (53 test files, 694 tests)
 npm run test
 
 # Execute live database integration test suites
@@ -298,16 +306,26 @@ LUGX operates exclusively on pure **UTF-8 Markdown strings** (normalized via Uni
 
 ### 2. Offline-First Synchronization & 3-Way Merge Engine
 
-```
-[Local Edit in Editor] ──► [Save to IndexedDB (textai_db_${userId})] ──► [Append to Operation Log]
-                                                                                │
-[Background Sync Queue (Max 4 Workers)] ◄────────────────────────────────────────┘
-       │
-       ├──► Push to Server: PUT /api/files/:id (If-Match: local.etag)
-       │        ├── 200 OK ──► Update Local ETag & Advance Monotonic Version Counter
-       │        └── 412 Conflict ──► Fetch serverVersion ──► Execute 3-Way Line Merge
-       │                                                          ├── Non-Overlapping ──► Auto-Commit
-       │                                                          └── Overlapping ──► Interactive Diff Dialog
+```mermaid
+flowchart TD
+    A["Local Edit in Editor"] --> B["Save to IndexedDB<br/>(textai_db_${userId})"]
+    B --> C["Append to Operation Log"]
+    C --> D["Background Sync Queue<br/>(Max 4 Workers)"]
+    D --> E["Push to Server:<br/>PUT /api/files/:id (If-Match: local.etag)"]
+    E -->|200 OK| F["Update Local ETag & Advance Monotonic Version"]
+    E -->|412 Conflict| G["Fetch serverVersion & Execute 3-Way Line Merge"]
+    G -->|Non-Overlapping| H["Auto-Commit Merged State"]
+    G -->|Overlapping| I["Interactive Visual Split-Diff Dialog"]
+
+    style A fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    style B fill:#EDE7F6,stroke:#512DA8,stroke-width:1.5px
+    style C fill:#F1F8E9,stroke:#558B2F,stroke-width:1.5px
+    style D fill:#FFF3E0,stroke:#E65100,stroke-width:1.5px
+    style E fill:#E1F5FE,stroke:#0288D1,stroke-width:1.5px
+    style F fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    style G fill:#FFEBEE,stroke:#C62828,stroke-width:1.5px
+    style H fill:#E8F5E9,stroke:#2E7D32,stroke-width:1.5px
+    style I fill:#FFF9C4,stroke:#FBC02D,stroke-width:1.5px
 ```
 
 - **User-Partitioned IndexedDB (`src/lib/sync/indexeddb.ts`):** Client state is isolated per user (`textai_db_${userId}`), storing `files`, `operations`, and `sync_metadata`.
@@ -323,20 +341,28 @@ LUGX operates exclusively on pure **UTF-8 Markdown strings** (normalized via Uni
 
 ### 3. Real-Time AI Streaming & Dual-Phase Atomic Quota Lifecycle
 
-```
-User AI Request ──► [1. Reserve Quota (ai_reservations Lease in PostgreSQL)]
-                          │
-                          ├── Insufficient Quota ──► Return HTTP 429
-                          └── Quota Reserved ──► [2. Stream Gemini NDJSON via Route Handler]
-                                                       │
-         ┌─────────────────────────────────────────────┴─────────────────────────────────────────────┐
-         ▼                                                                                           ▼
-   [Stream Success]                                                                           [Stream Failure / Abort]
-   Inline Ghost Preview Card (`CMStreamingGhostWidget`)                                       Atomic Quota Refund
-   User Decision Trigger:                                                                     `GREATEST(usage - n, 0)`
-   ├── [Accept / Apply] ──► Atomic Commit Server Transaction & Local Replace
-   ├── [Reject] ──► Discard Preview (No Document Mutation)
-   └── [Retry] ──► Release Lease & Re-trigger Stream
+```mermaid
+flowchart TD
+    A["User AI Request"] --> B["1. Reserve Quota<br/>(ai_reservations Lease in PostgreSQL)"]
+    B -->|Insufficient Quota| C["Return HTTP 429 Rate Limit"]
+    B -->|Quota Reserved| D["2. Stream Gemini NDJSON via Route Handler"]
+    D -->|Stream Failure / Abort| E["Atomic Quota Refund<br/>GREATEST(usage - n, 0)"]
+    D -->|Stream Success| F["Inline Ghost Preview Card<br/>(CMStreamingGhostWidget)"]
+    F --> G{"User Decision Trigger"}
+    G -->|Accept / Apply| H["Atomic Commit Server Transaction & Local Replace"]
+    G -->|Reject| I["Discard Preview (No Document Mutation)"]
+    G -->|Retry| J["Release Lease & Re-trigger Stream"]
+
+    style A fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    style B fill:#EDE7F6,stroke:#512DA8,stroke-width:1.5px
+    style C fill:#FFEBEE,stroke:#C62828,stroke-width:1.5px
+    style D fill:#E1F5FE,stroke:#0288D1,stroke-width:1.5px
+    style E fill:#FFEBEE,stroke:#C62828,stroke-width:1.5px
+    style F fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    style G fill:#FFF3E0,stroke:#E65100,stroke-width:1.5px
+    style H fill:#E8F5E9,stroke:#2E7D32,stroke-width:1.5px
+    style I fill:#ECEFF1,stroke:#455A64,stroke-width:1.5px
+    style J fill:#FFF9C4,stroke:#FBC02D,stroke-width:1.5px
 ```
 
 - **Dual-Phase Quota Reservation (`src/server/actions/ai-ops.ts`):**
@@ -372,6 +398,53 @@ User AI Request ──► [1. Reserve Quota (ai_reservations Lease in PostgreSQL
 - **Automated Soft-Delete Purge (`src/app/api/cron/purge-deleted/route.ts`):** Permanently purges documents and folders marked as deleted (`deletedAt`) beyond the 30-day retention window.
 - **Secure Dispatch:** Protected by Bearer token validation against `CRON_SECRET` and dispatched daily at 03:00 UTC via `.github/workflows/cron.yml`.
 
+### 7. Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem
+
+LUGX delivers a dual-tier client-side Zero-Knowledge encryption engine that keeps sensitive documents end-to-end encrypted at rest and in transit while maintaining full offline productivity.
+
+```mermaid
+flowchart TD
+    Editor["Editor Surface (CodeMirror 6)<br/>Plaintext Markdown in volatile RAM"]
+    
+    Standard["Standard File (isEncrypted: false)"]
+    Vault["Vault File (isEncrypted: true)"]
+    
+    Editor --> Standard
+    Editor --> Vault
+    
+    Standard --> SyncPlain["TLS Sync to PostgreSQL"]
+    Vault --> Worker["Crypto Web Worker (PBKDF2 600K / AES-GCM-256)<br/>Non-Extractable Keys · Buffer Zeroing (.fill(0))"]
+    
+    Worker --> IDBLocal["Encrypted Local IndexedDB (LocalDeviceKey)"]
+    Worker --> CloudCipher["Encrypted Envelope over TLS (AES-GCM-256)<br/>AAD: vault:file:${userId}:${fileId}"]
+    
+    Vault -.-> AIGate["AI Gatekeeper: HTTP 403 & UI Suppression<br/>Prevents Plaintext Leakage to AI Models"]
+
+    style Editor fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    style Standard fill:#F1F8E9,stroke:#558B2F,stroke-width:1.5px
+    style Vault fill:#FFF3E0,stroke:#E65100,stroke-width:1.5px
+    style Worker fill:#FFF9C4,stroke:#FBC02D,stroke-width:2px
+    style IDBLocal fill:#EDE7F6,stroke:#512DA8,stroke-width:1.5px
+    style CloudCipher fill:#ECEFF1,stroke:#37474F,stroke-width:2px
+    style AIGate fill:#FFEBEE,stroke:#C62828,stroke-width:1.5px
+```
+
+- **Dual-Tier Encryption Architecture:**
+  - **Always-On Local At-Rest:** Transparent local encryption of IndexedDB tables using an ephemeral `LocalDeviceKey` generated on device.
+  - **Zero-Knowledge Cloud Vault:** Sensitive documents are encrypted client-side using `AES-GCM-256` before hitting any network socket. PostgreSQL stores only ciphertext envelopes; the server possesses zero knowledge of the encryption keys.
+- **Crypto Web Worker Isolation (`src/lib/workers/crypto.worker.ts`):**
+  - CPU-intensive `PBKDF2-SHA256` derivation (600,000 rounds) is offloaded to a background worker to eliminate UI thread latency.
+  - Cryptographic keys use non-extractable WebCrypto handles (`extractable: false`).
+  - Temporary memory buffers are proactively wiped via `.fill(0)` in `finally` blocks across all key accessors.
+- **Hardware Biometrics & 12-Word BIP-39 Recovery:**
+  - **WebAuthn PRF & 6-Digit PIN:** Users can register trusted hardware authenticators (Touch ID, Windows Hello, Face ID) or use a 6-digit Quick PIN for instant unlock.
+  - **BIP-39 Recovery Seed:** The Master Key is dual-wrapped with both the password and a 12-word mnemonic phrase, allowing account recovery without re-encrypting existing files.
+- **Non-Blocking Sync & Conflict Isolation:**
+  - Cloud conflicts on encrypted files while the vault is locked enter a safe `CONFLICT_LOCKED` state without blocking unencrypted file synchronization.
+  - Once unlocked, a 3-way Diff3 merge executes with structural syntax integrity checks (`syntax-validator.ts`) before re-encrypting with a fresh CSPRNG IV.
+- **Dual-Layer AI Safety Gatekeepers:**
+  - Strict UI badge suppression and server-side HTTP 403 rejection on `/api/ai/stream` for encrypted files prevent accidental plaintext leaks to external model providers.
+
 ---
 
 ## Security Architecture
@@ -384,6 +457,7 @@ User AI Request ──► [1. Reserve Quota (ai_reservations Lease in PostgreSQL
 | **Tenant Resource Isolation**   | SQL ownership predicates (`WHERE id = :id AND user_id = :userId`)            | Prevents IDOR and resource enumeration by returning uniform `404 Not Found` for foreign IDs.  |
 | **Financial Webhook Security**  | Cryptographic HMAC signature verification (`stripe.webhooks.constructEvent`) | Mitigates replay attacks and validates webhook payload authenticity before DB mutation.       |
 | **Database Injection Safety**   | Drizzle ORM parameterized SQL queries                                        | Eliminates SQL injection across all dynamic query and transaction paths.                      |
+| **Zero-Knowledge Encryption**   | AES-GCM-256 · PBKDF2 600K Web Worker · WebAuthn PRF · BIP-39                 | End-to-end Zero-Knowledge storage, domain AAD (`vault:file:${userId}:${fileId}`), RAM zeroing. |
 
 ---
 
@@ -394,7 +468,8 @@ Comprehensive architectural designs, specifications, guides, and engineering rec
 | Directory                                    | Content Scope                             | Key Documents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | -------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`docs/architecture/`](./docs/architecture/) | Subsystem architectural designs           | [`sync-lifecycle-architecture.md`](./docs/architecture/sync-lifecycle-architecture.md), [`editor-sync-orchestration.md`](./docs/architecture/editor-sync-orchestration.md), [`ai-atomic-commit-architecture.md`](./docs/architecture/ai-atomic-commit-architecture.md), [`ai-quota-reservation-lifecycle.md`](./docs/architecture/ai-quota-reservation-lifecycle.md), [`ai-streaming-protocol.md`](./docs/architecture/ai-streaming-protocol.md), [`three-way-conflict-resolution.md`](./docs/architecture/three-way-conflict-resolution.md), [`security-and-rate-limiting.md`](./docs/architecture/security-and-rate-limiting.md) |
-| [`docs/reference/`](./docs/reference/)       | API contracts & phase closure records     | [`SYNC_API.md`](./docs/reference/SYNC_API.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`phase-1` through `phase-14` closure reports](./docs/reference/)                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| [`docs/Plans/`](./docs/Plans/)               | Code-derived roadmap & technical plans    | [`TECHNICAL_EXECUTION_PLAN.md`](./docs/Plans/TECHNICAL_EXECUTION_PLAN.md), [`HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`](./docs/Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md), [`MARKDOWN_EDITOR_MIGRATION_PLAN.md`](./docs/Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) |
+| [`docs/reference/`](./docs/reference/)       | API contracts & phase closure records     | [`SYNC_API.md`](./docs/reference/SYNC_API.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`phase-1` through `phase-16` closure reports](./docs/reference/)                                                                                                                                                                                                                                                                                                                                                                                                       |
 | [`docs/specs/`](./docs/specs/)               | Living technical specifications           | [`Plan for an improved synchronization system.md`](./docs/specs/Plan%20for%20an%20improved%20synchronization%20system.md), [`AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md`](./docs/specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md), [`UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md`](./docs/specs/UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md)                                                                                                                                                                                                                                                                                        |
 | [`docs/guides/`](./docs/guides/)             | Developer & operational how-tos           | [`STRIPE_INTEGRATION.md`](./docs/guides/STRIPE_INTEGRATION.md), [`STRIPE_SETUP.md`](./docs/guides/STRIPE_SETUP.md), [`AI_MODELS_CONFIG.md`](./docs/guides/AI_MODELS_CONFIG.md), [`Editor_UI_Enhancements.md`](./docs/guides/Editor_UI_Enhancements.md), [`Search_Replace_Feature.md`](./docs/guides/Search_Replace_Feature.md)                                                                                                                                                                                                                                                                                                     |
 | [`docs/foundation/`](./docs/foundation/)     | Verbatim founding design & divergence log | [`DESIGN_VS_REALITY.md`](./docs/foundation/DESIGN_VS_REALITY.md), [`Project_Structure.md`](./docs/foundation/Project_Structure.md), [`LUGX platform subscription plans.md`](./docs/foundation/LUGX%20platform%20subscription%20plans.md)                                                                                                                                                                                                                                                                                                                                                                                           |

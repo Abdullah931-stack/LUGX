@@ -8,8 +8,8 @@ Advanced search and replace functionality integrated into the LUGX text editor w
 ## ✨ Key Features
 
 ### Search Behavior
-- **Smart Debouncing**: Search triggers only after **2 seconds of complete typing stop**
-- **Instant Search**: Press `Enter` to search immediately
+- **Smart Debouncing**: Search triggers after **300ms of typing stop**
+- **Instant Search**: Press `Enter` to search immediately or cycle to next match
 - **Case Sensitivity**: Toggle with "Aa" button
 - **Match Navigation**: Previous/Next buttons with live counter
 - **Auto-highlighting**: Selected matches highlighted in editor
@@ -72,10 +72,10 @@ useEffect(() => {
         return;
     }
 
-    // Wait 2 seconds after typing stops
+    // Wait 300ms after typing stops
     searchTimeoutRef.current = setTimeout(() => {
         findMatches();
-    }, 2000);
+    }, 300);
 
     // Cleanup on unmount or re-render
     return () => {
@@ -89,8 +89,8 @@ useEffect(() => {
 **Why This Works:**
 1. Every keystroke triggers the effect
 2. Previous timeout is **cleared immediately**
-3. New 2-second timer starts
-4. Search only executes if 2 seconds pass without new input
+3. New 300ms timer starts
+4. Search executes if 300ms pass without new input
 5. Enter key bypasses debounce for instant results
 
 ---
@@ -99,7 +99,7 @@ useEffect(() => {
 
 - **Position**: Search button between Copy and Export in toolbar
 - **Theme**: Dark mode with glassmorphism (`bg-zinc-900/60`)
-- **Placeholder**: "Find... (Press Enter or wait 2s)" - clear user guidance
+- **Placeholder**: "بحث في المستند (Enter للتنقل)..." - bilingual Arabic interface
 - **Responsive**: Adapts to mobile and desktop
 - **RTL/LTR**: Bidirectional text support
 

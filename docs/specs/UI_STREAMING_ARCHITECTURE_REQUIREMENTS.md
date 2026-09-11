@@ -81,15 +81,22 @@ Rather than modifying the underlying document model, the stream is rendered thro
 
 ### 3.2 Granular Range Handling (Partial Selection vs Full Document)
 
-```
-Document Model:
-+------------------------------------+-----------------------------+------------------------------------+
-|  Preceding Text [0, from)          | Target Selection [from, to] | Subsequent Text (to, length]       |
-|  (Untouched & Rendered Normally)   | (Dimmed via Preview Target) | (Untouched & Rendered Normally)    |
-+------------------------------------+-----------------------------+------------------------------------+
-                                      |
-                                      +--> Preview Overlay at 'from':
-                                           [ Live Streaming AI Text... | ]
+```mermaid
+flowchart LR
+    subgraph DocModel["Document Buffer [0, length]"]
+        direction LR
+        Pre["Preceding Text [0, from)<br/>(Untouched & Rendered Normally)"]
+        Target["Target Selection [from, to]<br/>(Dimmed via Preview Target)"]
+        Post["Subsequent Text (to, length]<br/>(Untouched & Rendered Normally)"]
+        Pre --- Target --- Post
+    end
+
+    Target -.-> Ghost["Preview Inline Widget at 'from':<br/><b>Live Streaming AI Ghost Markdown...</b>"]
+
+    style Pre fill:#F1F8E9,stroke:#558B2F,stroke-width:1.5px
+    style Target fill:#FFF3E0,stroke:#E65100,stroke-width:1.5px
+    style Post fill:#F1F8E9,stroke:#558B2F,stroke-width:1.5px
+    style Ghost fill:#E1F5FE,stroke:#0288D1,stroke-width:2px
 ```
 
 1. **When text IS selected ($from \neq to$):**

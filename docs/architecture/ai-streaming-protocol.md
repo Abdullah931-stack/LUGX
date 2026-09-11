@@ -154,6 +154,6 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 ## 5. Verification & Test Evidence
 
 The implementation is verified with automated tests covering all parser, FSM, and adversarial edge cases:
-- `src/test/ai-stream-parser.test.ts`: 11 tests covering NDJSON framing, multi-byte UTF-8, incomplete EOF (`failed_incomplete_stream`), duplicate `done`, unknown frames, buffer overflow (`stream_buffer_overflow`), and signal aborts.
+- `src/test/ai-stream-parser.test.ts`: 9 tests covering NDJSON framing, multi-byte UTF-8, incomplete EOF (`failed_incomplete_stream`), duplicate `done`, unknown frames, buffer overflow (`stream_buffer_overflow`), and signal aborts.
 - `src/test/ai-stream-session.test.ts`: 12 tests covering canonical FSM lifecycle, terminal state identification, illegal transitions, generation/version mismatch assertions, conflict rollback, and preview buffer boundaries.
 - `src/test/vault-sync-ai-gate.test.ts`: 28 tests verifying Zero-Knowledge AI route rejection, atomic commit re-encryption guard, user vault setting updates, syntax validator, non-blocking sync conflict isolation, and adversarial multi-device edge cases.

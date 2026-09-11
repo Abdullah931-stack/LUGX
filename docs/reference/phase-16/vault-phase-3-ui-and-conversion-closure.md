@@ -29,18 +29,15 @@ Key achievements:
 To enable offline vault unlocking, `IndexedDBManager` caches the user's encrypted vault profile in the `sync_metadata` store:
 ```typescript
 await indexedDBManager.saveCachedVaultProfile({
-    id: profile.id,
     userId: profile.userId,
-    wrappedMasterKey: profile.wrappedMasterKey,
-    salt: profile.salt,
-    iv: profile.iv,
-    authTag: profile.authTag,
-    keyDerivationIterations: profile.keyDerivationIterations,
-    recoveryWrappedKey: profile.recoveryWrappedKey,
+    encryptedMasterKey: profile.encryptedMasterKey,
+    recoveryEncryptedMasterKey: profile.recoveryEncryptedMasterKey,
+    keySalt: profile.keySalt,
     recoverySalt: profile.recoverySalt,
-    recoveryIv: profile.recoveryIv,
-    recoveryAuthTag: profile.recoveryAuthTag,
-    version: profile.version,
+    kdfIterations: profile.kdfIterations,
+    keyVersion: profile.keyVersion,
+    deviceTrustEpoch: profile.deviceTrustEpoch,
+    allowAIOnEncryptedFiles: profile.allowAIOnEncryptedFiles,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
 });

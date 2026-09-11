@@ -10,7 +10,7 @@ Phase 12 enforces deterministic security hardening across all authentication, OA
 
 ### 2.1. Safe Redirect Path Resolution (`resolveSafeRedirectPath`)
 
-Located in [`src/lib/auth/safe-redirect.ts`](file:///d:/Projects/LUGX/src/lib/auth/safe-redirect.ts), this shared validator provides deterministic protection against all known redirect bypass techniques:
+Located in [`src/lib/auth/safe-redirect.ts`](../../src/lib/auth/safe-redirect.ts), this shared validator provides deterministic protection against all known redirect bypass techniques:
 
 ```typescript
 export function resolveSafeRedirectPath(
@@ -31,7 +31,7 @@ export function resolveSafeRedirectPath(
 
 ### 2.2. OAuth Callback Hardening (`/auth/callback`)
 
-The callback handler in [`src/app/auth/callback/route.ts`](file:///d:/Projects/LUGX/src/app/auth/callback/route.ts):
+The callback handler in [`src/app/auth/callback/route.ts`](../../src/app/auth/callback/route.ts):
 - Cleans and verifies `redirectTo` via `resolveSafeRedirectPath`.
 - Replaces blind trust in `x-forwarded-host` with canonical trusted origin derived from `process.env.NEXT_PUBLIC_APP_URL || origin`.
 - Constructs redirection URLs using standard `new URL(safeRedirectPath, trustedOrigin)`.
@@ -39,12 +39,12 @@ The callback handler in [`src/app/auth/callback/route.ts`](file:///d:/Projects/L
 
 ### 2.3. Middleware Context & Deep Link Preservation
 
-In [`src/middleware.ts`](file:///d:/Projects/LUGX/src/middleware.ts) *(Note: In Next.js 16, route protection and deep-link preservation are implemented in the Edge proxy at [`src/proxy.ts`](file:///d:/Projects/LUGX/src/proxy.ts))*:
+In [`src/middleware.ts`](../../src/middleware.ts) *(Note: In Next.js 16, route protection and deep-link preservation are implemented in the Edge proxy at [`src/proxy.ts`](../../src/proxy.ts))*:
 - Preserves search queries on protected route redirects (`${request.nextUrl.pathname}${request.nextUrl.search}`) so users seamlessly retain their full editor / query state after authentication.
 
 ### 2.4. OAuth Client, User Sync & Dead Code Elimination
 
-In [`src/server/actions/auth-actions.ts`](file:///d:/Projects/LUGX/src/server/actions/auth-actions.ts):
+In [`src/server/actions/auth-actions.ts`](../../src/server/actions/auth-actions.ts):
 - `signInWithGoogle(redirectTo?: string)` verifies and resolves `redirectTo` with `resolveSafeRedirectPath` before appending to OAuth callback options.
 - `syncUserToDatabase()` uses atomic single-step `db.insert(schema.users).values(...).onConflictDoUpdate(...)` on `users.id` and `.onConflictDoNothing()` on `schema.usage` to guarantee zero-race concurrency during rapid OAuth logins.
 - Unused legacy email authentication functions (`signInWithEmail`, `signUpWithEmail`, `normalizeAuthKey`) have been permanently removed to eliminate dead attack surface.

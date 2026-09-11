@@ -64,7 +64,7 @@ flowchart TD
   - The system throws an `AllKeysExhaustedError` reporting the exact cooldown time remaining until the earliest key unlocks.
 
 ### D. Distributed Model Circuit Breaker
-- If a model encounters consecutive 503 (Service Unavailable) or high-demand errors, the distributed Circuit Breaker trips to `OPEN` in Redis for 1 hour (`DEFAULT_CIRCUIT_TTL_SECONDS = 3600`).
+- If a model encounters consecutive 503 (Service Unavailable) or high-demand errors, the distributed Circuit Breaker trips to `OPEN` in Redis for 10 minutes (`DEFAULT_CIRCUIT_TTL_SECONDS = 600`).
 - Subsequent requests take the Redis Fast-Path to immediately route to the configured fallback model without waiting for primary model timeouts.
 
 ### E. Rotatable vs Non-Rotatable Errors (Fail-Fast)

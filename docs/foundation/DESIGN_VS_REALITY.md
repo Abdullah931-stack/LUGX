@@ -24,6 +24,7 @@
 | Editor search & replace with debounced matching | `src/components/editor/search-replace.tsx` (UTF-16 document offsets, multi-range atomic transactions) | Mentioned as a control tool only; no behavioral spec |
 | Bidi & Text Direction Engine | `src/components/editor/markdown/bidi-line-plugin.ts`, `src/components/editor/direction-menu.tsx`, `src/components/editor/editor-toolbar.tsx` (Line-level direction isolation, RTL/LTR/Auto toggle, code block LTR lock, bilingual typography) | Absent — design had no explicit bidirectional layout specification |
 | Smart Hybrid Database Client | `src/lib/db/index.ts`, `src/lib/db/transactional.ts`, `src/test/test-db.ts` (Dual protocol driver: `@neondatabase/serverless` over HTTP/WebSocket for Neon Cloud, `pg.Pool` over TCP for local Docker/CI testing) | Absent — design assumed single database connection mode |
+| Zero-Knowledge Vault & Client-Side Hybrid Encryption | `src/lib/vault/*`, `src/hooks/use-vault.ts`, `src/components/vault/*`, `src/lib/sync/sync-manager.ts` (PBKDF2 600K Web Worker offloading, WebAuthn PRF Hardware Biometrics, 6-digit Quick PIN, BIP-39 recovery seed, transparent encrypted IndexedDB caching, device trust epochs, and strict AI safety gatekeepers blocking encrypted file processing) | Absent — founding design only envisioned basic plaintext storage with TLS in transit |
 
 ## 2. Design Elements Removed, Replaced, or Excluded
 

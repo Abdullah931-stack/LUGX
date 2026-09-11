@@ -16,6 +16,7 @@ docs/
 ├── DOCUMENTATION_GUIDELINES.md  ← repository-visible authoring standards
 ├── CHANGELOG.md                 ← release history
 ├── TECHNICAL_DEBT_REGISTER.md   ← living debt & decision register
+├── Plans/                       ← code-derived roadmap & technical execution plans
 ├── architecture/                ← subsystem designs, protocols, state machines
 ├── reference/                   ← API references & implementation specs
 │   └── phase-16/                ← Phase 16: Hybrid Encryption & Zero-Knowledge Vault closure records
@@ -28,6 +29,14 @@ docs/
 ---
 
 ## 2. Document Index
+
+### Plans (`Plans/`) — verified roadmap & technical execution plans
+
+| Document | Scope |
+| :--- | :--- |
+| [TECHNICAL_EXECUTION_PLAN.md](./Plans/TECHNICAL_EXECUTION_PLAN.md) | Code-based technical execution plan covering all 20 phases (closed foundations, active session contract, pending integration & browser automation) |
+| [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](./Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan (Milestones M1–M5 closed) |
+| [MARKDOWN_EDITOR_MIGRATION_PLAN.md](./Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6 closed) |
 
 ### Architecture (`architecture/`) — living subsystem documentation
 
@@ -140,7 +149,7 @@ docs/
 npm run lint            # static analysis & ESLint 9 code quality gate
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (45 files, 629 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (53 files, 694 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (via vitest.live.config.mts)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation

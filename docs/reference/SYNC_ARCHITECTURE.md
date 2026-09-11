@@ -132,7 +132,7 @@ sequenceDiagram
     participant Orch as useEditorOrchestrator
     participant CM as CodeMirror Surface
 
-    Sync->>API: GET /api/files/sync?since=lastSync
+    Sync->>API: GET /api/files/sync?updated_after=lastSync
     API-->>Sync: Updated files list
     loop For each updated file
         alt Local file is clean & remote is newer

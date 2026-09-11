@@ -2,6 +2,41 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.25.3] - 2026-09-11 (Comprehensive Documentation Audit, Public Plans Tracking & Subsystem Alignment)
+
+### Added & Aligned - Documentation Governance, Public Plans & Architectural Parity
+
+- **Public Plans Directory & Translation (`docs/Plans/`):**
+  - Created tracked `docs/Plans/` directory containing verified, comprehensive English translations of core architectural roadmaps:
+    - [`TECHNICAL_EXECUTION_PLAN.md`](Plans/TECHNICAL_EXECUTION_PLAN.md): 20-phase technical execution roadmap derived directly from active source code, establishing exact phase status (16 phases `CLOSED`, Phase 9 `ACTIVE` session governance standard, Phases 17–18 `IN PROGRESS` / `PARTIALLY DONE`, and Phases 19–20 `PENDING`).
+    - [`HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`](Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md): Complete architectural plan for the Zero-Knowledge Cloud Vault and Dual-Tier Hybrid Encryption engine, confirming 100% closure of Milestones M1 through M5.
+    - [`MARKDOWN_EDITOR_MIGRATION_PLAN.md`](Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md): Complete architectural plan for the native CodeMirror 6 Markdown editor migration, confirming 100% closure of Phases 1 through 6 and elimination of legacy `@tiptap/*` dependencies.
+  - Preserved untracked local roadmap repository in `docs/.Plans/` for private planning without Git exposure.
+- **Founding Divergence Register Update (`docs/foundation/DESIGN_VS_REALITY.md`):**
+  - Added the Zero-Knowledge Vault and Client-Side Hybrid Encryption subsystem to Section 1 (*Systems Added After the Founding Design*).
+  - Detailed PBKDF2-SHA256 (600,000 iterations in Web Worker), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, BIP-39 12-word recovery seed, transparent local IndexedDB encryption (`LocalDeviceKey`), domain AAD binding (`vault:file:${userId}:${fileId}`), and AI safety gatekeepers.
+- **Living Documentation Corrections & Technical Debt Remediation:**
+  - **Sync Protocol Parameterization (`docs/reference/SYNC_API.md`, `docs/reference/SYNC_ARCHITECTURE.md`):** Corrected outdated `?since=<number>` Unix timestamp queries to the verified `?updated_after=<ISO_8601_string>` parameter matching `src/app/api/files/sync/route.ts` and `src/lib/sync/sync-manager.ts`.
+  - **Circuit Breaker Cooldown Duration (`docs/architecture/ai-quota-reservation-lifecycle.md`):** Aligned default Redis circuit breaker TTL from 3600s to 600s (10 minutes) matching `DEFAULT_CIRCUIT_TTL_SECONDS` in `src/lib/ai/key-rotation.ts`.
+  - **Search & Replace Debounce & Localization (`docs/guides/Search_Replace_Feature.md`):** Corrected search debounce timeout from 2000ms to 300ms and updated bilingual UI placeholders to match `src/components/editor/search-replace.tsx`.
+  - **User Vault Profile Schema Alignment (`docs/reference/phase-16/vault-phase-3-ui-and-conversion-closure.md`):** Aligned `saveCachedVaultProfile` documentation snippet to match the exact schema of `UserVaultProfile` (`encryptedMasterKey`, `keySalt`, `recoverySalt`, `kdfIterations`).
+  - **Domain AAD Prefix Standard (`docs/reference/phase-16/vault-phase-1-crypto-core-closure.md`):** Documented canonical domain prefix in AAD construction: `vault:file:${userId}:${fileId}` matching `src/lib/sync/sync-manager.ts`.
+  - **AI Stream Parser Test Count (`docs/architecture/ai-streaming-protocol.md`):** Corrected cited test count for `ai-stream-parser.test.ts` from 11 to 9 verified passing tests.
+  - **Relative Link Sanitation (`docs/reference/phase-12-auth-ownership-closure.md`):** Replaced forbidden absolute `file:///` paths with clean relative Markdown links per repository governance rules.
+  - **ASCII Art Elimination to Mermaid (`docs/reference/phase-13-stripe-webhooks-subscriptions-closure.md`, `docs/specs/UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md`):** Replaced box-drawing ASCII diagrams with standardized, clean Mermaid flowcharts.
+  - **Vitest Configuration Filename Parity (`docs/reference/test-database-isolation.md`):** Updated `.ts` extensions to `.mts` (`vitest.config.mts`, `vitest.live.config.mts`) and documented `vitest.constants.mts` as the authoritative source of truth for `LIVE_TEST_FILES`.
+  - **Documentation Master Index Alignment (`docs/README.md`):** Documented `docs/Plans/` directory map, added Section 2 roadmap entries, and updated test suite statistics to 53 test files and 694 passing tests.
+- **Root Repository Master Readme Parity (`README.md`):**
+  - Updated Vitest badge and verification totals to **53 Suites · 694/694 Passing** (100% pass rate).
+  - Added dedicated Core Engineering Subsystem 7 (*Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem*) complete with architectural Mermaid flowchart.
+  - Added Zero-Knowledge client-side encryption and memory sanitization guarantees to the Security Architecture table.
+  - Converted sync and AI streaming ASCII art diagrams to standard Mermaid flowcharts.
+  - Aligned database migrations range to `0001–0010` and expanded project directory tree with `vault/` UI components and `workers/crypto.worker.ts`.
+- **System Verification & Integrity Evidence:**
+  - `npx tsc --noEmit` exited clean with code 0 (zero errors).
+  - `npm run lint` exited clean with code 0 (ESLint 9 pass).
+  - `npm run test` verified 53 test files and 694 passed tests (100% pass rate).
+
 ## [1.25.2] - 2026-09-11 (Vault Phase 5 Closure: Hardened Verification, Security Auditing & 10-Point Test Matrix)
 
 ### Hardened & Fixed - Zero-Knowledge Defense-in-Depth & Key Store Resilience
