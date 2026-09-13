@@ -91,12 +91,6 @@ async function getTodayUsage(userId: string) {
     return usage;
 }
 
-// Test-only export: lets integration tests exercise the real
-// getTodayUsage implementation (with the atomic upsert) against a live DB.
-// Kept out of the production API surface intentionally.
-export async function getTodayUsageTestOnly(userId: string) {
-    return getTodayUsage(userId);
-}
 
 /**
  * Get weekly word usage for free tier
@@ -746,49 +740,6 @@ export async function refundUsage(
         );
 }
 
-/**
- * Update usage after successful operation (legacy non-guarded helper).
- * Kept for backward compatibility; new flows should prefer
- * reserveAndUpdateUsage which enforces the limit atomically.
- */
-export async function updateUsage(
-    userId: string,
-    operation: AIOperation,
-    wordCount: number
-): Promise<void> {
-    const today = getToday();
-
-    const updateFields: Record<string, unknown> = {};
-
-    switch (operation) {
-        case "correct":
-            updateFields.correctWords = sql`correct_words + ${wordCount}`;
-            break;
-        case "improve":
-            updateFields.improveWords = sql`improve_words + ${wordCount}`;
-            break;
-        case "translate":
-            updateFields.translateWords = sql`translate_words + ${wordCount}`;
-            break;
-        case "summarize":
-            updateFields.summarizeCount = sql`summarize_count + 1`;
-            updateFields.summarizeWords = sql`summarize_words + ${wordCount}`;
-            break;
-        case "toPrompt":
-            updateFields.toPromptCount = sql`to_prompt_count + 1`;
-            break;
-    }
-
-    await db
-        .update(schema.usage)
-        .set(updateFields)
-        .where(
-            and(
-                eq(schema.usage.userId, userId),
-                eq(schema.usage.date, today)
-            )
-        );
-}
 
 /**
  * Server Action: Process text with AI

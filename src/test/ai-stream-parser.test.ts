@@ -52,7 +52,7 @@ describe('AI Stream Parser & Validator (Phase 7 / Gate G8)', () => {
                 onMeta: (meta) => {
                     metaEvent = meta;
                 },
-                onChunk: (accumulated, latest) => {
+                onChunk: (_accumulated, latest) => {
                     receivedDeltas.push(latest);
                 },
                 onComplete: (finalText) => {
@@ -198,7 +198,7 @@ describe('AI Stream Parser & Validator (Phase 7 / Gate G8)', () => {
             await consumeAIStream({
                 operation: 'correct',
                 text: 'input',
-                onChunk: (acc, latest) => {
+                onChunk: (_acc, latest) => {
                     chunks.push(latest);
                 },
                 onComplete: (text) => {

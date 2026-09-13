@@ -3,7 +3,7 @@
  * Reads content from .txt and .md files
  */
 
-export interface TextParseResult {
+interface TextParseResult {
     text: string;
     wordCount: number;
 }
@@ -13,7 +13,7 @@ export interface TextParseResult {
  * @param file - File object to parse
  * @returns Parsed text content
  */
-export async function parseTextFile(file: File): Promise<TextParseResult> {
+async function parseTextFile(file: File): Promise<TextParseResult> {
     try {
         const text = await file.text();
         const wordCount = text.split(/\s+/).filter(Boolean).length;

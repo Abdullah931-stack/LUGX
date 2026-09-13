@@ -494,7 +494,7 @@ function buildBidiLineDecorations(view: EditorView): DecorationSet {
  * Line-level Bidi Isolation ViewPlugin
  * Active in both Live Preview and Source modes to ensure line directions are never lost on scroll.
  */
-export const bidiLinePlugin = ViewPlugin.fromClass(
+const bidiLinePlugin = ViewPlugin.fromClass(
     class {
         decorations: DecorationSet;
 
@@ -589,7 +589,7 @@ function performToggleDirection(view: EditorView, onToggle?: (newMode: TextDirec
  * Direction Toggle Keybinding
  * Cycles through auto -> rtl -> ltr -> auto
  */
-export const toggleDirectionKeymap = (onToggle?: (newMode: TextDirectionMode) => void): KeyBinding[] => [
+const toggleDirectionKeymap = (onToggle?: (newMode: TextDirectionMode) => void): KeyBinding[] => [
     {
         key: "Mod-Alt-d",
         run: (view: EditorView) => performToggleDirection(view, onToggle),

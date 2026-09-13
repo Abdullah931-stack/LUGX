@@ -45,7 +45,7 @@ export const updateGhostEffect = StateEffect.define<{
 
 export const clearGhostEffect = StateEffect.define<void>();
 
-export class CMStreamingGhostWidget extends CMWidgetType {
+class CMStreamingGhostWidget extends CMWidgetType {
     constructor(
         readonly text: string,
         readonly operation?: string,

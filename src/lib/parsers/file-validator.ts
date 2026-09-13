@@ -73,24 +73,3 @@ export function validateFile(file: File): ValidationResult {
     };
 }
 
-/**
- * Validate multiple files
- */
-export function validateFiles(files: File[]): {
-    valid: File[];
-    invalid: Array<{ file: File; error: string }>;
-} {
-    const valid: File[] = [];
-    const invalid: Array<{ file: File; error: string }> = [];
-
-    for (const file of files) {
-        const result = validateFile(file);
-        if (result.isValid) {
-            valid.push(file);
-        } else {
-            invalid.push({ file, error: result.error || 'Unknown error' });
-        }
-    }
-
-    return { valid, invalid };
-}

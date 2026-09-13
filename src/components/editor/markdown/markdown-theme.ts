@@ -7,7 +7,7 @@ import { tags as t } from "@lezer/highlight";
  * LUGX Dark Theme for CodeMirror 6 Markdown Editor
  * High-contrast, sleek modern dark styling with full RTL and typography support.
  */
-export const markdownDarkTheme = EditorView.theme(
+const markdownDarkTheme = EditorView.theme(
     {
         "&": {
             color: "#e4e4e7",
@@ -185,7 +185,7 @@ export const markdownDarkTheme = EditorView.theme(
 /**
  * Syntax highlighting styles for code blocks and Markdown structures
  */
-export const markdownHighlightStyle = HighlightStyle.define([
+const markdownHighlightStyle = HighlightStyle.define([
     { tag: t.heading1, color: "#ffffff", fontWeight: "800" },
     { tag: t.heading2, color: "#f4f4f5", fontWeight: "700" },
     { tag: t.heading3, color: "#e4e4e7", fontWeight: "600" },

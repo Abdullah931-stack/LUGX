@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
+import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { placeholder as cmPlaceholder } from "@codemirror/view";

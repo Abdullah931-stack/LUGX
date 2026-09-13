@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React, { createRef } from "react";
+import { createRef } from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, act, waitFor } from "@testing-library/react";
 import { MarkdownEditor } from "./markdown-editor";

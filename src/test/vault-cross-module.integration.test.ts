@@ -16,7 +16,6 @@ import {
     encryptEnvelope,
     decryptEnvelope,
     sessionKeyStore,
-    generateMnemonic,
     DeviceTrustEnvelope,
     InvalidCiphertextOrKeyError,
     arrayBufferToBase64,
@@ -134,7 +133,6 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
         const testPassword = "VaultPasscode2026!";
         const keySalt = await generateSalt(16);
         const recoverySalt = await generateSalt(16);
-        const _mnemonic = await generateMnemonic(16);
 
         // 2. Wrap master key for server registration
         const passwordWrapped = await wrapMasterKeyWithPassword(

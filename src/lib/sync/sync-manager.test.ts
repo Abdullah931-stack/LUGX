@@ -44,7 +44,7 @@ const mockConnectionDetector = vi.hoisted(() => {
 });
 
 const mockConcurrencyManager = vi.hoisted(() => ({
-    withLock: vi.fn((fileId: string, fn: () => Promise<unknown>) => fn()),
+    withLock: vi.fn((_fileId: string, fn: () => Promise<unknown>) => fn()),
 }));
 
 const mockSyncRollback = vi.hoisted(() => ({
@@ -284,8 +284,8 @@ describe('Sync Manager', () => {
             ]);
 
             // Mock fetch to simulate long in-flight request
-            mockFetch.mockImplementation((url, options) => {
-                return new Promise((resolve, reject) => {
+            mockFetch.mockImplementation((_url, options) => {
+                return new Promise((_resolve, reject) => {
                     const signal = options?.signal as AbortSignal;
                     if (signal) {
                         signal.addEventListener('abort', () => {
