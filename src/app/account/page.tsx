@@ -10,6 +10,7 @@ import { TIER_LIMITS, getTierDisplayName } from "@/config/tiers.config";
 import { ArrowLeft, User, CreditCard, LogOut, Check } from "lucide-react";
 import { UpgradeButton } from "@/components/subscription/upgrade-button";
 import { VaultSecurityCard } from "@/components/vault";
+import { OcrSettingsCard } from "@/components/layout/ocr-settings-card";
 
 
 export default async function AccountPage() {
@@ -101,6 +102,9 @@ export default async function AccountPage() {
 
                     {/* Vault Security & Trusted Devices */}
                     <VaultSecurityCard userId={user.id} />
+
+                    {/* Document Processing & OCR Settings */}
+                    <OcrSettingsCard />
 
                     {/* Subscription Section */}
                     <Card>

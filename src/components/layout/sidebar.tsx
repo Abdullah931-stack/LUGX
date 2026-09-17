@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,15 +14,26 @@ import {
     MoreHorizontal,
     Trash2,
     ShieldCheck,
+    Lock,
+    X,
 } from "lucide-react";
 import Link from "next/link";
 import { getUserFiles, getDeletedFiles, createFile, moveFile } from "@/server/actions/file-ops";
 import { importFile } from "@/server/actions/import-file";
 import { validateFile } from "@/lib/parsers/file-validator";
 import { parseFileContent } from "@/lib/parsers/text-parser";
+import { pdfWorkerBridge } from "@/lib/parsers/pdf-worker-bridge";
+import { sessionKeyStore } from "@/lib/sync/session-key-store";
+import { cryptoWorkerBridge } from "@/lib/sync/crypto-worker-bridge";
+import { indexedDBManager } from "@/lib/sync/indexeddb";
+import { createClient } from "@/lib/supabase/client";
+import { VaultUnlockModal } from "@/components/vault";
 import { useToast } from "@/hooks/use-toast";
 import { FileTreeItem } from "@/components/files/file-tree-item";
 import { FileContextMenu } from "@/components/files/file-context-menu";
+import { PdfImportModeDialog, PdfExtractionMode } from "@/components/layout/pdf-import-mode-dialog";
+import { PdfCorruptedFontDialog } from "@/components/layout/pdf-corrupted-font-dialog";
+import { isOcrPackageInstalled } from "@/lib/parsers/pdf-ocr-engine";
 
 interface FileItem {
     id: string;
@@ -45,13 +56,49 @@ export function Sidebar({ userId }: SidebarProps = {}) {
     const [loading, setLoading] = useState(true);
     const [isDragOver, setIsDragOver] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+    const [importToVault, setImportToVault] = useState(false);
+    const [showUnlockVault, setShowUnlockVault] = useState(false);
+    const [importProgress, setImportProgress] = useState<{
+        fileName: string;
+        currentPage: number;
+        totalPages: number;
+        percent: number;
+    } | null>(null);
+    const [pendingPdfImport, setPendingPdfImport] = useState<{
+        files: File[];
+        targetFolderId: string | null;
+        pdfFileName: string;
+    } | null>(null);
+    const [corruptedFontNotice, setCorruptedFontNotice] = useState<{
+        file: File;
+        targetFolderId: string | null;
+        remainingFiles: File[];
+        isOcrInstalled: boolean;
+    } | null>(null);
+    const [effectiveUserId, setEffectiveUserId] = useState<string>(userId || "");
+    const abortControllerRef = useRef<AbortController | null>(null);
     const [deletedFiles, setDeletedFiles] = useState<FileItem[]>([]);
     const [showTrash, setShowTrash] = useState(false);
     const { toast } = useToast();
 
+    const resolveEffectiveUserId = useCallback(async (): Promise<string> => {
+        if (userId && userId.trim()) return userId.trim();
+        try {
+            const supabase = createClient();
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user?.id) return user.id;
+        } catch (err) {
+            console.warn("[Sidebar] Failed to resolve auth user session:", err);
+        }
+        return "";
+    }, [userId]);
+
     useEffect(() => {
         loadFiles();
-    }, []);
+        void resolveEffectiveUserId().then((uid) => {
+            if (uid) setEffectiveUserId(uid);
+        });
+    }, [resolveEffectiveUserId]);
 
     async function loadFiles() {
         try {
@@ -70,9 +117,7 @@ export function Sidebar({ userId }: SidebarProps = {}) {
         }
     }
 
-    // Load tombstoned (soft-deleted) items for the Trash view. These rows
-    // never reach the normal tree (server filters deletedAt IS NULL), so
-    // they are listed here as a flat, collapsible section.
+    // Load tombstoned (soft-deleted) items for the Trash view.
     async function loadDeletedFiles() {
         try {
             const result = await getDeletedFiles();
@@ -130,7 +175,15 @@ export function Sidebar({ userId }: SidebarProps = {}) {
         }
     }
 
-    async function handleFileImport(fileList: FileList) {
+    async function handleFileImport(fileList: FileList, targetFolderId: string | null = null) {
+        if (isImporting) {
+            toast({
+                title: "جاري الاستيراد بالفعل",
+                description: "يرجى الانتظار حتى اكتمال عملية الاستيراد الحالية",
+            });
+            return;
+        }
+
         const filesArray = Array.from(fileList);
 
         // Validate files
@@ -159,47 +212,203 @@ export function Sidebar({ userId }: SidebarProps = {}) {
 
         if (validFiles.length === 0) return;
 
+        // If vault import is toggled, ensure vault is unlocked first
+        if (importToVault && !sessionKeyStore.hasMasterKey()) {
+            setShowUnlockVault(true);
+            toast({
+                title: "الخزنة مقفلة",
+                description: "يرجى فتح الخزنة أولاً لإتمام الاستيراد المشفر",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        // If any valid file is a PDF and OCR package is installed, show mode choice dialog
+        const hasPdf = validFiles.some((f) => f.name.toLowerCase().endsWith('.pdf'));
+        if (hasPdf) {
+            const ocrInstalled = await isOcrPackageInstalled();
+            if (ocrInstalled) {
+                const firstPdf = validFiles.find((f) => f.name.toLowerCase().endsWith('.pdf'))!;
+                setPendingPdfImport({
+                    files: validFiles,
+                    targetFolderId,
+                    pdfFileName: firstPdf.name,
+                });
+                return;
+            }
+        }
+
+        await executeFileImport(validFiles, targetFolderId, 'fast');
+    }
+
+    async function executeFileImport(
+        validFiles: File[],
+        targetFolderId: string | null,
+        extractionMode: PdfExtractionMode = 'fast',
+        bypassCorruptionCheck = false
+    ) {
         setIsImporting(true);
 
-        // Process each valid file
-        for (const file of validFiles) {
+        for (let fileIdx = 0; fileIdx < validFiles.length; fileIdx++) {
+            const file = validFiles[fileIdx];
+            const abortController = new AbortController();
+            abortControllerRef.current = abortController;
+
             try {
-                const fileType = file.name.toLowerCase().endsWith('.pdf')
+                const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                const fileType = isPdf
                     ? 'pdf'
                     : file.name.toLowerCase().endsWith('.md')
                         ? 'md'
                         : 'txt';
 
-                let fileContent: string;
+                let textContent: string;
 
                 if (fileType === 'pdf') {
-                    // Convert to base64 for server processing
-                    const buffer = await file.arrayBuffer();
-                    fileContent = Buffer.from(buffer).toString('base64');
+                    setImportProgress({
+                        fileName: file.name,
+                        currentPage: 1,
+                        totalPages: 1,
+                        percent: 0,
+                    });
+
+                    const arrayBuffer = await file.arrayBuffer();
+
+                    // Universal font corruption detection for regular (fast) extraction
+                    if (!bypassCorruptionCheck && extractionMode === 'fast') {
+                        const { detectPdfFontCorruption } = await import('@/lib/parsers/pdf-corruption-detector');
+                        const corruptionReport = await detectPdfFontCorruption(arrayBuffer, 5);
+
+                        if (corruptionReport.isCorrupted) {
+                            const ocrInstalled = await isOcrPackageInstalled();
+                            setCorruptedFontNotice({
+                                file,
+                                targetFolderId,
+                                remainingFiles: validFiles.slice(fileIdx + 1),
+                                isOcrInstalled: ocrInstalled,
+                            });
+                            setIsImporting(false);
+                            setImportProgress(null);
+                            return;
+                        }
+                    }
+
+                    const { isTableExtractionEnabled } = await import('@/lib/parsers/pdf-settings');
+                    const disableTableExtraction = !isTableExtractionEnabled();
+
+                    if (extractionMode === 'ocr') {
+                        const { runBilingualOcr } = await import('@/lib/parsers/pdf-ocr-engine');
+                        textContent = await runBilingualOcr(arrayBuffer, {
+                            signal: abortController.signal,
+                            disableTableExtraction,
+                            onProgress: (p) => {
+                                setImportProgress({
+                                    fileName: file.name,
+                                    currentPage: p.page,
+                                    totalPages: p.total,
+                                    percent: p.percent,
+                                });
+                            },
+                        });
+                    } else {
+                        const extractResult = await pdfWorkerBridge.extractText(arrayBuffer, {
+                            signal: abortController.signal,
+                            disableTableExtraction,
+                            onProgress: (p) => {
+                                setImportProgress({
+                                    fileName: file.name,
+                                    ...p,
+                                });
+                            },
+                        });
+                        textContent = extractResult.text;
+                    }
                 } else {
-                    // Parse MD/TXT client-side then convert to base64
-                    const textContent = await parseFileContent(file);
-
-                    // Ensure UTF-8 encoding preserves newlines and formatting
-                    fileContent = Buffer.from(textContent, 'utf-8').toString('base64');
-
-                    // Debug: verify content has newlines
-                    const decoded = Buffer.from(fileContent, 'base64').toString('utf-8');
-                    console.log('[File Import] Newlines preserved:', decoded.includes('\n'));
+                    // MD / TXT parsed directly client-side as UTF-8
+                    textContent = await parseFileContent(file);
                 }
 
-                // Import file via server action
-                const result = await importFile(
-                    file.name,
-                    fileContent,
-                    fileType,
-                    null // No parent folder for now
-                );
+                if (abortController.signal.aborted) {
+                    throw new DOMException('Import cancelled', 'AbortError');
+                }
+
+                if (!textContent || !textContent.trim()) {
+                    throw new Error(`الملف ${file.name} لا يحتوي على أي نصوص قابلة للاستخراج`);
+                }
+
+                let result;
+                if (importToVault) {
+                    const masterKey = sessionKeyStore.getMasterKeyRaw();
+                    if (!masterKey) throw new Error("Vault master key not available in memory");
+
+                    const effectiveUid = await resolveEffectiveUserId();
+                    const fileId = crypto.randomUUID();
+                    const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
+                    const aad = `vault:file:${effectiveUid}:${fileId}`;
+
+                    const encResult = await cryptoWorkerBridge.encryptAESGCM(
+                        masterKey,
+                        textContent,
+                        ivBytes,
+                        aad
+                    );
+
+                    const metadata = {
+                        version: 1,
+                        algorithm: "AES-GCM-256",
+                        keyId: "master-v1",
+                        salt: "",
+                        iv: encResult.ivBase64,
+                        kdfIterations: 600000,
+                    };
+
+                    // Optimistic offline write to local IndexedDB
+                    try {
+                        if (effectiveUid) {
+                            await indexedDBManager.init(effectiveUid);
+                            await indexedDBManager.saveFile({
+                                id: fileId,
+                                title: file.name.replace(/\.(pdf|md|txt)$/i, '').slice(0, 500) || "Imported Document",
+                                content: encResult.ciphertextBase64,
+                                parentFolderId: targetFolderId,
+                                isFolder: false,
+                                isEncrypted: true,
+                                encryptionMetadata: metadata,
+                                version: 1,
+                                etag: "",
+                                lastModified: Date.now(),
+                                lastSyncedAt: Date.now(),
+                                isDirty: false,
+                            });
+                        }
+                    } catch (dbErr) {
+                        console.warn("[Sidebar] IndexedDB cache write deferred:", dbErr);
+                    }
+
+                    result = await importFile(
+                        file.name,
+                        encResult.ciphertextBase64,
+                        fileType,
+                        targetFolderId,
+                        {
+                            isEncrypted: true,
+                            encryptionMetadata: metadata,
+                            fileId,
+                        }
+                    );
+                } else {
+                    result = await importFile(
+                        file.name,
+                        textContent,
+                        fileType,
+                        targetFolderId
+                    );
+                }
 
                 if (result.success) {
                     toast({
-                        title: "File Imported",
-                        description: `${file.name} imported successfully (${result.data?.wordCount} words)`,
+                        title: importToVault ? "تم استيراد المستند مشفراً للخزنة" : "File Imported",
+                        description: `${file.name} imported successfully${result.data?.wordCount ? ` (${result.data.wordCount} words)` : ''}`,
                     });
                 } else {
                     toast({
@@ -208,25 +417,36 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                         variant: "destructive",
                     });
                 }
-            } catch (_error) {
-                toast({
-                    title: "Import Error",
-                    description: `Failed to import ${file.name}`,
-                    variant: "destructive",
-                });
+            } catch (error: unknown) {
+                const isAborted = (error as { name?: string })?.name === 'AbortError' || abortController.signal.aborted;
+                if (isAborted) {
+                    toast({
+                        title: "تم الإلغاء",
+                        description: `تم إلغاء استيراد ${file.name}`,
+                    });
+                    break;
+                } else {
+                    const message = error instanceof Error ? error.message : `Failed to import ${file.name}`;
+                    toast({
+                        title: "Import Error",
+                        description: message,
+                        variant: "destructive",
+                    });
+                }
+            } finally {
+                setImportProgress(null);
+                abortControllerRef.current = null;
             }
         }
 
         setIsImporting(false);
-        loadFiles(); // Refresh file list
+        loadFiles();
     }
 
     function handleDragEnter(e: React.DragEvent) {
         e.preventDefault();
         e.stopPropagation();
 
-        // Only show overlay if dragging actual files (not internal items)
-        // Internal drags have 'text/plain' type, external have 'Files'
         if (e.dataTransfer.types.includes('Files')) {
             setIsDragOver(true);
         }
@@ -236,7 +456,6 @@ export function Sidebar({ userId }: SidebarProps = {}) {
         e.preventDefault();
         e.stopPropagation();
 
-        // Only hide if we were showing it for external files
         if (e.dataTransfer.types.includes('Files')) {
             setIsDragOver(false);
         }
@@ -246,7 +465,6 @@ export function Sidebar({ userId }: SidebarProps = {}) {
         e.preventDefault();
         e.stopPropagation();
 
-        // Only allow drop if it's external files
         if (e.dataTransfer.types.includes('Files')) {
             e.dataTransfer.dropEffect = 'copy';
         }
@@ -259,11 +477,11 @@ export function Sidebar({ userId }: SidebarProps = {}) {
 
         const files = e.dataTransfer.files;
         if (files.length > 0) {
-            handleFileImport(files);
+            void handleFileImport(files, null);
         }
     }
 
-    function handleImportClick() {
+    function handleImportClick(targetFolderId: string | null = null) {
         const input = document.createElement('input');
         input.type = 'file';
         input.multiple = true;
@@ -271,7 +489,7 @@ export function Sidebar({ userId }: SidebarProps = {}) {
         input.onchange = (e) => {
             const files = (e.target as HTMLInputElement).files;
             if (files) {
-                handleFileImport(files);
+                void handleFileImport(files, targetFolderId);
             }
         };
         input.click();
@@ -334,8 +552,6 @@ export function Sidebar({ userId }: SidebarProps = {}) {
             <div
                 className="flex-1 overflow-auto p-2 custom-scrollbar"
                 onDragOver={(e) => {
-                    // Allow dropping in root area (between files, not on them)
-                    // Check if drag contains internal file ID (text/plain)
                     if (e.dataTransfer.types.includes('text/plain') && !e.dataTransfer.types.includes('Files')) {
                         e.preventDefault();
                         e.stopPropagation();
@@ -343,14 +559,12 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                     }
                 }}
                 onDrop={(e) => {
-                    // Handle drop to root level
                     if (e.dataTransfer.types.includes('text/plain') && !e.dataTransfer.types.includes('Files')) {
                         e.preventDefault();
                         e.stopPropagation();
 
                         const fileId = e.dataTransfer.getData('text/plain');
                         if (fileId) {
-                            // Move to root (null parent)
                             handleMoveFile(fileId, null);
                         }
                     }
@@ -374,13 +588,14 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                                 level={0}
                                 onMove={handleMoveFile}
                                 onRefresh={loadFiles}
+                                onImportFiles={(droppedFiles, folderId) => void handleFileImport(droppedFiles, folderId)}
                             />
                         ))}
                     </ul>
                 )}
             </div>
 
-            {/* Trash Section (soft-deleted files awaiting restoration or purge) */}
+            {/* Trash Section */}
             {!collapsed && (
                 <div className="border-t border-zinc-800/50">
                     <button
@@ -446,7 +661,36 @@ export function Sidebar({ userId }: SidebarProps = {}) {
 
             {/* Footer Actions: Security & Import */}
             {!collapsed && (
-                <div className="p-2 border-t border-zinc-800/50 mt-auto space-y-1.5">
+                <div className="p-2 border-t border-zinc-800/50 mt-auto space-y-2">
+                    {/* Active Extraction Progress Card */}
+                    {importProgress && (
+                        <div className="p-2.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-xs space-y-1.5 animate-in fade-in">
+                            <div className="flex items-center justify-between">
+                                <span className="font-medium text-indigo-300 truncate max-w-[170px]">
+                                    {importProgress.fileName}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => abortControllerRef.current?.abort()}
+                                    className="text-zinc-400 hover:text-red-400 p-0.5 rounded transition-colors"
+                                    title="إلغاء المعالجة"
+                                >
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                            <div className="flex justify-between text-[11px] text-zinc-400">
+                                <span>صفحة {importProgress.currentPage} من {importProgress.totalPages}</span>
+                                <span>{importProgress.percent}%</span>
+                            </div>
+                            <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                                <div
+                                    className="bg-indigo-500 h-1.5 rounded-full transition-all duration-200"
+                                    style={{ width: `${importProgress.percent}%` }}
+                                />
+                            </div>
+                        </div>
+                    )}
+
                     <Link href="/account" className="block w-full">
                         <Button
                             variant="ghost"
@@ -458,28 +702,94 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                         </Button>
                     </Link>
 
+                    {/* Encrypted Vault Import Toggle */}
+                    <div className="flex items-center justify-between px-1 text-xs">
+                        <label className="flex items-center gap-1.5 cursor-pointer text-zinc-400 hover:text-zinc-200">
+                            <input
+                                type="checkbox"
+                                checked={importToVault}
+                                onChange={(e) => setImportToVault(e.target.checked)}
+                                className="rounded border-zinc-700 bg-zinc-900 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
+                            />
+                            <span>استيراد مشفر للخزنة</span>
+                        </label>
+                        {importToVault && (
+                            <Lock className="w-3.5 h-3.5 text-amber-400" />
+                        )}
+                    </div>
+
                     <Button
                         variant="outline"
                         size="sm"
                         className="w-full gap-2 border-zinc-700 hover:border-indigo-500 hover:bg-indigo-500/10 hover:text-indigo-400 text-xs"
-                        onClick={handleImportClick}
+                        onClick={() => handleImportClick(null)}
                         disabled={isImporting}
                     >
                         <Upload className="w-4 h-4" />
-                        {isImporting ? "Importing..." : "Import Files"}
+                        {isImporting ? "جاري الاستيراد..." : "Import Files"}
                     </Button>
                 </div>
             )}
+
+            {/* Unlock Vault Modal if needed during encrypted import */}
+            <VaultUnlockModal
+                isOpen={showUnlockVault}
+                onClose={() => setShowUnlockVault(false)}
+                userId={effectiveUserId}
+                onUnlocked={() => {
+                    setShowUnlockVault(false);
+                    toast({
+                        title: "تم فتح الخزنة بنجاح",
+                        description: "يمكنك الآن استيراد الملفات مباشرة إلى الخزنة المشفرة",
+                    });
+                }}
+            />
+
+            {/* PDF Extraction Mode Dialog (appears only when OCR is installed) */}
+            <PdfImportModeDialog
+                isOpen={Boolean(pendingPdfImport)}
+                fileName={pendingPdfImport?.pdfFileName || ""}
+                onClose={() => setPendingPdfImport(null)}
+                onConfirm={(mode) => {
+                    if (pendingPdfImport) {
+                        const { files, targetFolderId } = pendingPdfImport;
+                        setPendingPdfImport(null);
+                        void executeFileImport(files, targetFolderId, mode);
+                    }
+                }}
+            />
+
+            {/* PDF Corrupted Font Warning Dialog (universal detection of unmapped PUA/fragmented fonts) */}
+            <PdfCorruptedFontDialog
+                isOpen={Boolean(corruptedFontNotice)}
+                fileName={corruptedFontNotice?.file.name || ""}
+                isOcrInstalled={Boolean(corruptedFontNotice?.isOcrInstalled)}
+                onRunOcr={() => {
+                    if (corruptedFontNotice) {
+                        const { file, targetFolderId, remainingFiles } = corruptedFontNotice;
+                        setCorruptedFontNotice(null);
+                        void executeFileImport([file, ...remainingFiles], targetFolderId, 'ocr', true);
+                    }
+                }}
+                onContinueAnyway={() => {
+                    if (corruptedFontNotice) {
+                        const { file, targetFolderId, remainingFiles } = corruptedFontNotice;
+                        setCorruptedFontNotice(null);
+                        void executeFileImport([file, ...remainingFiles], targetFolderId, 'fast', true);
+                    }
+                }}
+                onClose={() => {
+                    setCorruptedFontNotice(null);
+                    setIsImporting(false);
+                    setImportProgress(null);
+                }}
+            />
         </aside>
     );
 }
 
 /**
  * Row for a soft-deleted (tombstoned) item inside the Trash section.
- * Follows the same visual language as FileTreeItem but with muted
- * styling, a strike-through title and a strikethrough date hint.
- * The context menu is shown with isDeleted so that only "Restore"
- * applies (rename/copy/move/delete are disabled for tombstones).
  */
 function TrashFileRow({
     file,

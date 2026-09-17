@@ -24,13 +24,14 @@ interface FileTreeItemProps {
     userId?: string;
     onMove?: (fileId: string, newParentId: string | null) => void;
     onRefresh?: () => void;
+    onImportFiles?: (fileList: FileList, targetFolderId: string | null) => void;
 }
 
 /**
  * Recursive File Tree Item Component
  * Supports nested folders with unlimited depth and drag & drop
  */
-export function FileTreeItem({ file, level = 0, userId, onMove, onRefresh }: FileTreeItemProps) {
+export function FileTreeItem({ file, level = 0, userId, onMove, onRefresh, onImportFiles }: FileTreeItemProps) {
     const [isExpanded, setIsExpanded] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const [showContextMenu, setShowContextMenu] = useState(false);
@@ -67,13 +68,21 @@ export function FileTreeItem({ file, level = 0, userId, onMove, onRefresh }: Fil
         setIsDragOver(false);
     }
 
-    // Drop - move file into this folder
+    // Drop - move file into this folder or import external files
     function handleDrop(e: React.DragEvent) {
         e.preventDefault();
         e.stopPropagation();
         setIsDragOver(false);
 
         if (!file.isFolder) return;
+
+        // Check if external files dropped directly onto folder
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && e.dataTransfer.types.includes('Files')) {
+            if (onImportFiles) {
+                onImportFiles(e.dataTransfer.files, file.id);
+            }
+            return;
+        }
 
         const draggedFileId = e.dataTransfer.getData('text/plain');
 
@@ -173,6 +182,7 @@ export function FileTreeItem({ file, level = 0, userId, onMove, onRefresh }: Fil
                             userId={userId || file.userId}
                             onMove={onMove}
                             onRefresh={onRefresh}
+                            onImportFiles={onImportFiles}
                         />
                     ))}
                 </ul>
