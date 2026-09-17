@@ -61,8 +61,16 @@ When restoring a soft-deleted file or folder, if an active live file with the sa
 - When creating copies of documents or folders, duplicate collisions are resolved by appending ` (Copy)` or ` (Copy N)` before the file extension (e.g., `Notes (Copy).md`, `Notes (Copy 2).md`, or `Projects (Copy)`).
 - Recursive copying of nested folders is safeguarded with a maximum depth limit (`MAX_DEPTH = 20`) to prevent stack overflow or timeout on complex trees.
 
-### D. Single-Step Atomic ETag Generation (`createFile` / `copyFile` / `importFile` - CRIT-01)
+### D. Single-Step Atomic ETag Generation & Client-Side Extraction (`createFile` / `copyFile` / `importFile` - CRIT-01)
 Pre-generates UUIDs and computes strong SHA-256 ETags in-memory before issuing the database `INSERT`. This eliminates the intermediate window where files were momentarily persisted with `etag = null`, preventing transient 412 conflicts during concurrent sync polling.
+
+`importFile` receives UTF-8 extracted plain text strings (`textContent: string`) or client-encrypted AES-GCM ciphertext (`isEncrypted: true`) directly from the browser runtime, completely bypassing binary PDF handling and removing heavy `pdf-parse` processing from the server runtime:
+- **Client-Side Web Worker Isolation (`pdf.worker.ts` / `pdf-worker-bridge.ts`):** PDF text extraction runs inside a dedicated Web Worker via `pdfjs-dist` with per-page memory cleanup (`page.cleanup()`) and document destruction (`pdfDoc.destroy()`).
+- **2D Spatial Markdown Table Extractor (`pdf-table-extractor.ts`):** Geometrically clusters text coordinates into lines and columns, reorders RTL columns for Arabic, and formats tabular data into GitHub-Flavored Markdown tables with user toggle capability (`pdf-settings.ts`).
+- **Arabic Unicode Normalizer (`arabic-normalizer.ts`):** Performs lookahead de-spacing on disjointed Arabic characters, NFKC presentation forms un-shaping, and BiDi directionality preservation.
+- **On-Demand Bilingual OCR & Font Corruption Detector:** Detects Private Use Area (PUA) glyphs in corrupted embedded fonts (`pdf-corruption-detector.ts`) and triggers an on-demand bilingual OCR engine (`pdf-ocr-engine.ts` with `tesseract.js`).
+- **Direct Vault Encrypted Import:** Encrypts content directly on the client with AES-GCM-256 using deterministic AAD (`vault:file:${userId}:${fileId}`) and optimistic IndexedDB cache persistence before server dispatch.
+- **Server Payload Safeguards:** Enforces a strict 10MB text string ceiling and strips toxic PostgreSQL null bytes (`\0`).
 
 ### E. Cascading Soft-Delete for Folders (`deleteFile`)
 Deleting a folder cascades the `deletedAt` tombstone to all recursive descendant files and subfolders, preventing sync routes from exposing orphaned children whose parent folder is deleted.
@@ -105,11 +113,14 @@ When recursively collecting descendant file/folder IDs for cascading deletion or
 ---
 
 ## 4. Verification & Testing Evidence
-
-- `src/test/cross-user-ownership.test.ts`: 11 integration tests verifying cross-user isolation across `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `importFile`, AI reservations, streaming, and atomic UPSERT user sync.
-- `src/server/actions/file-ops.ownership.test.ts`: Covers cross-user parent validation, cycle detection across arbitrary hierarchy depth, and precondition enforcement (428/412).
-- `src/app/api/files/[id]/route.putguard.test.ts`: Verifies lost-update mitigation and atomic ETag/version updates.
-- `src/server/actions/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments.
-- `src/server/actions/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job.
-- `src/test/file-ops-vault.unit.test.ts`: 10 unit tests covering `toggleFileEncryption` optimistic locking, folder rejection, and `copyFile` zero-knowledge encrypted overrides.
-- Full suite execution: 44 test files, 617 tests passing (100% pass rate).
+ 
+ - `src/test/cross-user-ownership.test.ts`: 11 integration tests verifying cross-user isolation across `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `importFile`, AI reservations, streaming, and atomic UPSERT user sync.
+ - `src/server/actions/file-ops.ownership.test.ts`: Covers cross-user parent validation, cycle detection across arbitrary hierarchy depth, and precondition enforcement (428/412).
+ - `src/app/api/files/[id]/route.putguard.test.ts`: Verifies lost-update mitigation and atomic ETag/version updates.
+ - `src/server/actions/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments.
+ - `src/server/actions/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job.
+ - `src/test/file-ops-vault.unit.test.ts`: 10 unit tests covering `toggleFileEncryption` optimistic locking, folder rejection, and `copyFile` zero-knowledge encrypted overrides.
+ - `src/server/actions/import-file.test.ts`: Tests text import, 10MB payload size ceiling, title deduplication, and null-byte sanitization.
+ - `src/lib/parsers/pdf-settings.test.ts`: Unit tests verifying local preference toggling for spatial table extraction.
+ - `src/test/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
+ - Full suite execution: 60 test files, 740 tests passing (100% pass rate).

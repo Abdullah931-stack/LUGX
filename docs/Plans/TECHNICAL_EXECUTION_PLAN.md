@@ -395,45 +395,47 @@ Decommission unused Supabase Storage wrappers, removing dead code while preservi
 ### Closure Tests
 - `tsc --noEmit` and full test suite confirming clean removal without broken imports.
 
----
-
-## [Phase 15: Sanitization, Import & Export] — Status: ✅ CLOSED
+## [Phase 15: Sanitization, Import & Export] — Status: ⏳ IN PROGRESS
 
 ### Current State
-Completed. DOMPurify sanitization active on client preview, PDF/text import validation enforced, and markdown/text exporters validated.
+Major portion implemented: server-side 10MB text payload ceiling and PostgreSQL null-byte scrubbing (`\0`) enforced in `importFile`, Base64 binary checks replaced with pure UTF-8 strings, client-side validation unified in `validateFile` (`sidebar.tsx`), and standalone Markdown/text exporters tested. Legacy HTML sanitization (`DOMPurify`, `sanitize.server.ts`) superseded by CodeMirror 6 pure Markdown architecture.
+
+> **Architectural Note:** The client-side Web Worker PDF extraction, 2D spatial clustering table generation (`pdf-table-extractor.ts`), pure TypeScript Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR engine (`pdf-ocr-engine.ts`), PUA font corruption detection (`pdf-corruption-detector.ts`), and direct Zero-Knowledge vault import were completed and closed as an independent milestone documented in [`pdf-worker-extraction-and-vault-import-closure.md`](../reference/pdf-worker-extraction-and-vault-import-closure.md).
 
 ### Derivation Constraint
 Phases 9 through 14.
 
 ### Technical Objective
-Harden single secure content pipeline across import, sanitization, editor preview, and export modules.
+Harden single secure content pipeline across import, normalization, editor preview, and export modules, establishing end-to-end integration verification.
 
-### Direct Implementation Steps
-- **Step 1:** Enforce server-side `MAX_FILE_SIZE` checks inside `import-file.ts`.
-- **Step 2:** Verify file magic bytes and MIME extensions for `.pdf`, `.md`, and `.txt` files.
-- **Step 3:** Standardize client-side file validation prior to base64 encoding.
-- **Step 4:** Implement round-trip export-import validation with bidirectional Arabic RTL text.
+### Remaining Implementation Steps
+- **Step 1:** Implement cross-system integration test verifying full round-trip `import → normalize → export` with adversarial content and Arabic RTL text to guarantee zero regression.
+- **Step 2:** Document pure-Markdown security invariants replacing legacy DOMPurify.
 
 ### Exception & Edge Case Handling
-- **Oversized File:** Reject server-side with standardized error.
+- **Oversized File / Text:** Reject server-side with standardized error (exceeding 10MB).
+- **Corrupted Font / Scanned PDF:** Detect PUA characters or empty text and suggest on-demand OCR (handled in PDF extraction milestone).
 - **Malicious Payload (JavaScript URLs, Event Handlers, Malformed UTF-8):** Sanitize or reject.
 - **Export Mismatch:** Abort export and log diff.
 
 ### Closure Tests
-- `src/lib/sanitize.test.ts` and round-trip import-export validation.
+- `src/server/actions/import-file.test.ts`, `src/lib/parsers/pdf-settings.test.ts`, `src/lib/parsers/pdf-worker-bridge.test.ts`, `src/test/vault-import.integration.test.ts`, `src/lib/sanitize.test.ts`, and full round-trip import-export integration suite.
+
+### Transition Gate
+Phase 15 remains `IN PROGRESS` until completion of the cross-system round-trip import-export integration test suite.
 
 ---
 
 ## [Phase 16: Zero-Knowledge Hybrid Encryption & Vault] — Status: ✅ CLOSED
 
 ### Current State
-Completed. Dual-tier hybrid encryption active: transparent local at-rest encryption in IndexedDB, 600K PBKDF2 Web Worker offloading, 12-word BIP-39 recovery seed, non-blocking conflict queue (`CONFLICT_LOCKED`), post-merge syntax integrity check, and AI gatekeeper. Detailed in `HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`.
+Completed. Dual-tier hybrid encryption active: transparent local at-rest encryption in IndexedDB, 600K PBKDF2 Web Worker offloading, 12-word BIP-39 recovery seed, non-blocking conflict queue (`CONFLICT_LOCKED`), post-merge syntax integrity check, direct encrypted import pipeline in `sidebar.tsx`, and AI gatekeeper. Detailed in `HYBRID_ENCRYPTION_AND_VAULT_PLAN.md` and [Phase 16 Reference](../reference/phase-16/).
 
 ### Derivation Constraint
 Phases 1 through 15 closure.
 
 ### Technical Objective
-Integrate client-side Zero-Knowledge vault encryption with authenticated key envelopes, recovery seeds, and non-blocking sync conflict isolation.
+Integrate client-side Zero-Knowledge vault encryption with authenticated key envelopes, recovery seeds, direct encrypted import, and non-blocking sync conflict isolation.
 
 ### Direct Implementation Steps
 - **Step 1:** Define key hierarchy separating master key, password KEK, and recovery seed KEK.
@@ -442,13 +444,14 @@ Integrate client-side Zero-Knowledge vault encryption with authenticated key env
 - **Step 4:** Implement Web Worker offloading for 600,000 PBKDF2 iterations and memory sanitization via `.fill(0)`.
 - **Step 5:** Quarantine encrypted sync conflicts in `CONFLICT_LOCKED` during locked vault states without blocking standard files.
 - **Step 6:** Validate Markdown syntax integrity post-merge before re-encrypting.
+- **Step 7:** Implement direct vault import in `sidebar.tsx` via `cryptoWorkerBridge` with deterministic AAD and optimistic IndexedDB write.
 
 ### Exception & Edge Case Handling
 - **Missing Key or AAD Mismatch:** Fail-closed; return zero partial plaintext.
 - **Corrupted Ciphertext:** Reject immediately without leaking decrypted buffers.
 
 ### Closure Tests
-- 10-scenario closure matrix in `src/test/vault-crypto.test.ts`, `vault-recovery.test.ts`, `file-conversion.test.ts`, `ai-gatekeeper.test.ts`, and `sync-encrypted-conflict.test.ts`.
+- 10-scenario closure matrix in `src/test/vault-crypto.test.ts`, `vault-recovery.test.ts`, `file-conversion.test.ts`, `ai-gatekeeper.test.ts`, `sync-encrypted-conflict.test.ts`, and `src/test/vault-import.integration.test.ts`.
 
 ---
 

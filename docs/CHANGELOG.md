@@ -2,6 +2,88 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.25.5] - 2026-09-17 (Arabic PDF Normalization, Spatial Markdown Table Extraction & On-Demand Bilingual OCR)
+
+### Added & Enhanced - High-Fidelity Arabic PDF Ingestion & Spatial Table Generation
+
+- **Client-Side Arabic Character Normalization Engine (`src/lib/parsers/arabic-normalizer.ts`):**
+  - Implemented pure TypeScript Unicode normalization pipeline eliminating font-encoding corruption without external runtime dependencies.
+  - Added single-character isolated Arabic token lookahead de-spacing to reconstruct words fragmented by PDF character positioning (`ا  ﻮ    ﺔ` -> `الوثيقة`).
+  - Added NFKC un-shaping to map Arabic Presentation Forms-A and Forms-B back to canonical precomposed Unicode letters (`إ`, `أ`, `جدول`).
+  - Added visual BiDi directionality correction to reverse character-mirrored Arabic text while strictly preserving Latin/numerical sequences and dates (`05/01/2026`, `P/2001/5504/26/482160`).
+  - Integrated full unit test suite (`src/lib/parsers/arabic-normalizer.test.ts`) covering presentation forms, de-spacing, mixed Arabic/English text, numbers, and dates.
+- **2D Spatial Markdown Table Extractor (`src/lib/parsers/pdf-table-extractor.ts`):**
+  - Built spatial clustering engine converting PDF 2D coordinates (`x`, `y`, `width`, `height`) into clean GitHub-Flavored Markdown (GFM) tables (`| Col 1 | Col 2 |`).
+  - Groups items along the Y-axis using a configurable tolerance (`yTolerance = 3.5pt`) and partitions columns via X-axis gap clustering (`gap >= 18pt`).
+  - Automatically identifies header rows, separators, and single-line document titles/metadata (`### Section Header`).
+  - Cell-level RTL-aware text joining: formats Arabic cells Right-to-Left while preserving Left-to-Right formatting for Latin/numeric cells.
+  - Added comprehensive unit tests (`src/lib/parsers/pdf-table-extractor.test.ts`) validating 2-column key-value tables and multi-column tabular data.
+- **Embedded CMap & Standard Font Assets (`public/cmaps/`, `public/standard_fonts/`):**
+  - Deployed 169 binary packed CMap files (`UniKS-UTF16-H.bcmap`, etc.) and 16 StandardFonts (`FoxitSerif.pfb`, etc.) directly into `public/`.
+  - Configured `pdf.worker.ts` with `cMapUrl: '/cmaps/'`, `cMapPacked: true`, and `standardFontDataUrl: '/standard_fonts/'`, resolving missing character code mappings (`ToUnicode` CMap fallbacks).
+- **Fast Unicode Language Detector (`src/lib/parsers/language-detector.ts`):**
+  - Ultra-fast $O(1)$ heuristic analysis (<5ms) categorizing documents into `ARABIC_ONLY`, `ENGLISH_ONLY`, or `BILINGUAL_AR_EN`.
+  - Accompanied by unit test coverage (`src/lib/parsers/language-detector.test.ts`).
+- **On-Demand Bilingual Visual OCR Engine (`src/lib/parsers/pdf-ocr-engine.ts`):**
+  - Zero initial bundle bloat: dynamic lazy-loading of `tesseract.js@^5.1.1` exclusively when requested.
+  - Multi-language unified worker (`ara+eng`) recognizing scanned/rasterized documents without text streams.
+  - Extracts word bounding boxes (`x0`, `y0`, `x1`, `y1`) and pipes them directly into `extractSpatialPdfTableContent()` for unified Markdown table generation.
+  - User-facing download management in `/account` (`OcrSettingsCard`) featuring real-time download progress bars (0%–100%) and cache deletion.
+  - Interactive import mode dialog (`PdfImportModeDialog`) offering seamless user choice between Fast Local Vector Extraction (<100ms) and Deep Visual OCR (~1-2s/page).
+- **Worker Scope DOM Compatibility Hardening (`src/lib/workers/pdf.worker.ts`):**
+  - Resolved `ReferenceError: document is not defined` caused by PDF.js internal fallback evaluation of `isValidFetchUrl(..., document.baseURI)` when running within dedicated Web Worker scopes.
+  - Provided worker-safe `globalThis.document` stub and explicitly passed `useWorkerFetch: true`, `useSystemFonts: false`, and `disableFontFace: true` to `pdfjs.getDocument()`.
+- **Universal Font Corruption Detector (`src/lib/parsers/pdf-corruption-detector.ts`):**
+  - Implemented client-side heuristic inspection over the initial $N$ pages (up to 5 pages) detecting unmapped Private Use Area codepoints (`0xE000-0xF8FF`, `0xF0000-0x10FFFD`), Unicode replacement characters (`U+FFFD`), and fragmented Arabic tokens without hardcoding fragile per-document glyph tables.
+  - Produces deterministic `FontCorruptionReport` with corruption ratios and automated routing recommendations (`SHOULD_USE_OCR`, `NORMAL_EXTRACTION`).
+  - Accompanied by unit test suite (`src/lib/parsers/pdf-corruption-detector.test.ts`) covering clean Latin, clean Arabic, PUA codepoints, and real PDF buffers.
+- **Smart Corrupted Font Routing Dialog (`src/components/layout/pdf-corrupted-font-dialog.tsx`):**
+  - Integrated seamlessly into the client import pipeline (`src/components/layout/sidebar.tsx`).
+  - Intercepts corrupted PDF extractions and presents an interactive dialog recommending OCR execution, providing real-time download and execution progress, a bypass option ("المتابعة رغم التشوه"), and clean cancellation.
+- **Bilingual Visual OCR & Spatial Engine Hardening (`src/lib/parsers/pdf-ocr-engine.ts`):**
+  - Configured explicit `{ text: true, blocks: true }` output flags for `tesseract.js@5.x`.
+  - Added spatial item fallbacks to raw OCR text lines when spatial clustering produces empty results, preventing false-positive empty file errors.
+- **Configurable 2D Spatial Table Extraction Settings (`src/lib/parsers/pdf-settings.ts`, `src/components/layout/ocr-settings-card.tsx`):**
+  - Added user-facing control to toggle the 2D Spatial Table Extraction algorithm on or off from `/account`.
+  - When enabled (default), documents generate aligned GitHub-Flavored Markdown tables (`| Col 1 | Col 2 |`).
+  - When disabled, extractions yield linear paragraph text preserving line and RTL/LTR normalization without table syntax.
+  - Seamlessly passed to both Vector (`pdf.worker.ts`) and Visual OCR (`pdf-ocr-engine.ts`) extraction pipelines.
+  - Unit tests in `src/lib/parsers/pdf-settings.test.ts` ensuring resilient `localStorage` state management and SSR compatibility.
+- **Verification Matrix & Regression Parity:**
+  - 100% test pass rate across 60 test suites (740 tests passed) in `vitest`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`).
+  - Zero ESLint warnings or errors (`npm run lint`).
+
+## [1.25.4] - 2026-09-16 (Client-Side Web Worker PDF Text Extraction & Vault Import Pipeline)
+
+### Added & Upgraded - Client-Side Extraction & Zero-Knowledge Vault Import
+
+- **Client-Side PDF Web Worker Extraction Engine (`src/lib/workers/pdf.worker.ts`):**
+  - Implemented isolated Web Worker running `pdfjs-dist` to extract PDF text entirely on the client, eliminating binary Base64 transfers over the network.
+  - Enforced per-page memory reclamation (`page.cleanup()`), document destruction (`pdfDoc.destroy()`), and linear Markdown paragraph normalization.
+  - Added real-time progress reporting (`onProgress` with percentage and page count) and cancellation via `AbortSignal`.
+  - Added detection and explicit user rejection for password-protected PDFs (`PasswordException`) and scanned/image-only PDFs.
+  - Bundled `pdf.worker.mjs` in-process within the worker environment and configured `/pdf.worker.min.mjs` fallback on `GlobalWorkerOptions.workerSrc` for seamless browser runtime execution without sub-worker lookup failures.
+- **Dual-Mode Worker Bridge (`src/lib/parsers/pdf-worker-bridge.ts`):**
+  - Built typed RPC bridge supporting Web Worker in browser environments and in-process direct engine execution (`extractPdfTextDirect`) in Node.js/Vitest test suites without mocking.
+- **Server Action Contract Upgrade (`src/server/actions/import-file.ts`):**
+  - Updated `importFile` signature to receive UTF-8 text strings directly (`textContent: string`) instead of binary Base64.
+  - Enforced 10MB text size limits and PostgreSQL null-byte (`\0`) sanitization.
+  - Completely purged server-side `pdf-parse` dependency and binary buffer parsing from the cloud execution path.
+- **Direct Vault Encrypted Import Pipeline (`sidebar.tsx`, `import-file.ts`):**
+  - Integrated client-side AES-GCM-256 encryption using `cryptoWorkerBridge` for immediate encrypted vault import.
+  - Binds deterministic domain AAD: `vault:file:${userId}:${fileId}` using client pre-generated UUIDs.
+  - Direct atomic insert into Neon PostgreSQL with `isEncrypted: true`, storing ciphertext without ever transmitting or storing plaintext.
+- **Sidebar & File Tree Drag & Drop Support (`sidebar.tsx`, `file-tree-item.tsx`):**
+  - Added external file drop support onto specific folders in `FileTreeItem`, passing target `parentFolderId` to `importFile`.
+  - Added live extraction progress UI card with active page counters and a user cancellation button.
+  - Added "استيراد مشفر للخزنة" toggle in the sidebar with automatic unlock modal invocation if the vault is locked.
+- **Test Matrix & Verification Parity:**
+  - Added `src/lib/parsers/pdf-worker-bridge.test.ts` (8 tests verifying extraction, progress, cancellation, watchdog reset, and direct engine).
+  - Added `src/test/vault-import.integration.test.ts` (3 tests verifying real crypto, zero-plaintext invariant, and tamper resistance).
+  - Updated `src/server/actions/import-file.test.ts` and `src/test/cross-user-ownership.test.ts` to the new contract.
+  - Verified 100% test pass rate across 55 test files (709 passed) and clean TypeScript compilation.
+
 ## [1.25.3] - 2026-09-11 (Comprehensive Documentation Audit, Public Plans Tracking & Subsystem Alignment)
 
 ### Added & Aligned - Documentation Governance, Public Plans & Architectural Parity
@@ -11,7 +93,7 @@ All notable changes to the LUGX project will be documented in this file.
     - [`TECHNICAL_EXECUTION_PLAN.md`](Plans/TECHNICAL_EXECUTION_PLAN.md): 20-phase technical execution roadmap derived directly from active source code, establishing exact phase status (16 phases `CLOSED`, Phase 9 `ACTIVE` session governance standard, Phases 17–18 `IN PROGRESS` / `PARTIALLY DONE`, and Phases 19–20 `PENDING`).
     - [`HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`](Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md): Complete architectural plan for the Zero-Knowledge Cloud Vault and Dual-Tier Hybrid Encryption engine, confirming 100% closure of Milestones M1 through M5.
     - [`MARKDOWN_EDITOR_MIGRATION_PLAN.md`](Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md): Complete architectural plan for the native CodeMirror 6 Markdown editor migration, confirming 100% closure of Phases 1 through 6 and elimination of legacy `@tiptap/*` dependencies.
-  - Preserved untracked local roadmap repository in `docs/.Plans/` for private planning without Git exposure.
+  - Preserved untracked local roadmaps for private planning without Git exposure.
 - **Founding Divergence Register Update (`docs/foundation/DESIGN_VS_REALITY.md`):**
   - Added the Zero-Knowledge Vault and Client-Side Hybrid Encryption subsystem to Section 1 (*Systems Added After the Founding Design*).
   - Detailed PBKDF2-SHA256 (600,000 iterations in Web Worker), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, BIP-39 12-word recovery seed, transparent local IndexedDB encryption (`LocalDeviceKey`), domain AAD binding (`vault:file:${userId}:${fileId}`), and AI safety gatekeepers.

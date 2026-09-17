@@ -1,7 +1,7 @@
 # Test Database Isolation — Neon Branch (Phase 10)
 
 Status: ✅ Implemented · Roadmap: Phase 10 of
-[`docs/.Plans/خطة التنفيذ التقنية.md`](../.Plans/خطة%20التنفيذ%20التقنية.md) ·
+[`docs/Plans/TECHNICAL_EXECUTION_PLAN.md`](../Plans/TECHNICAL_EXECUTION_PLAN.md) ·
 Background incident:
 [`records/test-database-safety.md`](../records/test-database-safety.md)
 

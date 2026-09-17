@@ -5,6 +5,10 @@
 **Date:** 2026-08-26  
 **Authoritative Commits:** Universal Markdown normalization, ETag determinism, and pure-MD file import pipeline  
 
+> [!NOTE]
+> **Historical Supersession Notice (Client-Side PDF & Vault Ingestion):**  
+> While this document accurately records the Phase 3 closure as of 2026-08-26, the file import mechanism described in Section 2.2 (Base64 payload decoding and server-side PDF extraction) was permanently superseded. Ingestion now executes 100% in the client browser via Web Worker (`pdf.worker.ts`), utilizing 2D spatial clustering for Markdown tables (`pdf-table-extractor.ts`), Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR, and dispatching pure UTF-8 strings (`textContent: string`) or client-encrypted AES-GCM ciphertext to `importFile`. See [PDF Worker Extraction & Vault Import Closure Report](./pdf-worker-extraction-and-vault-import-closure.md).
+
 ---
 
 ## 1. Executive Summary
@@ -21,10 +25,10 @@ Phase 3 establishes raw Markdown as the single source of truth across the storag
 - **Exported `MarkdownSource` Type Contract:** Formal type contract representing canonical UTF-8 Markdown across API routes, server actions, IndexedDB, and client state.
 
 ### 2. Pure Markdown File Import Pipeline (`src/server/actions/import-file.ts`)
-- **HTML Conversion Elimination:** Purged `smartConvertToHTML`. MD and TXT file imports decode base64 payloads directly into normalized Markdown.
-- **Clean PDF Text Extraction:** Linear text extraction directly into Markdown paragraphs without artificial HTML tags.
+- **HTML Conversion Elimination:** Purged `smartConvertToHTML`. File imports ingest normalized Markdown text directly without artificial HTML tags.
+- **Clean PDF Text Extraction:** In Phase 3, linear text extraction converted PDF content directly into Markdown paragraphs without HTML wrappers (later superseded by client-side 2D spatial table extraction in Web Worker).
 - **Single-Query In-Memory Title Collision Resolution:** Automatic title deduplication (`Title (1)`, `Title (2)`) preventing database `23505 unique_violation` errors on `idx_files_user_parent_title_live`.
-- **Payload Safety:** Enforced 10MB base64 payload size ceilings.
+- **Payload Safety:** Enforced 10MB payload size ceilings and null-byte sanitization.
 
 ### 3. Server Actions & Sync Pipeline Normalization
 - `createFile`, `updateFileContent`, and `PUT /api/files/[id]` normalize document text prior to optimistic locking checks, ETag hashing, and persistence.

@@ -127,7 +127,7 @@ Establish `MarkdownSource` as the sole canonical data representation across the 
 1. Define `content` explicitly as `MarkdownSource` across TypeScript types, API payloads, and test fixtures (retaining PostgreSQL `text` column type).
 2. **Content Normalization & ETag Determinism:** Apply `normalizeMarkdownSource` (converting `\r\n` to `\n` and enforcing Unicode NFC) prior to ETag calculation and storage in IndexedDB and PostgreSQL, eliminating phantom 412 conflicts across Windows, macOS, and Linux.
 3. Ingest `.md` and `.txt` imports directly as raw Markdown without invoking `smartConvertToHTML`.
-4. Convert text extracted from imported PDF documents into raw Markdown with an explicit layout degradation disclosure, avoiding claims of original formatting fidelity.
+4. Extract PDF documents 100% on the client via Web Worker, converting text and tabular structures into canonical Markdown via 2D spatial clustering (`pdf-table-extractor.ts`) and Arabic Unicode normalization (`arabic-normalizer.ts`), eliminating intermediate HTML and server-side binary parsing.
 5. Update `IDBFile`, base snapshots, queue items, and fixtures to designate content strictly as Markdown.
 6. Compute ETags deterministically from normalized Markdown bytes; update version, ETag, base snapshot, and `isDirty` atomically.
 7. Prohibit HTML sanitizers from running against stored Markdown; sanitization is restricted to ephemeral preview renderings.

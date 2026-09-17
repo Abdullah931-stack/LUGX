@@ -39,7 +39,7 @@ In the original founding specifications, Supabase Storage (`user-files` bucket) 
 - **`docs/architecture/file-ownership-and-versioning.md`**: Updated description of cross-user ownership test coverage.
 - **`docs/README.md`**: Added Phase 14 closure record to the reference table.
 - **`docs/CHANGELOG.md`**: Documented release 1.10.0 changes.
-- **`docs/.Plans/خطة التنفيذ التقنية.md`**: Marked Phase 14 as `CLOSED` and opened transition gate to Phase 15.
+- **`docs/Plans/TECHNICAL_EXECUTION_PLAN.md`**: Marked Phase 14 as `CLOSED` and opened transition gate to Phase 15.
 
 ---
 

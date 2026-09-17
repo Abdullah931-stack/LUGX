@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-53%20Suites%20·%20694%2F694%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 694 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-60%20Suites%20·%20740%2F740%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 740 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
 </p>
 
@@ -46,6 +46,7 @@
   - [5. Fail-Closed Stripe Subscription Lifecycle & State Machine](#5-fail-closed-stripe-subscription-lifecycle--state-machine)
   - [6. Scheduled Maintenance & Cron Automation](#6-scheduled-maintenance--cron-automation)
   - [7. Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem](#7-zero-knowledge-cloud-vault--client-side-hybrid-encryption-subsystem)
+  - [8. Client-Side Document Ingestion, Spatial Table Extractor & Arabic Normalization Pipeline](#8-client-side-document-ingestion-spatial-table-extractor--arabic-normalization-pipeline)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -66,6 +67,7 @@
 - 💳 **Fail-Closed Stripe Subscriptions:** 8-state exhaustive webhook state machine with database-level uniqueness constraints preventing duplicate entitlements.
 - 🛡️ **Smart Hybrid Database Client:** Dual-protocol architecture supporting `@neondatabase/serverless` (HTTP/WebSocket) for Neon Cloud serverless edges and `pg.Pool` (TCP) for local Docker, CI, and development environments.
 - 🔒 **Zero-Knowledge Cloud Vault & Hybrid Encryption:** Client-side end-to-end encryption (`AES-GCM-256` with domain AAD `vault:file:${userId}:${fileId}`), Web Worker-isolated key derivation (`PBKDF2-SHA256` with 600K iterations), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, 12-word BIP-39 recovery seed, transparent local IndexedDB encryption, and dual-layer AI safety gatekeepers.
+- 📄 **Client-Side PDF & Multi-Modal Document Extraction:** 100% in-browser Web Worker text extraction (`pdfjs-dist`), 2D spatial clustering algorithm for automatic GitHub-Flavored Markdown tables, pure TypeScript Arabic Unicode normalization (de-spacing, un-shaping, BiDi correction), embedded font corruption detection (PUA range analysis), and on-demand bilingual OCR (`tesseract.js`).
 
 ---
 
@@ -273,7 +275,7 @@ The test suite is partitioned into two isolated tiers to prevent local tests fro
 | `npm run test:all`  | Both suites sequentially     | Comprehensive pre-deployment verification.                             |
 
 ```bash
-# Execute unit/contract test suites (53 test files, 694 tests)
+# Execute unit/contract test suites (60 test files, 740 tests)
 npm run test
 
 # Execute live database integration test suites
@@ -445,6 +447,41 @@ flowchart TD
 - **Dual-Layer AI Safety Gatekeepers:**
   - Strict UI badge suppression and server-side HTTP 403 rejection on `/api/ai/stream` for encrypted files prevent accidental plaintext leaks to external model providers.
 
+### 8. Client-Side Document Ingestion, Spatial Table Extractor & Arabic Normalization Pipeline
+
+LUGX eliminates server-side PDF processing entirely, purging all legacy `pdf-parse` dependencies and heavy binary uploads. Document ingestion executes 100% inside the browser via isolated Web Workers, translating unstructured binary documents into structured, clean GitHub-Flavored Markdown.
+
+```mermaid
+flowchart TD
+    File["PDF / MD / TXT Upload"] --> Detector{"Document Format?"}
+    
+    Detector -->|MD / TXT| PlainText["Read UTF-8 Plaintext via FileReader"]
+    Detector -->|PDF| Worker["Web Worker: pdf.worker.ts (pdfjs-dist)<br/>Page Memory Cleanup (page.cleanup / destroy)"]
+    
+    Worker --> SpatialEngine["2D Spatial Clustering Engine (pdf-table-extractor.ts)<br/>Y-Tolerance: 3.5pt · X-Gap: 25pt · RTL Column Alignment"]
+    SpatialEngine --> Normalizer["Arabic Unicode Normalizer (arabic-normalizer.ts)<br/>De-spacing · NFKC Un-shaping · BiDi Preservation"]
+    Normalizer --> PUAFilter{"Font PUA Scan (pdf-corruption-detector.ts)"}
+    
+    PUAFilter -->|Clean| CanonicalMD["Structured GFM Markdown"]
+    PUAFilter -->|Corrupted (>15% PUA)| PromptModal["PdfCorruptedFontDialog<br/>Prompt User for On-Demand OCR"]
+    
+    PromptModal -->|Run OCR| OCREngine["On-Demand Bilingual OCR (pdf-ocr-engine.ts)<br/>tesseract.js (ara+eng) · Offscreen Canvas"]
+    OCREngine --> CanonicalMD
+    PlainText --> CanonicalMD
+    
+    CanonicalMD --> VaultOption{"Destination Vault?"}
+    VaultOption -->|Standard| ServerImport["importFile(textContent: string)<br/>10MB Payload Limit · Null-Byte Scrubbing"]
+    VaultOption -->|Encrypted Vault| VaultCrypto["cryptoWorkerBridge.encryptAESGCM()<br/>Deterministic AAD: vault:file:${userId}:${fileId}"]
+    VaultCrypto --> ServerImport
+```
+
+- **Web Worker PDF Parsing (`src/lib/workers/pdf.worker.ts` & `src/lib/parsers/pdf-worker-bridge.ts`):** Offloads `pdfjs-dist` to an isolated worker thread. Per-page garbage collection (`page.cleanup()`) and document destruction (`pdfDoc.destroy()`) prevent V8 heap accumulation. Supports dual-mode execution (browser Web Worker vs. headless Node.js runner).
+- **2D Spatial Markdown Table Extractor (`src/lib/parsers/pdf-table-extractor.ts`):** Detects multi-column tabular data using 2D geometric clustering (`Y_TOLERANCE = 3.5pt`, `COLUMN_GAP_THRESHOLD = 25pt`), handles RTL column reordering for Arabic tables, and produces standard GFM table markup (`| Col 1 | Col 2 |`). Configurable and toggleable via user settings (`pdf-settings.ts`) and dialog quick-actions.
+- **Arabic Unicode Normalizer (`src/lib/parsers/arabic-normalizer.ts`):** Pure TypeScript normalizer that resolves disjointed Arabic glyphs via lookahead de-spacing (`\u0600-\u06FF`), normalizes presentation forms (NFKC), and preserves BiDi directionality across mixed English words, numbers, and dates.
+- **Embedded Font Corruption Detection (`src/lib/parsers/pdf-corruption-detector.ts`):** Analyzes extracted characters against Unicode Private Use Area (PUA) ranges (`0xE000-0xF8FF`, `0xF0000-0x10FFFD`). Proactively alerts users when non-standard font encodings corrupt text and suggests visual OCR.
+- **On-Demand Bilingual OCR Engine (`src/lib/parsers/pdf-ocr-engine.ts`):** Integrates dynamic `tesseract.js` with `ara+eng` trained data cached in Cache Storage. Renders PDF canvases at 2.0x scale with zero initial bundle bloat.
+- **Direct Vault Encrypted Import:** Enables direct one-click ingestion into encrypted vaults. Files are encrypted client-side using `AES-GCM-256` with deterministic domain AAD (`vault:file:${userId}:${fileId}`) before leaving the browser.
+
 ---
 
 ## Security Architecture
@@ -458,6 +495,7 @@ flowchart TD
 | **Financial Webhook Security**  | Cryptographic HMAC signature verification (`stripe.webhooks.constructEvent`) | Mitigates replay attacks and validates webhook payload authenticity before DB mutation.       |
 | **Database Injection Safety**   | Drizzle ORM parameterized SQL queries                                        | Eliminates SQL injection across all dynamic query and transaction paths.                      |
 | **Zero-Knowledge Encryption**   | AES-GCM-256 · PBKDF2 600K Web Worker · WebAuthn PRF · BIP-39                 | End-to-end Zero-Knowledge storage, domain AAD (`vault:file:${userId}:${fileId}`), RAM zeroing. |
+| **Secure Document Ingestion**   | Web Worker client-side extraction · 10MB text limit · Null-byte stripping   | Zero binary server processing, eliminates server-side PDF attack surface, protects DB. |
 
 ---
 

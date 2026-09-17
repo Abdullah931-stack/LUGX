@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary & Objective
 
-This document records the final architectural hardening, adversarial verification, and closure evidence for **Phase 13: Stripe Webhook and Subscriptions Lifecycle** of the technical roadmap (`docs/.Plans/خطة التنفيذ التقنية.md`, lines 402–442).
+This document records the final architectural hardening, adversarial verification, and closure evidence for **Phase 13: Stripe Webhook and Subscriptions Lifecycle** of the technical roadmap ([TECHNICAL_EXECUTION_PLAN.md](../Plans/TECHNICAL_EXECUTION_PLAN.md)).
 
 The objective was to transform Stripe webhook ingestion and subscription lifecycle processing into a **durable, idempotent, fail-closed, atomic, and period-accurate** system ready for mission-critical production workloads.
 
