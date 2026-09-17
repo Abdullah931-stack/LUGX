@@ -70,7 +70,7 @@ Pre-generates UUIDs and computes strong SHA-256 ETags in-memory before issuing t
 - **Arabic Unicode Normalizer (`arabic-normalizer.ts`):** Performs lookahead de-spacing on disjointed Arabic characters, NFKC presentation forms un-shaping, and BiDi directionality preservation.
 - **On-Demand Bilingual OCR & Font Corruption Detector:** Detects Private Use Area (PUA) glyphs in corrupted embedded fonts (`pdf-corruption-detector.ts`) and triggers an on-demand bilingual OCR engine (`pdf-ocr-engine.ts` with `tesseract.js`).
 - **Direct Vault Encrypted Import:** Encrypts content directly on the client with AES-GCM-256 using deterministic AAD (`vault:file:${userId}:${fileId}`) and optimistic IndexedDB cache persistence before server dispatch.
-- **Server Payload Safeguards:** Enforces a strict 10MB text string ceiling and strips toxic PostgreSQL null bytes (`\0`).
+- **Server Ingestion Safeguards & Adversarial Defense:** Enforces a strict 10MB UTF-8 byte limit, checks magic bytes for disguised binaries (`isDisguisedBinary`), strips directory traversal patterns and invalid OS characters (`sanitizeFilename`), eliminates PostgreSQL null bytes (`\0`), counts words via an $O(1)$ memory streaming regex, and prevents infinite loops with a title deduplication circuit breaker (`counter <= 100`).
 
 ### E. Cascading Soft-Delete for Folders (`deleteFile`)
 Deleting a folder cascades the `deletedAt` tombstone to all recursive descendant files and subfolders, preventing sync routes from exposing orphaned children whose parent folder is deleted.

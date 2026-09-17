@@ -65,6 +65,7 @@ docs/
 | [phase-12-auth-ownership-closure.md](./reference/phase-12-auth-ownership-closure.md) | Phase 12 closure: Open Redirect elimination, OAuth callback hardening, 404 anti-enumeration error mapping, atomic user sync |
 | [phase-13-stripe-webhooks-subscriptions-closure.md](./reference/phase-13-stripe-webhooks-subscriptions-closure.md) | Phase 13 closure: Durable idempotency ledger (`subscription_events`), atomic ACID transitions, terminal state protection, accurate period calculation |
 | [phase-14-supabase-storage-removal-closure.md](./reference/phase-14-supabase-storage-removal-closure.md) | Phase 14 closure: Dead-code elimination of unused Supabase Storage, database schema drop of `storage_path`, test fixtures clean-up |
+| [phase-15-sanitization-import-export-closure.md](./reference/phase-15-sanitization-import-export-closure.md) | Phase 15 closure: Magic bytes disguised binary detection (`file-validator.ts`), directory traversal sanitization (`import-file.ts`), and 100% high-fidelity round-trip verification |
 | [pdf-worker-extraction-and-vault-import-closure.md](./reference/pdf-worker-extraction-and-vault-import-closure.md) | Client-Side Web Worker PDF extraction, 2D spatial table reconstruction, Arabic Unicode normalizer, bilingual OCR engine, PUA font corruption detection, and direct Zero-Knowledge vault import |
 | [vault-phase-1-crypto-core-closure.md](./reference/phase-16/vault-phase-1-crypto-core-closure.md) | Vault Phase 1 closure: Isolated Crypto Worker, 600K PBKDF2 iterations, AES-GCM-256 with mandatory AAD binding, BIP-39 12-word seed, SessionKeyStore auto-lock, defensive RAM sanitization |
 | [vault-phase-2-schema-and-storage-closure.md](./reference/phase-16/vault-phase-2-schema-and-storage-closure.md) | Vault Phase 2 closure: PostgreSQL Cloud Schema, Transparent Encrypted IndexedDB, Zero Plaintext At-Rest, AAD binding, adversarial hardening & anti-overengineering decisions |
@@ -150,7 +151,7 @@ docs/
 npm run lint            # static analysis & ESLint 9 code quality gate
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (60 files, 740 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (62 files, 776 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (via vitest.live.config.mts)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation

@@ -84,6 +84,12 @@ Documents in LUGX are stored and processed exclusively as pure UTF-8 Markdown te
 - **Zero HTML Storage Invariant**: The storage layer (PostgreSQL and IndexedDB) persists pure Markdown text without HTML wrapping or translation.
 - **Client-Safe Native Rendering**: The CodeMirror 6 editor and streaming preview surfaces operate directly on Markdown strings and AST token decorations, completely eliminating `dangerouslySetInnerHTML` and legacy HTML sanitizers (`sanitize.server.ts`, `sanitize-client.ts`, `dompurify`).
 
+### 3.3 Ingestion Security, Magic Bytes & Traversal Defense (`src/lib/parsers/file-validator.ts`, `src/server/actions/import-file.ts`)
+- **Disguised Binary Inspection (`isDisguisedBinary`)**: Inspects byte streams for known executable and compressed archive magic bytes (Windows PE `MZ` with binary DOS header markers, Linux ELF `\x7fELF`, macOS Mach-O, ZIP `PK\x03\x04`, 7-Zip, and RAR). Files with disguised executable payloads attempting to bypass extension restrictions are rejected in $O(1)$ time prior to full-string processing. Genuine text documents starting with acronyms like "MZ" are safely exempted via binary header discrimination.
+- **Filename Path Traversal Sanitization (`sanitizeFilename`)**: Filenames undergo rigorous sanitization stripping directory traversal sequences (`../`, `..\\`), reserved OS characters (`<>:"/\\|?*`), and control characters (`\x00-\x1F\x7F`). Sibling file title collisions are resolved via single-query in-memory deduplication with a loop circuit breaker (`counter <= 100`) and a safe 480-character base title boundary.
+- **PostgreSQL Null-Byte Elimination**: Pre-cleans incoming strings by eliminating all `\0` bytes, preventing raw PostgreSQL query truncation or encoding crashes.
+- **GFM Table Line Integrity (`pdf-table-extractor.ts`)**: Replaces embedded carriage returns and line breaks (`[\r\n]+`) in table cell items with spaces, preventing multi-line cells from terminating table rows prematurely and preserving strict GitHub-Flavored Markdown syntax.
+
 ---
 
 ## 4. Dual-Tier Hybrid Encryption & Isolated Crypto Worker (`src/lib/sync/encryption.ts`, `src/lib/workers/crypto.worker.ts`)

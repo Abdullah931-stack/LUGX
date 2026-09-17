@@ -75,5 +75,25 @@ describe('Spatial PDF Table Extractor', () => {
         expect(extractSpatialPdfTableContent([])).toBe('');
         expect(extractSpatialPdfTableContent([{ str: '   ', x: 0, y: 0 }])).toBe('');
     });
+
+    it('replaces embedded newlines within table cells with spaces to prevent row breaking', () => {
+        const items: SpatialTextItem[] = [
+            // Row 1
+            { str: 'Multi-line\nHeader', x: 50, y: 700, width: 80 },
+            { str: 'Description\r\nColumn', x: 250, y: 700, width: 80 },
+            // Row 2
+            { str: 'Item 1\nDetails', x: 50, y: 670, width: 80 },
+            { str: 'Value with\r\nembedded break', x: 250, y: 670, width: 80 },
+        ];
+
+        const md = extractSpatialPdfTableContent(items);
+        const lines = md.trim().split('\n');
+
+        // Must produce exactly 3 lines (header, delimiter, data row 1) - no stray wrapped lines
+        expect(lines).toHaveLength(3);
+        expect(lines[0]).toBe('| Multi-line Header | Description Column |');
+        expect(lines[1]).toBe('| :--- | :--- |');
+        expect(lines[2]).toBe('| Item 1 Details | Value with embedded break |');
+    });
 });
 

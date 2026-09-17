@@ -185,9 +185,11 @@ function formatLineText(items: SpatialTextItem[]): string {
 }
 
 /**
- * Formats and normalizes text within a single table cell, escaping pipes.
+ * Formats and normalizes text within a single table cell, stripping newlines and escaping pipes.
  */
 function formatCellText(items: SpatialTextItem[]): string {
-    return formatLineText(items).replace(/\|/g, '\\|');
+    return formatLineText(items)
+        .replace(/[\r\n]+/g, ' ')
+        .replace(/\|/g, '\\|');
 }
 

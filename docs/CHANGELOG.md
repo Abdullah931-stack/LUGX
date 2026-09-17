@@ -2,6 +2,29 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.25.6] - 2026-09-17 (Content Sanitization, Disguised Binary Detection, GFM Table Hardening & Adversarial Ingestion Defense)
+
+### Added & Hardened - Phase 15 Closure & Adversarial Ingestion Hardening
+
+- **Disguised Executable & Binary Magic Byte Detection (`src/lib/parsers/file-validator.ts`):**
+  - Implemented fast in-memory byte inspector (`isDisguisedBinary`) detecting disguised Windows PE (`MZ` with binary DOS header markers), Linux ELF (`\x7fELF`), macOS Mach-O (32-bit, 64-bit, FAT), ZIP/JAR/Office (`PK\x03\x04`), 7-Zip, and RAR archives disguised as `.md` or `.txt`.
+  - Added binary DOS header marker discrimination ensuring legitimate plain text documents starting with acronyms (such as "MZ") pass safely without false-positive rejection.
+  - Accompanied by unit test suite in `src/lib/parsers/file-validator.test.ts` (23 tests).
+- **GFM Table Line Integrity Protection (`src/lib/parsers/pdf-table-extractor.ts`):**
+  - Updated `formatCellText` to replace embedded carriage returns and newlines (`[\r\n]+`) with spaces while preserving pipe escaping (`\|`).
+  - Guarantees that multi-line cell items extracted from PDF or OCR never break Markdown table rows into isolated text fragments, preserving strict CommonMark / GFM table structure.
+- **Server Action Memory Optimization & Circuit Breakers (`src/server/actions/import-file.ts`):**
+  - Reordered magic byte validation to execute in $O(1)$ memory prior to full-string normalization.
+  - Replaced array-allocating word counting with an $O(1)$ streaming regex scanner (`/\S+/g`), eliminating ~100MB of heap allocation on large 10MB document imports.
+  - Added defensive filename title truncation (`baseTitle.slice(0, 480)`) and iteration circuit breaker (`counter <= 100`) preventing potential infinite loops in title deduplication.
+  - Enforced strict 10MB UTF-8 byte limit and PostgreSQL null-byte (`\0`) scrubbing.
+- **Cross-System Round-Trip Integration Test Suite (`src/test/export-import-roundtrip.integration.test.ts`):**
+  - Added 6 automated end-to-end round-trip integration tests asserting 100% mathematical text identity across complex Markdown structures, Arabic RTL phrasing, 2D spatial GFM tables, fenced code blocks, path traversal sanitization, and adversarial `<script>` injections.
+- **Repository Verification Parity:**
+  - 100% test pass rate across 62 test suites (776 tests passed) in `vitest`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`).
+  - Zero ESLint warnings or errors (`npm run lint`).
+
 ## [1.25.5] - 2026-09-17 (Arabic PDF Normalization, Spatial Markdown Table Extraction & On-Demand Bilingual OCR)
 
 ### Added & Enhanced - High-Fidelity Arabic PDF Ingestion & Spatial Table Generation

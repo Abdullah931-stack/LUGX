@@ -234,4 +234,63 @@ describe("importFile Server Action (Client-Extracted Text & Vault Pipeline)", ()
             expect(result.error).toBe("Valid encryption metadata is required for encrypted import");
         });
     });
+
+    describe("Sanitization and Security Hardening", () => {
+        it("rejects disguised Windows PE executable in text content", async () => {
+            const fakePePayload = "MZ\x90\x00\x03\x00\x00\x00Some hidden binary payload";
+            const result = await importFile("script.md", fakePePayload, "md");
+            expect(result.success).toBe(false);
+            expect(result.error).toContain("disguised binary detected (Windows Executable (PE))");
+        });
+
+        it("rejects disguised Linux ELF executable in text content", async () => {
+            const fakeElfPayload = "\x7fELF\x02\x01\x01\x00Some ELF binary code";
+            const result = await importFile("notes.txt", fakeElfPayload, "txt");
+            expect(result.success).toBe(false);
+            expect(result.error).toContain("disguised binary detected (Linux Executable (ELF))");
+        });
+
+        it("rejects disguised ZIP archive in text content", async () => {
+            const fakeZipPayload = "PK\x03\x04\x14\x00\x00\x00CompressedArchiveContent";
+            const result = await importFile("bundle.md", fakeZipPayload, "md");
+            expect(result.success).toBe(false);
+            expect(result.error).toContain("disguised binary detected (ZIP Archive)");
+        });
+
+        it("sanitizes filename to prevent directory traversal and strips illegal characters", async () => {
+            const maliciousName = "../../..\\..\\secret<name>:*.md";
+            const result = await importFile(maliciousName, "# Safe Content", "md");
+            expect(result.success).toBe(true);
+            expect(result.data).toBeDefined();
+            // All ../ and illegal characters <>:"/\|?* should be stripped
+            expect(result.data?.title).not.toContain("../");
+            expect(result.data?.title).not.toContain("..\\");
+            expect(result.data?.title).not.toContain("<");
+            expect(result.data?.title).not.toContain(">");
+            expect(result.data?.title).not.toContain(":");
+            expect(result.data?.title).not.toContain("*");
+            expect(result.data?.title).toBe("secretname");
+        });
+
+        it("accepts genuine plain text starting with MZ characters without false positive PE rejection", async () => {
+            const mzContent = "MZ: Architecture and Systems Engineering notes for LUGX platform.";
+            const result = await importFile("mz-notes.md", mzContent, "md");
+            expect(result.success).toBe(true);
+            expect(result.data?.content).toBe(mzContent);
+            expect(result.data?.wordCount).toBe(9);
+        });
+
+        it("resolves title collisions safely with circuit breaker and bounded title length", async () => {
+            vi.mocked(db.query.files.findMany).mockResolvedValueOnce([
+                { title: "Long Document" },
+                { title: "Long Document (1)" },
+                { title: "Long Document (2)" },
+            ] as any);
+
+            const result = await importFile("Long Document.md", "Content", "md");
+            expect(result.success).toBe(true);
+            expect(result.data?.title).toBe("Long Document (3)");
+        });
+    });
 });
+

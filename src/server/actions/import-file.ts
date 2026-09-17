@@ -12,6 +12,8 @@ import { files, type FileEncryptionMetadata } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { randomUUID } from "crypto";
+import { sanitizeFilename } from "@/lib/exporters/utils/validator";
+import { isDisguisedBinary } from "@/lib/parsers/file-validator";
 
 export interface ImportFileResult {
     success: boolean;
@@ -98,9 +100,6 @@ export async function importFile(
         let newFileId: string;
         let finalMetadata: FileEncryptionMetadata | null = null;
 
-        // Strip null bytes to protect PostgreSQL text fields
-        const sanitizedInput = textContent.replace(/\0/g, '');
-
         if (isEncrypted) {
             // Zero-Knowledge Vault: Client pre-generated UUID must match AAD: vault:file:${userId}:${fileId}
             if (!encryption?.fileId || !UUID_REGEX.test(encryption.fileId)) {
@@ -112,12 +111,22 @@ export async function importFile(
             }
 
             newFileId = encryption.fileId;
-            finalContent = sanitizedInput;
+            finalContent = textContent.replace(/\0/g, '');
             finalMetadata = encryption.encryptionMetadata;
             wordCount = 0; // Word count cannot be evaluated on zero-knowledge ciphertext
         } else {
-            // Plain text: normalize Markdown source
-            finalContent = normalizeMarkdownSource(sanitizedInput);
+            // Fast O(1) magic bytes check before executing full-string normalization
+            const headBytes = Buffer.from(textContent.slice(0, 16), 'binary');
+            const binaryCheck = isDisguisedBinary(headBytes);
+            if (binaryCheck.isBinary) {
+                return {
+                    success: false,
+                    error: `Invalid file format: disguised binary detected (${binaryCheck.type})`,
+                };
+            }
+
+            // Plain text: normalize Markdown source (automatically strips \0, CRLF -> LF, and NFC)
+            finalContent = normalizeMarkdownSource(textContent);
             if (!finalContent.trim()) {
                 return {
                     success: false,
@@ -128,12 +137,18 @@ export async function importFile(
             newFileId = encryption?.fileId && UUID_REGEX.test(encryption.fileId)
                 ? encryption.fileId
                 : randomUUID();
-            wordCount = finalContent.split(/\s+/).filter(Boolean).length;
+
+            // O(1) memory streaming regex word counter avoiding large array allocations on big files
+            const wordRegex = /\S+/g;
+            while (wordRegex.test(finalContent)) {
+                wordCount++;
+            }
         }
 
-        // Remove file extension from title and sanitize length
-        const rawTitle = fileName.replace(/\.(pdf|md|txt)$/i, '');
-        const baseTitle = (rawTitle || "Imported Document").trim().slice(0, 500);
+        // Sanitize file name to prevent path traversal and illegal characters
+        const safeName = sanitizeFilename(fileName);
+        const rawTitle = safeName.replace(/\.(pdf|md|txt)$/i, '');
+        const baseTitle = (rawTitle || "Imported Document").trim().slice(0, 480);
 
         // Resolve title collisions in destination folder via single query
         const siblings = await db.query.files.findMany({
@@ -148,7 +163,7 @@ export async function importFile(
         const existingTitles = new Set(siblings.map((s) => s.title));
         let title = baseTitle;
         let counter = 1;
-        while (existingTitles.has(title)) {
+        while (existingTitles.has(title) && counter <= 100) {
             title = `${baseTitle} (${counter})`.slice(0, 500);
             counter++;
         }

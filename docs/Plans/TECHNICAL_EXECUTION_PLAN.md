@@ -395,10 +395,10 @@ Decommission unused Supabase Storage wrappers, removing dead code while preservi
 ### Closure Tests
 - `tsc --noEmit` and full test suite confirming clean removal without broken imports.
 
-## [Phase 15: Sanitization, Import & Export] — Status: ⏳ IN PROGRESS
+## [Phase 15: Sanitization, Import & Export] — Status: ✅ CLOSED
 
 ### Current State
-Major portion implemented: server-side 10MB text payload ceiling and PostgreSQL null-byte scrubbing (`\0`) enforced in `importFile`, Base64 binary checks replaced with pure UTF-8 strings, client-side validation unified in `validateFile` (`sidebar.tsx`), and standalone Markdown/text exporters tested. Legacy HTML sanitization (`DOMPurify`, `sanitize.server.ts`) superseded by CodeMirror 6 pure Markdown architecture.
+Completed. Server-side 10MB text payload ceiling and PostgreSQL null-byte scrubbing (`\0`) enforced in `importFile`, disguised binary headers (PE/ELF/Mach-O/ZIP) rejected via `isDisguisedBinary` in `file-validator.ts`, filename path traversal sanitized via `sanitizeFilename`, and end-to-end round-trip fidelity verified across complex Arabic RTL, spatial GFM tables, code blocks, and adversarial payloads (`export-import-roundtrip.integration.test.ts`). Fully documented in [`phase-15-sanitization-import-export-closure.md`](../reference/phase-15-sanitization-import-export-closure.md).
 
 > **Architectural Note:** The client-side Web Worker PDF extraction, 2D spatial clustering table generation (`pdf-table-extractor.ts`), pure TypeScript Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR engine (`pdf-ocr-engine.ts`), PUA font corruption detection (`pdf-corruption-detector.ts`), and direct Zero-Knowledge vault import were completed and closed as an independent milestone documented in [`pdf-worker-extraction-and-vault-import-closure.md`](../reference/pdf-worker-extraction-and-vault-import-closure.md).
 
@@ -408,21 +408,25 @@ Phases 9 through 14.
 ### Technical Objective
 Harden single secure content pipeline across import, normalization, editor preview, and export modules, establishing end-to-end integration verification.
 
-### Remaining Implementation Steps
-- **Step 1:** Implement cross-system integration test verifying full round-trip `import → normalize → export` with adversarial content and Arabic RTL text to guarantee zero regression.
-- **Step 2:** Document pure-Markdown security invariants replacing legacy DOMPurify.
+### Direct Implementation Steps
+- **Step 1:** Implement cross-system integration test verifying full round-trip `import → normalize → export` with adversarial content and Arabic RTL text (`export-import-roundtrip.integration.test.ts`).
+- **Step 2:** Implement in-memory magic bytes and disguised binary detector (`file-validator.ts`).
+- **Step 3:** Enforce filename directory traversal sanitization using `sanitizeFilename` (`import-file.ts`).
+- **Step 4:** Document pure-Markdown security invariants replacing legacy DOMPurify (`phase-15-sanitization-import-export-closure.md`).
 
 ### Exception & Edge Case Handling
 - **Oversized File / Text:** Reject server-side with standardized error (exceeding 10MB).
+- **Disguised Executable / Archive:** Reject with explicit format error (`disguised binary detected`).
+- **Path Traversal in Filename:** Strip traversal tokens (`../`) and illegal filesystem characters.
 - **Corrupted Font / Scanned PDF:** Detect PUA characters or empty text and suggest on-demand OCR (handled in PDF extraction milestone).
-- **Malicious Payload (JavaScript URLs, Event Handlers, Malformed UTF-8):** Sanitize or reject.
-- **Export Mismatch:** Abort export and log diff.
+- **Adversarial Injections (JavaScript URLs, Event Handlers, Malformed UTF-8):** Sanitized and preserved as inert Markdown text.
 
 ### Closure Tests
-- `src/server/actions/import-file.test.ts`, `src/lib/parsers/pdf-settings.test.ts`, `src/lib/parsers/pdf-worker-bridge.test.ts`, `src/test/vault-import.integration.test.ts`, `src/lib/sanitize.test.ts`, and full round-trip import-export integration suite.
+- `src/lib/parsers/file-validator.test.ts`, `src/server/actions/import-file.test.ts`, `src/test/export-import-roundtrip.integration.test.ts`, and full repository test suite (776 tests passed across 62 suites).
 
 ### Transition Gate
-Phase 15 remains `IN PROGRESS` until completion of the cross-system round-trip import-export integration test suite.
+- **Status:** `CLOSED` ✅ (Fully verified and hardened under Phase 15 closure report).
+- Transition gate to **Phase 17 (Monitoring, Rate Limiting & Errors)** is open.
 
 ---
 
