@@ -2,14 +2,14 @@
 
 /**
  * Server Action: Import File
- * Handles PDF/MD/TXT file imports with text extraction and parent ownership validation
+ * Handles PDF/MD/TXT file imports with direct UTF-8 text/ciphertext payloads,
+ * parent folder ownership validation, and Zero-Knowledge Vault encrypted import.
  */
 
 import { getUser } from "@/lib/supabase/server";
 import { db } from "@/lib/db";
-import { files } from "@/lib/db/schema";
+import { files, type FileEncryptionMetadata } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
-import { extractPdfText, isValidPDF } from "@/lib/parsers/pdf-parser";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { randomUUID } from "crypto";
 
@@ -24,23 +24,30 @@ export interface ImportFileResult {
     error?: string;
 }
 
+export interface ImportEncryptionOptions {
+    isEncrypted?: boolean;
+    encryptionMetadata?: FileEncryptionMetadata | null;
+    fileId?: string;
+}
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_TEXT_LENGTH = 10 * 1024 * 1024; // 10MB UTF-8 text limit
+
 /**
- * Import a file and extract its text content as pure Markdown
- * 
- * Layout Loss Policy for PDF:
- * Extracted PDF text is normalized to linear Markdown paragraphs. Complex page layouts,
- * columns, headers, footers, and embedded media are not preserved.
- * 
- * @param fileName - Name of the file
- * @param fileContent - File content as base64 string
- * @param fileType - Type of file (pdf/md/txt)
+ * Import a file by saving its extracted text or encrypted ciphertext into Neon DB.
+ *
+ * @param fileName - Original name of the file (e.g. document.pdf, notes.md)
+ * @param textContent - Extracted UTF-8 plain text or AES-GCM ciphertext Base64 string
+ * @param fileType - Type of file ('pdf' | 'md' | 'txt')
  * @param parentFolderId - Optional parent folder ID
+ * @param encryption - Optional Zero-Knowledge Vault encryption parameters
  */
 export async function importFile(
     fileName: string,
-    fileContent: string,
+    textContent: string,
     fileType: 'pdf' | 'md' | 'txt',
-    parentFolderId: string | null = null
+    parentFolderId: string | null = null,
+    encryption?: ImportEncryptionOptions
 ): Promise<ImportFileResult> {
     try {
         const user = await getUser();
@@ -48,9 +55,21 @@ export async function importFile(
             return { success: false, error: "User not authenticated" };
         }
 
-        // Defense-in-depth: Validate Base64 payload size (max 10MB decoded binary ≈ 14MB base64)
-        const MAX_BASE64_LENGTH = 14 * 1024 * 1024;
-        if (!fileContent || typeof fileContent !== 'string' || fileContent.length > MAX_BASE64_LENGTH) {
+        // Validate text content payload
+        if (typeof textContent !== 'string') {
+            return { success: false, error: "Invalid text content payload" };
+        }
+
+        if (textContent.trim().length === 0) {
+            return {
+                success: false,
+                error: fileType === 'pdf'
+                    ? "PDF contains no extractable text"
+                    : "File content is empty or contains no extractable text"
+            };
+        }
+
+        if (Buffer.byteLength(textContent, 'utf-8') > MAX_TEXT_LENGTH) {
             return { success: false, error: "File exceeds maximum size limit (10MB)" };
         }
 
@@ -73,39 +92,50 @@ export async function importFile(
             }
         }
 
-        let textContent: string;
+        const isEncrypted = Boolean(encryption?.isEncrypted);
+        let finalContent: string;
         let wordCount = 0;
+        let newFileId: string;
+        let finalMetadata: FileEncryptionMetadata | null = null;
 
-        // Process based on file type
-        if (fileType === 'pdf') {
-            // Decode base64 to Buffer
-            const buffer = Buffer.from(fileContent, 'base64');
+        // Strip null bytes to protect PostgreSQL text fields
+        const sanitizedInput = textContent.replace(/\0/g, '');
 
-            // Validate PDF
-            if (!isValidPDF(buffer)) {
-                return { success: false, error: "Invalid PDF file" };
+        if (isEncrypted) {
+            // Zero-Knowledge Vault: Client pre-generated UUID must match AAD: vault:file:${userId}:${fileId}
+            if (!encryption?.fileId || !UUID_REGEX.test(encryption.fileId)) {
+                return { success: false, error: "Valid UUID fileId is required for encrypted import" };
             }
 
-            // Extract text only (NO IMAGES, linear layout)
-            const pdfResult = await extractPdfText(buffer);
-            textContent = normalizeMarkdownSource(pdfResult.text);
-            wordCount = pdfResult.wordCount;
-
-            if (!textContent.trim()) {
-                return { success: false, error: "PDF contains no extractable text" };
+            if (!encryption?.encryptionMetadata || typeof encryption.encryptionMetadata !== 'object' || !encryption.encryptionMetadata.iv) {
+                return { success: false, error: "Valid encryption metadata is required for encrypted import" };
             }
+
+            newFileId = encryption.fileId;
+            finalContent = sanitizedInput;
+            finalMetadata = encryption.encryptionMetadata;
+            wordCount = 0; // Word count cannot be evaluated on zero-knowledge ciphertext
         } else {
-            // For MD/TXT files, decode from base64 preserving pure markdown formatting
-            const rawText = Buffer.from(fileContent, 'base64').toString('utf-8');
-            textContent = normalizeMarkdownSource(rawText);
-            wordCount = textContent.split(/\s+/).filter(Boolean).length;
+            // Plain text: normalize Markdown source
+            finalContent = normalizeMarkdownSource(sanitizedInput);
+            if (!finalContent.trim()) {
+                return {
+                    success: false,
+                    error: fileType === 'pdf' ? "PDF contains no extractable text" : "File contains no extractable text",
+                };
+            }
+
+            newFileId = encryption?.fileId && UUID_REGEX.test(encryption.fileId)
+                ? encryption.fileId
+                : randomUUID();
+            wordCount = finalContent.split(/\s+/).filter(Boolean).length;
         }
 
-        // Remove file extension from title and sanitize
+        // Remove file extension from title and sanitize length
         const rawTitle = fileName.replace(/\.(pdf|md|txt)$/i, '');
         const baseTitle = (rawTitle || "Imported Document").trim().slice(0, 500);
 
-        // Resolve title collisions in destination folder via single query (avoids 23505 unique_violation)
+        // Resolve title collisions in destination folder via single query
         const siblings = await db.query.files.findMany({
             where: and(
                 eq(files.userId, user.id),
@@ -123,24 +153,25 @@ export async function importFile(
             counter++;
         }
 
-        const newFileId = randomUUID();
         const now = new Date();
         const etag = generateETagSync({
             id: newFileId,
-            content: textContent,
+            content: finalContent,
             updatedAt: now,
         });
 
-        // Atomic insert with pre-computed ETag, pure Markdown content, and collision-free title
+        // Atomic insert into Neon PostgreSQL
         const [newFile] = await db
             .insert(files)
             .values({
                 id: newFileId,
                 userId: user.id,
                 title,
-                content: textContent,
+                content: finalContent,
                 parentFolderId,
                 isFolder: false,
+                isEncrypted,
+                encryptionMetadata: finalMetadata,
                 etag,
                 version: 1,
                 createdAt: now,
@@ -153,7 +184,7 @@ export async function importFile(
             data: {
                 id: newFile.id,
                 title: newFile.title,
-                content: textContent,
+                content: finalContent,
                 wordCount,
             },
         };

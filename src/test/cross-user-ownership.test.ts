@@ -234,8 +234,8 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             });
 
             currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
-            const base64Content = Buffer.from("# Imported Title\nBody text").toString("base64");
-            const result = await importFile("imported.md", base64Content, "md", userBFolderId);
+            const textContent = "# Imported Title\nBody text";
+            const result = await importFile("imported.md", textContent, "md", userBFolderId);
 
             expect(result.success).toBe(false);
             expect(result.error).toBe("Parent folder not found");
