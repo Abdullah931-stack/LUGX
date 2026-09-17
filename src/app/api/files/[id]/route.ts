@@ -9,6 +9,7 @@ import { getUser } from '@/lib/supabase/server';
 import { eq, and, isNull } from 'drizzle-orm';
 import { generateETagSync, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from '@/lib/sync/etag-generator';
 import { fileApiRateLimiter, addRateLimitHeaders, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { getOrGenerateCorrelationId, addCorrelationHeader } from '@/lib/utils/correlation';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,13 +18,22 @@ interface RouteParams {
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
+    const correlationId = getOrGenerateCorrelationId(request);
     try {
         const { id: fileId } = await params;
         const user = await getUser();
-        if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+        if (!user) {
+            const res = NextResponse.json({ error: 'Authentication required', correlationId }, { status: 401 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
 
         const rateLimitResult = await fileApiRateLimiter.limit(user.id);
-        if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+        if (!rateLimitResult.success) {
+            const res = rateLimitExceededResponse(rateLimitResult);
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
 
         const file = await db.query.files.findFirst({
             where: and(
@@ -33,13 +43,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             ),
         });
 
-        if (!file) return NextResponse.json({ error: 'File not found' }, { status: 404 });
+        if (!file) {
+            const res = NextResponse.json({ error: 'File not found', correlationId }, { status: 404 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
 
         const ifNoneMatch = parseETagHeader(request.headers.get('If-None-Match'));
         if (ifNoneMatch && file.etag && ifNoneMatch === file.etag) {
             const headers = new Headers();
             headers.set('ETag', formatETagHeader(file.etag));
             addRateLimitHeaders(headers, rateLimitResult);
+            addCorrelationHeader(headers, correlationId);
             return new Response(null, { status: 304, headers });
         }
 
@@ -66,22 +81,34 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
         if (file.etag) headers.set('ETag', formatETagHeader(file.etag));
         addRateLimitHeaders(headers, rateLimitResult);
+        addCorrelationHeader(headers, correlationId);
 
         return new Response(JSON.stringify(responseData), { status: 200, headers });
     } catch (error) {
         console.error('[File API GET] Error:', error);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        const res = NextResponse.json({ error: 'Internal server error', correlationId }, { status: 500 });
+        addCorrelationHeader(res.headers, correlationId);
+        return res;
     }
 }
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
+    const correlationId = getOrGenerateCorrelationId(request);
     try {
         const { id: fileId } = await params;
         const user = await getUser();
-        if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+        if (!user) {
+            const res = NextResponse.json({ error: 'Authentication required', correlationId }, { status: 401 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
 
         const rateLimitResult = await fileApiRateLimiter.limit(user.id);
-        if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+        if (!rateLimitResult.success) {
+            const res = rateLimitExceededResponse(rateLimitResult);
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
 
         const body = await request.json().catch(() => ({}));
         const { content, title, expectedVersion, baseVersion, isEncrypted, encryptionMetadata } = body as {
@@ -100,8 +127,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         if (!ifMatch && requestedVersion === undefined) {
             const headers = new Headers({ 'Content-Type': 'application/json' });
             addRateLimitHeaders(headers, rateLimitResult);
+            addCorrelationHeader(headers, correlationId);
             return new Response(JSON.stringify({
                 error: 'Precondition Required: If-Match header or expectedVersion is required for file updates',
+                correlationId,
             }), { status: 428, headers });
         }
 
@@ -113,18 +142,27 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             ),
         });
 
-        if (!currentFile) return NextResponse.json({ error: 'File not found' }, { status: 404 });
+        if (!currentFile) {
+            const res = NextResponse.json({ error: 'File not found', correlationId }, { status: 404 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
 
         if (currentFile.isFolder) {
-            return NextResponse.json({ error: 'Cannot update content of a folder' }, { status: 400 });
+            const res = NextResponse.json({ error: 'Cannot update content of a folder', correlationId }, { status: 400 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
         }
 
         if (currentFile.isEncrypted && isEncrypted !== false && content !== undefined) {
             const effectiveMetadata = encryptionMetadata || currentFile.encryptionMetadata;
             if (!effectiveMetadata?.iv) {
-                return NextResponse.json({
+                const res = NextResponse.json({
                     error: 'Cannot update content of an encrypted file without valid encryption metadata',
+                    correlationId,
                 }, { status: 400 });
+                addCorrelationHeader(res.headers, correlationId);
+                return res;
             }
         }
 
@@ -132,8 +170,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         if (ifMatch && currentFile.etag && ifMatch !== currentFile.etag) {
             const headers = new Headers({ 'Content-Type': 'application/json', 'ETag': formatETagHeader(currentFile.etag) });
             addRateLimitHeaders(headers, rateLimitResult);
+            addCorrelationHeader(headers, correlationId);
             return new Response(JSON.stringify({
                 error: 'Precondition Failed: ETag mismatch',
+                correlationId,
                 serverVersion: {
                     etag: currentFile.etag,
                     version: currentFile.version,
@@ -150,8 +190,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             const headers = new Headers({ 'Content-Type': 'application/json' });
             if (currentFile.etag) headers.set('ETag', formatETagHeader(currentFile.etag));
             addRateLimitHeaders(headers, rateLimitResult);
+            addCorrelationHeader(headers, correlationId);
             return new Response(JSON.stringify({
                 error: 'Precondition Failed: version mismatch',
+                correlationId,
                 serverVersion: {
                     etag: currentFile.etag,
                     version: currentFile.version,
@@ -174,10 +216,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
         // Zero-Knowledge Boundary Guard: Encrypted files require valid encryptionMetadata with an IV
         if (effectiveIsEncrypted && (!effectiveMetadata || !effectiveMetadata.iv)) {
-            return NextResponse.json(
-                { error: "Encrypted files require valid encryptionMetadata with an IV" },
+            const res = NextResponse.json(
+                { error: "Encrypted files require valid encryptionMetadata with an IV", correlationId },
                 { status: 400 }
             );
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
         }
 
         const newContent = content !== undefined
@@ -228,8 +272,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             if (refreshed && !refreshed.deletedAt) {
                 if (refreshed.etag) headers.set('ETag', formatETagHeader(refreshed.etag));
                 addRateLimitHeaders(headers, rateLimitResult);
+                addCorrelationHeader(headers, correlationId);
                 return new Response(JSON.stringify({
                     error: 'Conflict: this file was modified by another session. Please reload and try again',
+                    correlationId,
                     serverVersion: {
                         etag: refreshed.etag,
                         version: refreshed.version,
@@ -240,7 +286,9 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
                     },
                 }), { status: 412, headers });
             }
-            return NextResponse.json({ error: 'File not found' }, { status: 404 });
+            const res = NextResponse.json({ error: 'File not found', correlationId }, { status: 404 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
         }
 
         const headers = new Headers({
@@ -249,6 +297,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             'Cache-Control': 'private, must-revalidate, max-age=0',
         });
         addRateLimitHeaders(headers, rateLimitResult);
+        addCorrelationHeader(headers, correlationId);
 
         return new Response(JSON.stringify({
             id: updatedFile.id,
@@ -259,6 +308,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         }), { status: 200, headers });
     } catch (error) {
         console.error('[File API PUT] Error:', error);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        const res = NextResponse.json({ error: 'Internal server error', correlationId }, { status: 500 });
+        addCorrelationHeader(res.headers, correlationId);
+        return res;
     }
 }

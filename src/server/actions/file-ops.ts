@@ -21,6 +21,8 @@ export interface FileOpResult<T = typeof schema.files.$inferSelect> {
     status?: "conflict" | "unauthorized" | "not_found" | "forbidden" | "error";
     etag?: string;
     version?: number;
+    correlationId?: string;
+    operationId?: string;
     serverVersion?: {
         version?: number | null;
         etag?: string | null;
@@ -263,7 +265,13 @@ export async function updateFileContent(
             return { success: false, status: "not_found", error: "File not found or deleted" };
         }
 
-        return { success: true, etag: newEtag, version: newVersion, data: updated };
+        return {
+            success: true,
+            etag: newEtag,
+            version: newVersion,
+            data: updated,
+            operationId: options?.operationId,
+        };
 
     } catch (error) {
         console.error("Update file error:", error);

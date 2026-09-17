@@ -48,9 +48,21 @@ const SENSITIVE_KEY_FRAGMENTS = [
     'iv',
     'salt',
     'aad',
+    'prompt',
+    'userprompt',
+    'inputprompt',
+    'apikey',
+    'authtoken',
+    'bearertoken',
+    'connectionstring',
+    'databaseurl',
+    'sessiontoken',
+    'cookie',
+    'authorization',
+    'token',
 ] as const;
 
-const SHORT_SENSITIVE_KEYS = new Set(['iv', 'pin', 'aad', 'kek', 'pwd']);
+const SHORT_SENSITIVE_KEYS = new Set(['iv', 'pin', 'aad', 'kek', 'pwd', 'token']);
 
 function normalizeKey(key: string): string {
     return key.toLowerCase().replace(/[^a-z0-9]/g, '');

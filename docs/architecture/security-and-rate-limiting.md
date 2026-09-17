@@ -47,10 +47,11 @@ A per-user **sliding-window counter** backed by Upstash Redis. Configuration:
 
 ```ts
 export const RATE_LIMITS = {
-    SYNC_API: { limit: 100, windowSeconds: 15 * 60 }, // sync endpoint
-    FILE_API: { limit: 200, windowSeconds: 15 * 60 }, // single-file GET/PUT
-    GENERAL:  { limit: 300, windowSeconds: 15 * 60 },
-    AUTH:     { limit: 20,  windowSeconds: 15 * 60 }, // sign-in/sign-up brute-force guard
+    SYNC_API:  { limit: 100, windowSeconds: 15 * 60 }, // sync endpoint
+    FILE_API:  { limit: 200, windowSeconds: 15 * 60 }, // single-file GET/PUT
+    GENERAL:   { limit: 300, windowSeconds: 15 * 60 },
+    AUTH:      { limit: 20,  windowSeconds: 15 * 60 }, // sign-in/sign-up brute-force guard
+    AI_STREAM: { limit: 30,  windowSeconds: 60 },      // AI streaming burst protection
 } as const;
 ```
 
@@ -61,11 +62,27 @@ Exported limiter instances and their consumers:
 | `syncApiRateLimiter` | `sync` | `GET /api/files/sync` |
 | `fileApiRateLimiter` | `file` | `GET` / `PUT /api/files/[id]` |
 | `authRateLimiter` | `auth` | authentication endpoints |
+| `aiStreamRateLimiter` | `ai-stream` | `POST /api/ai/stream` |
+
+### 2.1 Dual-Mode Failure Architecture (Fail-Open vs. Fail-Closed)
+
+The platform deliberately decouples service availability and key protection through an explicit dual-mode strategy:
+
+1. **Fail-Open (General Application & Sync Endpoints):**
+   - Implemented in `RateLimiter.limit()` for `sync`, `file`, `auth`, and `ai-stream`.
+   - If Upstash Redis is unreachable or returns an error, the limiter logs a warning and returns `{ success: true }`.
+   - **Rationale:** Protects offline-first architecture; temporary infrastructure issues on Redis never lock legitimate users out of reading, editing, or synchronizing local documents.
+2. **Fail-Closed (AI Key Rotation & Circuit Breakers):**
+   - Implemented in [`src/lib/ai/key-rotation.ts`](file:///d:/Projects/LUGX/src/lib/ai/key-rotation.ts) via `RedisUnavailableError`.
+   - If Redis connection fails during multi-key pool inspection or health probes, the AI provider subsystem fails closed.
+   - **Rationale:** Prevents catastrophic quota exhaustion, silent billing spikes, or rogue requests against Gemini provider keys when distributed rate limiting state cannot be verified.
+3. **Database-Enforced ACID User Quotas:**
+   - User consumption limits (words, daily summarize, ToPrompt) are tracked and enforced in PostgreSQL via `schema.usage` and `schema.aiReservations` with atomic SQL condition guards (`reserveAndUpdateUsage`).
 
 Response contract:
 
 - Success responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining`,
-  `X-RateLimit-Reset` (set by `addRateLimitHeaders()`).
+  `X-RateLimit-Reset` (set by `addRateLimitHeaders()`), and `X-Correlation-ID`.
 - Exhaustion returns **429** from `rateLimitExceededResponse()` with a
   `Retry-After` header and body `{ error, message, retryAfter }`.
 
@@ -172,7 +189,9 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 
 ---
 
-## 5. Protected Maintenance Cron (`src/app/api/cron/purge-deleted/route.ts`)
+## 5. Protected Maintenance Crons
+
+### 5.1 Soft-Delete Tombstone Purge (`src/app/api/cron/purge-deleted/route.ts`)
 
 Permanent purge of soft-delete tombstones past retention:
 
@@ -188,11 +207,28 @@ The application itself never hard-deletes user content outside this route — al
 user-facing deletions are tombstones
 ([`records/test-database-safety.md`](../records/test-database-safety.md)).
 
+### 5.2 Stale Quota Reservation Expiration (`src/app/api/cron/expire-reservations/route.ts` / TD-02)
+
+Automated expiration of leaked or orphaned in-flight AI quota reservations:
+
+| Property | Value |
+| :--- | :--- |
+| Stale threshold | 5 minutes (`STALE_THRESHOLD_MS = 5 * 60 * 1000`) past reservation timestamp |
+| Target status | Records with status `'reserved'` in `ai_usage_history` |
+| Transition | Updated atomically to status `'expired'` via `expireStaleReservations` |
+| Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; fails closed with 401 when `CRON_SECRET` is unset or mismatched |
+| Idempotency | Strictly idempotent; only transitions matching unfinalized reservations |
+| Scheduling | Invoked externally via GitHub Actions scheduled workflow `.github/workflows/cron.yml` |
+| Response format | JSON `{ success: true, count: number, message: string }` with HTTP 200 |
+
 ---
 
 ## 6. Verification
 
 ```bash
+npx vitest run src/test/rate-limit.test.ts                                                           # In-memory sliding window & IP fallback
+npx vitest run src/test/correlation.test.ts                                                         # Header parsing, UUID generation & CRLF sanitization
+npx vitest run src/test/cron-expire-reservations.test.ts                                             # CRON_SECRET auth, status transitions & failure isolation
 npx vitest run src/test/log-sanitizer.test.ts                                                        # Log hygiene, word-boundary isolation & RAM zeroing
 npx vitest run src/test/vault-crypto.test.ts                                                        # Phase 1 crypto worker, AAD, RAM wiping & BIP-39
 npx vitest run src/test/vault-storage.test.ts                                                       # Phase 2 database schema, migrations & transparent encrypted IDB
@@ -202,3 +238,4 @@ npx vitest run --config vitest.live.config.ts src/app/api/files/[id]/route.putgu
 npx vitest run --config vitest.live.config.ts src/server/actions/file-ops.ownership.test.ts       # ownership isolation (live DB)
 npx tsc --noEmit                                                                                   # type safety gate
 ```
+

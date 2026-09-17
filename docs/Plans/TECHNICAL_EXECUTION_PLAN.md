@@ -459,10 +459,10 @@ Integrate client-side Zero-Knowledge vault encryption with authenticated key env
 
 ---
 
-## [Phase 17: Monitoring, Rate Limiting & Errors] — Status: ⏳ IN PROGRESS
+## [Phase 17: Monitoring, Rate Limiting & Errors] — Status: ✅ CLOSED
 
 ### Current State
-`rate-limit.ts` enforces sliding-window tracking via Upstash Redis; fail-open for public routes, fail-closed for AI quotas; reservation expiration cron pending deployment.
+Dual-mode rate limiting documented and active (`rate-limit.ts`); fail-open for standard endpoints, fail-closed for AI quotas; correlation IDs tracked via `X-Correlation-ID` across routes/actions; zero-allocation structured AI telemetry logging implemented; Zero-Knowledge log sanitizer hardened with boundary checks; automated cron `/api/cron/expire-reservations` scheduled via GitHub Actions, resolving TD-02.
 
 ### Derivation Constraint
 Phases 1 through 16.
@@ -471,19 +471,22 @@ Phases 1 through 16.
 Deploy structured operational telemetry, standardize correlation IDs across routes, and register automated cron sweepers for expired reservations.
 
 ### Direct Implementation Steps
-- **Step 1:** Document dual-mode rate limiting: fail-open for file/sync/auth endpoints, fail-closed for AI quotas in `ai-ops`.
-- **Step 2:** Add server-side AI telemetry: reservation latency, TTFT, stream duration, provider failure, refund failure, and commit conflict.
-- **Step 3:** Inject `correlationId` and `operationId` into all structured error payloads.
+- **Step 1:** Document dual-mode rate limiting: fail-open for file/sync/auth endpoints, fail-closed for AI quotas in `ai-ops` (`docs/architecture/security-and-rate-limiting.md`).
+- **Step 2:** Add server-side AI telemetry: reservation latency, TTFT, stream duration, provider failure, refund failure, and commit conflict via zero-allocation structured logging.
+- **Step 3:** Inject `correlationId` and `operationId` into structured error payloads, API response headers (`X-Correlation-ID`), and NDJSON stream frames.
 - **Step 4:** Deploy cron route `/api/cron/expire-reservations` protected by `CRON_SECRET` and register in GitHub Actions (resolving TD-02).
-- **Step 5:** Verify zero credential, prompt, or plaintext leakage in application logs.
+- **Step 5:** Harden `log-sanitizer.ts` with strict token-boundary isolation to prevent secret leakage without false-positive key redactions.
 
 ### Exception & Edge Case Handling
 - **Redis Outage:** Maintain fail-open on standard sync; maintain fail-closed on AI quota reservation.
-- **Rate Limit Clock Skew:** Rely on Redis server time.
-- **Unhandled Exceptions:** Return generic safe error codes with correlation IDs.
+- **Rate Limit Clock Skew:** Rely on Redis server time with in-memory fallback.
+- **Unhandled Exceptions:** Return generic safe error codes with correlation IDs and internal stack trace isolation.
 
 ### Closure Tests
-- Concurrency rate limit tests, telemetry metric assertions, and verified cron reservation sweeper execution.
+- Unit and contract suites passing: `rate-limit.test.ts`, `correlation.test.ts`, `cron-expire-reservations.test.ts`, `log-sanitizer.test.ts`, `vault-sync-ai-gate.test.ts`, and `sync-manager.test.ts`.
+
+### Transition Gate
+- **Status:** `CLOSED` ✅. Ready to proceed to Phase 18 upon explicit user approval.
 
 ---
 

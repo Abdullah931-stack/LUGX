@@ -23,15 +23,14 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   [`reference/test-database-isolation.md`](reference/test-database-isolation.md).
   Background incident: [`records/test-database-safety.md`](records/test-database-safety.md).
 
-## TD-02 — Quota TTL sweeper is not wired to any scheduler
+## TD-02 — Quota TTL sweeper is not wired to any scheduler — ✅ RESOLVED (Phase 17)
 
 - **Debt:** `expireStaleReservations()` (`ai-ops.ts`) transitions abandoned
   `reserved` rows to `expired` and restores counters, but nothing in production
-  invokes it (no cron, no route). Abandoned reservations linger as `reserved`.
-- **Impact:** cosmetic row accumulation only — quota accounting already deducts at
-  reservation time and refunds/settlements are explicit.
-- **Note:** safe to wire later (cron/route). Under the Explicit Settlement Policy,
-  user-settled reservations are `committed` and therefore immune to the sweeper.
+  invoked it.
+- **Resolution:** Fixed in Phase 17 by deploying `/api/cron/expire-reservations`
+  protected by `CRON_SECRET` and scheduling it via `.github/workflows/cron.yml`.
+  Covered by unit tests in `src/test/cron-expire-reservations.test.ts`.
 
 ## TD-03 — No audit trail for destructive database operations
 

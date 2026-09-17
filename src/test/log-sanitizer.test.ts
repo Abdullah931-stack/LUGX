@@ -22,6 +22,16 @@ describe('Log Sanitizer & RAM Hygiene (Hardened Suite)', () => {
             expect(isSensitiveLogKey('kek')).toBe(true);
             expect(isSensitiveLogKey('mnemonic')).toBe(true);
             expect(isSensitiveLogKey('seed')).toBe(true);
+            // AI prompts & API credentials (Phase 17)
+            expect(isSensitiveLogKey('prompt')).toBe(true);
+            expect(isSensitiveLogKey('userPrompt')).toBe(true);
+            expect(isSensitiveLogKey('input_prompt')).toBe(true);
+            expect(isSensitiveLogKey('apiKey')).toBe(true);
+            expect(isSensitiveLogKey('bearerToken')).toBe(true);
+            expect(isSensitiveLogKey('connectionString')).toBe(true);
+            expect(isSensitiveLogKey('sessionToken')).toBe(true);
+            expect(isSensitiveLogKey('token')).toBe(true);
+            expect(isSensitiveLogKey('user_token')).toBe(true);
         });
 
         it('should NOT falsely redact benign operational keys containing short fragments (F4/F5)', () => {
@@ -38,6 +48,8 @@ describe('Log Sanitizer & RAM Hygiene (Hardened Suite)', () => {
             expect(isSensitiveLogKey('userId')).toBe(false);
             expect(isSensitiveLogKey('etag')).toBe(false);
             expect(isSensitiveLogKey('operationId')).toBe(false);
+            expect(isSensitiveLogKey('sessionId')).toBe(false);
+            expect(isSensitiveLogKey('tokenizer')).toBe(false);
         });
     });
 

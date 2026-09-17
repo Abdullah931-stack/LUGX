@@ -14,6 +14,7 @@ import {
     addRateLimitHeaders,
     rateLimitExceededResponse
 } from '@/lib/rate-limit';
+import { getOrGenerateCorrelationId, addCorrelationHeader } from '@/lib/utils/correlation';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,20 +38,25 @@ const MAX_LIMIT = 100;
  * - next_cursor: Cursor for next page (if has_more is true)
  */
 export async function GET(request: NextRequest) {
+    const correlationId = getOrGenerateCorrelationId(request);
     try {
         // Authenticate user
         const user = await getUser();
         if (!user) {
-            return NextResponse.json(
-                { error: 'Authentication required' },
+            const res = NextResponse.json(
+                { error: 'Authentication required', correlationId },
                 { status: 401 }
             );
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
         }
 
         // Apply rate limiting
         const rateLimitResult = await syncApiRateLimiter.limit(user.id);
         if (!rateLimitResult.success) {
-            return rateLimitExceededResponse(rateLimitResult);
+            const res = rateLimitExceededResponse(rateLimitResult);
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
         }
 
         // Parse query parameters
@@ -96,16 +102,19 @@ export async function GET(request: NextRequest) {
         if (cursor) {
             try {
                 const cursorData = JSON.parse(Buffer.from(cursor, 'base64').toString());
-                if (cursorData.updatedAt && cursorData.id) {
-                    conditions.push(
-                        or(
-                            gt(schema.files.updatedAt, new Date(cursorData.updatedAt)),
-                            and(
-                                eq(schema.files.updatedAt, new Date(cursorData.updatedAt)),
-                                gt(schema.files.id, cursorData.id)
-                            )
-                        )!
-                    );
+                if (cursorData && typeof cursorData.id === 'string' && cursorData.updatedAt) {
+                    const cursorDate = new Date(cursorData.updatedAt);
+                    if (!isNaN(cursorDate.getTime())) {
+                        conditions.push(
+                            or(
+                                gt(schema.files.updatedAt, cursorDate),
+                                and(
+                                    eq(schema.files.updatedAt, cursorDate),
+                                    gt(schema.files.id, cursorData.id)
+                                )
+                            )!
+                        );
+                    }
                 }
             } catch {
                 // Invalid cursor, ignore
@@ -156,6 +165,7 @@ export async function GET(request: NextRequest) {
             'Cache-Control': 'private, no-cache, no-store, must-revalidate',
         });
         addRateLimitHeaders(responseHeaders, rateLimitResult);
+        addCorrelationHeader(responseHeaders, correlationId);
 
         return new Response(
             JSON.stringify({
@@ -172,9 +182,11 @@ export async function GET(request: NextRequest) {
 
     } catch (error) {
         console.error('[Sync API] Error:', error);
-        return NextResponse.json(
-            { error: 'Internal server error' },
+        const res = NextResponse.json(
+            { error: 'Internal server error', correlationId },
             { status: 500 }
         );
+        addCorrelationHeader(res.headers, correlationId);
+        return res;
     }
 }

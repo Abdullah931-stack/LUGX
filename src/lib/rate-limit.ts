@@ -1,8 +1,15 @@
 /**
- * Rate Limiter for Sync API
+ * Rate Limiter for Sync, File, Auth, and AI Streaming APIs
  * 
  * Uses Upstash Redis for distributed rate limiting.
  * Implements sliding window algorithm for accurate rate limiting.
+ * 
+ * POLICY:
+ * - General endpoints (Sync, File, Auth, AI Stream) operate in Fail-Open mode
+ *   upon Redis errors, ensuring offline-first user continuity and prevent
+ *   transient Redis outages from blocking application usage.
+ * - In contrast, AI Key Rotation (src/lib/ai/key-rotation.ts) operates in Fail-Closed
+ *   mode to protect upstream LLM provider keys and circuit breakers.
  */
 
 import { redis } from './redis';
@@ -45,6 +52,9 @@ export const RATE_LIMITS = {
      * credential stuffing is the primary attack surface for login
      * endpoints; a tight window buys time for IP-based blocking to react. */
     AUTH: { limit: 20, windowSeconds: 15 * 60 },
+    /** AI Streaming API: 30 requests per 60 seconds (per user) to protect
+     * application servers and upstream LLM providers from rapid-fire bursts. */
+    AI_STREAM: { limit: 30, windowSeconds: 60 },
 } as const;
 
 /**
@@ -160,6 +170,7 @@ export class RateLimiter {
 export const syncApiRateLimiter = new RateLimiter('sync', RATE_LIMITS.SYNC_API);
 export const fileApiRateLimiter = new RateLimiter('file', RATE_LIMITS.FILE_API);
 export const authRateLimiter = new RateLimiter('auth', RATE_LIMITS.AUTH);
+export const aiStreamRateLimiter = new RateLimiter('ai-stream', RATE_LIMITS.AI_STREAM);
 
 /**
  * Helper to add rate limit headers to response
@@ -177,9 +188,10 @@ export function addRateLimitHeaders(
  * Create rate limit exceeded response
  */
 export function rateLimitExceededResponse(result: RateLimitResult): Response {
+    const retryAfterSeconds = Math.max(1, Math.ceil(result.reset - Date.now() / 1000));
     const headers = new Headers({
         'Content-Type': 'application/json',
-        'Retry-After': Math.ceil(result.reset - Date.now() / 1000).toString(),
+        'Retry-After': retryAfterSeconds.toString(),
     });
     addRateLimitHeaders(headers, result);
 

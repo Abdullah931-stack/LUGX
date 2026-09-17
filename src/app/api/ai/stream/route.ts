@@ -12,6 +12,10 @@ import { streamWithAI, processWithAI, Tier } from "@/lib/ai/client";
 import { countWords } from "@/lib/utils";
 import { AIOperation } from "@/lib/ai/prompts";
 import { FEATURES } from "@/config/features.config";
+import { aiStreamRateLimiter, addRateLimitHeaders, rateLimitExceededResponse } from "@/lib/rate-limit";
+import { getOrGenerateCorrelationId, addCorrelationHeader } from "@/lib/utils/correlation";
+
+import { sanitizeLogMessage } from "@/lib/sync/log-sanitizer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,14 +23,19 @@ export const maxDuration = 60;
 /**
  * Route Handler: Stream AI text with NDJSON framing, quota reservation, and resilient error recovery.
  *
- * PHASE 7 SPECIFICATION COMPLIANCE:
- * 1. Emits canonical NDJSON frames: start (with non-sensitive identifiers), chunk, done, error, cancelled.
+ * PHASE 7 & PHASE 17 SPECIFICATION COMPLIANCE:
+ * 1. Emits canonical NDJSON frames: start (with non-sensitive identifiers & correlationId), chunk, done, error, cancelled.
  * 2. Strict isolation: zero sensitive user prompt leakage in stream headers or framing metadata.
  * 3. Gracefully encapsulates mid-stream errors into NDJSON error frames without abrupt TCP resets.
  * 4. Automatic idempotent quota refund on startup errors, mid-stream failures, or client disconnects.
  * 5. Supports buffered fallback header for clients requesting non-streaming responses.
+ * 6. Rate-limited via sliding window counter with fail-open fallback and end-to-end correlation ID tracking.
  */
 export async function POST(req: NextRequest) {
+    const correlationId = getOrGenerateCorrelationId(req);
+    const reqStartTime = performance.now();
+    let reservationDurationMs = 0;
+    let ttftMs: number | null = null;
     let operationId: string | null = null;
     let reserved = false;
     let reservedUserId: string | null = null;
@@ -37,8 +46,23 @@ export async function POST(req: NextRequest) {
     try {
         const user = await getUser();
         if (!user) {
-            return new NextResponse("Unauthorized", { status: 401 });
+            const res = new NextResponse("Unauthorized", { status: 401 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
         }
+
+        const rateLimitResult = await aiStreamRateLimiter.limit(user.id);
+        if (!rateLimitResult.success) {
+            const res = rateLimitExceededResponse(rateLimitResult);
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
+
+        const withCorrelation = (res: NextResponse): NextResponse => {
+            addCorrelationHeader(res.headers, correlationId);
+            addRateLimitHeaders(res.headers, rateLimitResult);
+            return res;
+        };
 
         const body = await req.json();
         const { text, operation, fileId } = body;
@@ -47,18 +71,18 @@ export async function POST(req: NextRequest) {
 
         // ADV2-01 Payload Type & Size Validation Guard
         if (typeof text !== "string" || typeof operation !== "string" || !text.trim() || !operation.trim()) {
-            return new NextResponse("Invalid request: text and operation must be non-empty strings", { status: 400 });
+            return withCorrelation(new NextResponse("Invalid request: text and operation must be non-empty strings", { status: 400 }));
         }
 
         const MAX_INPUT_CHARS = 100_000;
         if (text.length > MAX_INPUT_CHARS) {
-            return new NextResponse(`Payload too large: text exceeds ${MAX_INPUT_CHARS} characters limit`, { status: 400 });
+            return withCorrelation(new NextResponse(`Payload too large: text exceeds ${MAX_INPUT_CHARS} characters limit`, { status: 400 }));
         }
 
         // File ownership verification if fileId is supplied
         if (fileId !== undefined && fileId !== null) {
             if (typeof fileId !== "string" || !fileId.trim()) {
-                return new NextResponse("Invalid request: fileId must be a non-empty string", { status: 400 });
+                return withCorrelation(new NextResponse("Invalid request: fileId must be a non-empty string", { status: 400 }));
             }
 
             const targetFile = await db.query.files.findFirst({
@@ -69,7 +93,7 @@ export async function POST(req: NextRequest) {
                 ),
             });
             if (!targetFile) {
-                return new NextResponse("File not found", { status: 404 });
+                return withCorrelation(new NextResponse("File not found", { status: 404 }));
             }
 
             // Zero-Knowledge AI Gatekeeper: prohibit AI on encrypted files unless user explicitly opted in
@@ -78,7 +102,7 @@ export async function POST(req: NextRequest) {
                     where: eq(schema.userVaultProfiles.userId, user.id),
                 });
                 if (!vaultProfile?.allowAIOnEncryptedFiles) {
-                    return new NextResponse("AI_PROHIBITED_ON_ENCRYPTED_FILES", { status: 403 });
+                    return withCorrelation(new NextResponse("AI_PROHIBITED_ON_ENCRYPTED_FILES", { status: 403 }));
                 }
             }
         }
@@ -93,6 +117,7 @@ export async function POST(req: NextRequest) {
         const wordCount = countWords(text);
         reservedWordCount = wordCount;
 
+        const resStart = performance.now();
         const reservation = await reserveAndUpdateUsage(
             user.id,
             operation as AIOperation,
@@ -103,9 +128,10 @@ export async function POST(req: NextRequest) {
                 fileId: fileId || null,
             }
         );
+        reservationDurationMs = performance.now() - resStart;
 
         if (!reservation.reserved) {
-            return new NextResponse(reservation.reason || "Quota exceeded", { status: 403 });
+            return withCorrelation(new NextResponse(reservation.reason || "Quota exceeded", { status: 403 }));
         }
 
         reserved = true;
@@ -143,12 +169,13 @@ export async function POST(req: NextRequest) {
 
         const wrappedStream = new ReadableStream<Uint8Array>({
             async start(controller) {
-                // Emit initial canonical start frame with non-sensitive identifiers
+                // Emit initial canonical start frame with non-sensitive identifiers & correlationId
                 const startFrame = JSON.stringify({
                     type: "start",
                     sessionId,
                     reservationId: reservation.reservationId || operationId,
                     operationId,
+                    correlationId,
                 }) + "\n";
                 controller.enqueue(encoder.encode(startFrame));
 
@@ -165,17 +192,32 @@ export async function POST(req: NextRequest) {
                                 const cancelFrame = JSON.stringify({
                                     type: "cancelled",
                                     reason: "Client aborted connection",
+                                    correlationId,
                                 }) + "\n";
                                 controller.enqueue(encoder.encode(cancelFrame));
                             } catch {
                                 // Ignore controller enqueue error if stream already closed
                             }
                             controller.close();
+                            console.info(JSON.stringify({
+                                event: "ai_stream_aborted_by_client",
+                                operationId,
+                                correlationId,
+                                operation,
+                                wordCount: reservedWordCount,
+                                reservationLatencyMs: Math.round(reservationDurationMs),
+                                ttftMs: ttftMs !== null ? Math.round(ttftMs) : null,
+                                durationMs: Math.round(performance.now() - reqStartTime),
+                            }));
                             return;
                         }
 
                         const { done, value } = await reader.read();
                         if (done) break;
+
+                        if (ttftMs === null) {
+                            ttftMs = performance.now() - reqStartTime;
+                        }
 
                         const chunkText = decoder.decode(value, { stream: true });
                         if (chunkText) {
@@ -202,11 +244,23 @@ export async function POST(req: NextRequest) {
                     controller.enqueue(encoder.encode(doneFrame));
                     controller.close();
 
+                    // Zero-allocation structured telemetry emission
+                    console.info(JSON.stringify({
+                        event: "ai_stream_completed",
+                        operationId,
+                        correlationId,
+                        operation,
+                        wordCount: reservedWordCount,
+                        reservationLatencyMs: Math.round(reservationDurationMs),
+                        ttftMs: ttftMs !== null ? Math.round(ttftMs) : null,
+                        durationMs: Math.round(performance.now() - reqStartTime),
+                    }));
+
                 } catch (streamError) {
                     const detail = streamError instanceof Error
                         ? streamError.message
                         : String(streamError);
-                    console.error(`[AI Stream Route] Mid-stream exception (op: ${operationId}):`, detail);
+                    console.error(`[AI Stream Route] Mid-stream exception (op: ${operationId}, corr: ${correlationId}):`, detail);
 
                     // Trigger automatic quota refund
                     try {
@@ -223,6 +277,8 @@ export async function POST(req: NextRequest) {
                         code: "STREAM_INTERRUPTED",
                         message: "The AI service encountered a temporary issue. Please try again.",
                         retryable: true,
+                        operationId,
+                        correlationId,
                     }) + "\n";
 
                     try {
@@ -231,6 +287,17 @@ export async function POST(req: NextRequest) {
                         // Ignore enqueue error if controller is already closing
                     }
                     controller.close();
+
+                    console.info(JSON.stringify({
+                        event: "ai_stream_failed",
+                        operationId,
+                        correlationId,
+                        operation,
+                        error: sanitizeLogMessage(detail),
+                        reservationLatencyMs: Math.round(reservationDurationMs),
+                        ttftMs: ttftMs !== null ? Math.round(ttftMs) : null,
+                        durationMs: Math.round(performance.now() - reqStartTime),
+                    }));
 
                 } finally {
                     try {
@@ -248,19 +315,23 @@ export async function POST(req: NextRequest) {
             }
         });
 
+        const responseHeaders = new Headers({
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "X-Content-Type-Options": "nosniff",
+            "X-Accel-Buffering": "no",
+        });
+        addRateLimitHeaders(responseHeaders, rateLimitResult);
+        addCorrelationHeader(responseHeaders, correlationId);
+
         return new NextResponse(wrappedStream, {
-            headers: {
-                "Content-Type": "application/x-ndjson; charset=utf-8",
-                "Cache-Control": "no-cache, no-transform, no-store, must-revalidate",
-                "Connection": "keep-alive",
-                "X-Content-Type-Options": "nosniff",
-                "X-Accel-Buffering": "no",
-            },
+            headers: responseHeaders,
         });
 
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        console.error(`[AI Stream Route] Startup error (operationId: ${operationId || "none"}):`, detail);
+        console.error(`[AI Stream Route] Startup error (operationId: ${operationId || "none"}, corr: ${correlationId}):`, sanitizeLogMessage(detail));
 
         // Auto-refund quota if reserved before stream failed or aborted
         if (reserved) {
@@ -275,7 +346,9 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        return new NextResponse(detail || "Internal Server Error", { status: 500 });
+        const res = new NextResponse("An unexpected error occurred while processing your request. Please try again.", { status: 500 });
+        addCorrelationHeader(res.headers, correlationId);
+        return res;
     }
 }
 

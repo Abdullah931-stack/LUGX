@@ -642,6 +642,7 @@ export async function expireStaleReservations(): Promise<number> {
             eq(schema.aiReservations.status, "reserved"),
             sql`expires_at <= ${now}`
         ),
+        limit: 100,
     });
 
     let expiredCount = 0;

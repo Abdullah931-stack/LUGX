@@ -61,3 +61,28 @@ jobs:
           if echo "$BODY" | grep -q '"done":true'; then
             echo "Retention backlog drained."
           fi
+
+      - name: Run expire reservations cron endpoint (TD-02)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DEPLOY_URL: ${{ secrets.DEPLOY_URL || vars.DEPLOY_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$DEPLOY_URL" ]; then
+            echo "ERROR: CRON_SECRET or DEPLOY_URL not configured."
+            exit 1
+          fi
+
+          RESPONSE=$(curl -fsS -w "\n__HTTP__%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$DEPLOY_URL/api/cron/expire-reservations" || true)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1 | sed 's/__HTTP__//')
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP $HTTP_CODE"
+          echo "$BODY"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: expire-reservations endpoint returned HTTP $HTTP_CODE"
+            exit 1
+          fi

@@ -190,23 +190,20 @@ ETag: "server-etag"
 
 ## Error Responses
 
-Error bodies are free-form JSON produced by the handlers; they do **not** use a
-machine-readable `code` envelope. Shapes below are taken directly from the route
-sources (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`,
-`src/lib/rate-limit.ts`):
+Error bodies are structured JSON produced by the handlers; all error responses include a standardized `correlationId` property for distributed tracing. Shapes below are taken directly from the route sources (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`, `src/lib/rate-limit.ts`):
 
 | Status | Actual response body | Trigger |
 |--------|----------------------|---------|
-| 400 | `{ "error": "Encrypted files require valid encryptionMetadata with an IV" }` | PUT on encrypted file without valid `encryptionMetadata.iv` |
-| 400 | `{ "error": "<validation message>" }` | Invalid request parameters or updating a folder's content |
-| 401 | `{ "error": "Authentication required" }` | Missing/expired server session |
-| 403 | `{ "error": "<forbidden message>" }` | Not authorized |
-| 404 | `{ "error": "File not found" }` | File missing or soft-deleted |
-| 409 | `{ "error": "<conflict message>" }` | Semantic conflict |
-| 412 | `{ "error": "Precondition Failed: version mismatch", "serverVersion": { etag, version, content, isEncrypted, encryptionMetadata, updatedAt } }` | Stale ETag/version on PUT |
-| 428 | `{ "error": "Precondition Required: If-Match header or expectedVersion is required for file updates" }` | Missing precondition on PUT |
+| 400 | `{ "error": "Encrypted files require valid encryptionMetadata with an IV", "correlationId": "<uuid>" }` | PUT on encrypted file without valid `encryptionMetadata.iv` |
+| 400 | `{ "error": "<validation message>", "correlationId": "<uuid>" }` | Invalid request parameters or updating a folder's content |
+| 401 | `{ "error": "Authentication required", "correlationId": "<uuid>" }` | Missing/expired server session |
+| 403 | `{ "error": "<forbidden message>", "correlationId": "<uuid>" }` | Not authorized |
+| 404 | `{ "error": "File not found", "correlationId": "<uuid>" }` | File missing or soft-deleted |
+| 409 | `{ "error": "<conflict message>", "correlationId": "<uuid>" }` | Semantic conflict |
+| 412 | `{ "error": "Precondition Failed: version mismatch", "correlationId": "<uuid>", "serverVersion": { etag, version, content, isEncrypted, encryptionMetadata, updatedAt } }` | Stale ETag/version on PUT |
+| 428 | `{ "error": "Precondition Required: If-Match header or expectedVersion is required for file updates", "correlationId": "<uuid>" }` | Missing precondition on PUT |
 | 429 | `{ "error": "Too Many Requests", "message": "Rate limit exceeded. Please try again later.", "retryAfter": <epoch-seconds> }` | Rate limiter exhausted (`rateLimitExceededResponse`) |
-| 500 | `{ "error": "Internal server error" }` | Unhandled server exception |
+| 500 | `{ "error": "Internal server error", "correlationId": "<uuid>" }` | Unhandled server exception |
 
 ---
 
@@ -219,17 +216,19 @@ sources (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`,
 | `Content-Type` | `application/json` |
 | `If-Match` | ETag for update verification (PUT) |
 | `If-None-Match` | ETag for caching (GET) |
+| `X-Correlation-ID` | Optional client-generated request correlation identifier (UUID v4) for end-to-end tracing |
 
 ### Response Headers
-Set by `addRateLimitHeaders()` / route handlers:
+Set by `addRateLimitHeaders()` / `addCorrelationHeader()` / route handlers:
 | Header | Description |
 |--------|-------------|
 | `ETag` | Current file ETag |
 | `Cache-Control` | Caching instructions |
+| `X-Correlation-ID` | Server-authoritative correlation identifier for distributed tracing and error diagnosis |
 | `X-RateLimit-Limit` | Configured limit for the endpoint's limiter tier |
 | `X-RateLimit-Remaining` | Remaining requests in the current window |
 | `X-RateLimit-Reset` | Window reset time (epoch seconds) |
-| `Retry-After` | Wait time in seconds (on 429 only) |
+| `Retry-After` | Wait time in seconds (on 429 only; guaranteed $\ge 1$) |
 
 ---
 
@@ -238,15 +237,17 @@ Set by `addRateLimitHeaders()` / route handlers:
 Configuration lives in `RATE_LIMITS` (`src/lib/rate-limit.ts`) — a sliding-window
 counter backed by Upstash Redis, keyed per user:
 
-| Limiter | Applied to | Limit | Window |
-|---------|-----------|-------|--------|
-| `syncApiRateLimiter` | `GET /api/files/sync` | **100 requests** | **15 minutes** |
-| `fileApiRateLimiter` | `GET` / `PUT /api/files/:id` | **200 requests** | **15 minutes** |
+| Limiter | Applied to | Limit | Window | Fallback Policy |
+|---------|-----------|-------|--------|-----------------|
+| `syncApiRateLimiter` | `GET /api/files/sync` | **100 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
+| `fileApiRateLimiter` | `GET` / `PUT /api/files/:id` | **200 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
+| `aiStreamRateLimiter` | `POST /api/ai/stream` | **30 requests** | **60 seconds** | Fail-Open on rate limiter; Fail-Closed on ACID quota deduction |
 
 ### Response (429 Too Many Requests)
 ```http
 HTTP/1.1 429 Too Many Requests
 Retry-After: <seconds>
+X-Correlation-ID: <uuid>
 X-RateLimit-Limit: 200
 X-RateLimit-Remaining: 0
 X-RateLimit-Reset: <epoch-seconds>
@@ -257,6 +258,35 @@ X-RateLimit-Reset: <epoch-seconds>
   "retryAfter": <epoch-seconds>
 }
 ```
+
+---
+
+## Protected Maintenance Crons
+
+### 1. GET / POST `/api/cron/expire-reservations` (TD-02 Sweeper)
+
+Automated expiration of leaked or orphaned in-flight AI quota reservations past 5-minute TTL:
+
+```http
+POST /api/cron/expire-reservations
+Authorization: Bearer <CRON_SECRET>
+```
+
+- **Authentication:** Shared secret `Authorization: Bearer $CRON_SECRET`.
+- **Batch Processing:** Bounded batch processing (`limit: 100`) preventing serverless execution timeouts.
+- **Response (200 OK):**
+  ```json
+  {
+    "success": true,
+    "expiredCount": 3,
+    "timestamp": "2026-09-18T01:30:00.000Z"
+  }
+  ```
+
+### 2. GET / POST `/api/cron/purge-deleted` (Soft-Delete Tombstone Purge)
+
+Permanent deletion of soft-deleted file tombstones older than 30 days (`RETENTION_DAYS`), bounded to batches of 500 rows.
+
 
 ---
 

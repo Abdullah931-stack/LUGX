@@ -19,6 +19,7 @@ import { validateMarkdownSyntaxIntegrity } from './syntax-validator';
 import { conflictResolver } from './conflict-resolver';
 import { SyncCryptoGateway } from './sync-crypto-gateway';
 import { sanitizeLogValue } from './log-sanitizer';
+import { syncPerformanceMonitor } from './performance-monitor';
 import type { PendingEncryptedConflict } from './types/vault';
 
 /**
@@ -707,6 +708,7 @@ class SyncManager {
         const signal = this.activeAbortController.signal;
 
         this.setStatus('syncing', 0);
+        const syncTimingId = syncPerformanceMonitor.startTiming('sync_duration');
 
         const result: SyncResult = {
             success: true,
@@ -775,6 +777,16 @@ class SyncManager {
             this.setStatus(syncError.type === SyncErrorType.NETWORK_ERROR ? 'offline' : 'failed');
         } finally {
             this.activeAbortController = null;
+            syncPerformanceMonitor.stopTiming(
+                syncTimingId,
+                'sync_duration',
+                {
+                    filesProcessed: result.filesProcessed,
+                    pushed: result.filesPushed,
+                    pulled: result.filesPulled,
+                },
+                result.success
+            );
         }
 
         return result;

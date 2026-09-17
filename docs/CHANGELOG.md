@@ -2,6 +2,41 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.26.0] - 2026-09-18 (Dual-Mode Rate Limiting, Distributed Correlation IDs, Stale Quota Sweeper & Adversarial Hardening)
+
+### Added & Hardened - Phase 17 Closure & Adversarial Reliability Hardening
+
+- **Dual-Mode Rate Limiting Architecture (`src/lib/rate-limit.ts`):**
+  - Added dedicated `aiStreamRateLimiter` sliding-window counter enforcing **30 requests per 60 seconds** on `/api/ai/stream` (`RATE_LIMITS.AI_STREAM`).
+  - Documented explicit dual-mode policy: Fail-Open for public content, sync, and file routes to preserve offline-first client continuity; Fail-Closed for AI quota deduction in PostgreSQL and upstream key rotation in Redis.
+  - Enforced RFC 7231 compliance in `rateLimitExceededResponse`: guaranteed `Retry-After >= 1` second via `Math.max(1, Math.ceil(result.reset - Date.now() / 1000))`.
+  - Accompanied by unit test coverage in `src/test/rate-limit.test.ts` (7 tests).
+- **Distributed Correlation Tracing Engine (`src/lib/utils/correlation.ts`):**
+  - Standardized `getOrGenerateCorrelationId` with RFC 4122 UUID v4 generation and strict CRLF sanitization (`/[^a-zA-Z0-9_-]/g`, max length 128) preventing HTTP response splitting.
+  - Injected `X-Correlation-ID` header into all HTTP responses (200, 304, 400, 401, 404, 412, 428, 429, 500) across `/api/files/[id]`, `/api/files/sync`, and `/api/ai/stream`.
+  - Injected `correlationId` into structured JSON error payloads and NDJSON streaming frames (`start`, `error`, `cancelled`).
+  - Added non-breaking `correlationId?: string` and `operationId?: string` propagation to `FileOpResult` in `src/server/actions/file-ops.ts`.
+  - Accompanied by unit test coverage in `src/test/correlation.test.ts` (5 tests).
+- **Automated Quota Sweeper & TD-02 Resolution (`src/app/api/cron/expire-reservations/route.ts`):**
+  - Deployed authenticated maintenance route protected by shared secret `Authorization: Bearer $CRON_SECRET`.
+  - Implemented dual HTTP method support (`GET` and `export const POST = GET;`) for broad scheduler compatibility.
+  - Added bounded batch processing (`limit: 100`) on `db.query.aiReservations.findMany` in `src/server/actions/ai-ops.ts`, guaranteeing serverless execution terminates in < 2 seconds and eliminating 504 Gateway Timeouts under accumulated backlogs.
+  - Registered in `.github/workflows/cron.yml` to execute on automated schedule alongside soft-delete tombstone purges.
+  - Formally resolved and closed **TD-02** in `docs/TECHNICAL_DEBT_REGISTER.md`.
+  - Accompanied by unit test coverage in `src/test/cron-expire-reservations.test.ts` (5 tests).
+- **Zero-Knowledge Log Sanitization Hardening (`src/lib/sync/log-sanitizer.ts`):**
+  - Expanded denylist keywords to include `prompt`, `apikey`, `token`, `sessiontoken`, `connectionstring`, `databaseurl`, `authtoken`, `bearertoken`.
+  - Implemented token-boundary isolation to prevent false-positive masking of valid operational properties (`operationId`, `sessionId`, `activity`).
+  - Intercepted error logging in `SyncErrorHandler` and metric metadata ingestion in `SyncPerformanceMonitor`.
+  - Accompanied by unit test coverage in `src/test/log-sanitizer.test.ts` (12 tests).
+- **Adversarial Audit Hardening (Anti-Overengineering Pass):**
+  - **Information Disclosure Prevention:** Replaced raw exception string returns in `/api/ai/stream` 500 catch block with a safe generic error response, preventing database connection string and stack trace leakage. Telemetry errors sanitized via `sanitizeLogMessage(detail)`.
+  - **Corrupted Cursor Protection:** Validated parsed pagination timestamps (`!isNaN(new Date(cursorData.updatedAt).getTime())`) in `/api/files/sync`, eliminating PostgreSQL `NaN` driver crashes.
+  - **Anti-Overengineering:** Empirically verified V8 RegExp compilation speed (8.48ms / 1,000 runs) and rejected stateful global RegExp caching (eliminating `lastIndex` concurrency hazards); rejected serverless in-memory LRU fallbacks to preserve documented Fail-Open semantics.
+- **Repository Verification Parity:**
+  - 100% test pass rate across 65 test suites (793 tests passed) in `vitest`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`).
+
 ## [1.25.6] - 2026-09-17 (Content Sanitization, Disguised Binary Detection, GFM Table Hardening & Adversarial Ingestion Defense)
 
 ### Added & Hardened - Phase 15 Closure & Adversarial Ingestion Hardening

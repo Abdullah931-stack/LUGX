@@ -19,7 +19,7 @@ graph TD
         SyncMgr -.->|"Quarantine locked conflicts"| Quarantine["pendingEncryptedConflicts (CONFLICT_LOCKED)"]
     end
 
-    SyncMgr <-->|"HTTP REST (If-Match / If-None-Match / Strong ETags / Rate Limits)"| APILayer["API Gateway Layer (/api/files & /api/ai)"]
+    SyncMgr <-->|"HTTP REST (If-Match / If-None-Match / Strong ETags / X-Correlation-ID / Rate Limits)"| APILayer["API Gateway Layer (/api/files & /api/ai)"]
     APILayer <-->|"Drizzle ORM / Adaptive Pool (Neon / pg.Pool)"| DBLayer[("PostgreSQL Database (files, users, user_vault_profiles)")]
 ```
 
@@ -47,16 +47,16 @@ graph TD
 
 | Component | Responsibility |
 |-----------|----------------|
-| `SyncManager` | Push/Pull coordination, non-blocking sync with `CONFLICT_LOCKED` quarantine, and reactive unlock auto-resolution |
+| `SyncManager` | Push/Pull coordination, non-blocking sync with `CONFLICT_LOCKED` quarantine, `sync_duration` telemetry tracking, and reactive unlock auto-resolution |
 | `ConflictResolver` | Conflict detection, 3-way merge orchestration (LCS delta engine), and false conflict elimination |
 | `SyntaxValidator` (`syntax-validator.ts`) | Centralized post-merge Markdown syntax integrity verification (code fence pairing, GFM table alignment, null-byte prevention) |
 | `LogSanitizer` (`log-sanitizer.ts`) | Zero-Knowledge log/metric hygiene, token boundary regex masking, DAG cycle-breaking, and sanitized stack preservation |
 | `SyncErrorHandler` (`error-handler.ts`) | Centralized typed error management, recovery strategies, and listener callbacks with automatic log sanitization |
-| `SyncPerformanceMonitor` (`performance-monitor.ts`) | In-memory performance metric profiling with metadata sanitization on ingestion |
+| `SyncPerformanceMonitor` (`performance-monitor.ts`) | In-memory performance metric profiling with metadata sanitization on ingestion and automated `sync_duration` timing |
 | `ConcurrencyManager` | In-memory mutex promise locking per file ID |
 | `ConnectionDetector` | Network monitoring with exponential backoff and jitter |
 | `Vault Server Actions` (`vault-actions.ts`) | Atomic vault profile CRUD, AI setting persistence (`updateVaultAISetting`), and remote device revocation |
-| `File Operations` (`file-ops.ts`) | Optimistic `toggleFileEncryption` & client-re-encrypted `copyFile` guard (AUD-02) |
+| `File Operations` (`file-ops.ts`) | Optimistic `toggleFileEncryption` & client-re-encrypted `copyFile` guard (AUD-02) with `operationId` continuity |
 | `AI Commit Action` (`ai-commit.ts`) | Transactional AI commit with Zero-Knowledge plaintext rejection and automatic reservation refunding |
 
 ### 3. Data & Cryptography Layer
