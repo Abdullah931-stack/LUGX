@@ -1,71 +1,32 @@
 /**
- * PDF Text Extraction Utility
- * Extracts plain text from PDF files WITHOUT images
- * Uses pdf-parse for server-side processing
+ * PDF Text Extraction Utility (Legacy Facade)
+ *
+ * Delegates to the isolated pdfjs-dist engine (extractPdfTextDirect).
+ * Server-side extraction is deprecated in favor of client-side Web Worker extraction (pdfWorkerBridge).
  */
 
+import { extractPdfTextDirect, ExtractPdfResult } from '../workers/pdf.worker';
 
-interface PdfParseOutput {
-    text: string;
-    numpages?: number;
-    numrender?: number;
-    info?: Record<string, unknown>;
-    metadata?: unknown;
-    version?: string;
-}
-
-type PdfParseFunction = (buffer: Buffer) => Promise<PdfParseOutput>;
-
-export interface PDFParseResult {
-    text: string;
-    numPages: number;
-    wordCount: number;
-}
+export type { ExtractPdfResult as PDFParseResult };
 
 /**
- * Extract text content from PDF buffer
- * @param buffer - PDF file buffer
+ * Extract text content from PDF buffer using the pure pdfjs-dist engine.
+ * @param buffer - PDF file buffer or ArrayBuffer
  * @returns Parsed text content with metadata
  */
-export async function extractPdfText(buffer: Buffer): Promise<PDFParseResult> {
-    try {
-        // Dynamic import to handle pdf-parse module
-        const pdfParseModule = await import('pdf-parse');
-        const parse = ((pdfParseModule as unknown as { default?: PdfParseFunction }).default ||
-            pdfParseModule) as unknown as PdfParseFunction;
-
-        // Call the parser function
-        const data = await parse(buffer);
-
-        // Extract plain text while preserving line breaks and formatting
-        let text = data.text || '';
-
-        // Normalize line breaks (ensure consistent \n)
-        text = text.replace(/\r\n/g, '\n');
-
-        // Preserve paragraph breaks (double line breaks)
-        // Remove excessive whitespace but keep intentional spacing
-        text = text.replace(/\n{3,}/g, '\n\n'); // Max 2 consecutive newlines
-
-        const wordCount = text.split(/\s+/).filter(Boolean).length;
-
-        return {
-            text,
-            numPages: data.numpages || 0,
-            wordCount,
-        };
-    } catch (error) {
-        throw new Error(`Failed to parse PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+export async function extractPdfText(buffer: ArrayBuffer | Uint8Array | Buffer): Promise<ExtractPdfResult> {
+    return extractPdfTextDirect(buffer);
 }
 
 /**
- * Validate PDF file before parsing
+ * Validate PDF file magic bytes (%PDF)
  * @param buffer - File buffer to validate
- * @returns true if valid PDF
+ * @returns true if valid PDF header
  */
-export function isValidPDF(buffer: Buffer): boolean {
-    // Check PDF magic number (first 4 bytes should be %PDF)
-    const header = buffer.slice(0, 4).toString();
-    return header === '%PDF';
+export function isValidPDF(buffer: ArrayBuffer | Uint8Array | Buffer): boolean {
+    if (!buffer) return false;
+    const view = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+    if (view.length < 4) return false;
+    // %PDF is 0x25, 0x50, 0x44, 0x46
+    return view[0] === 0x25 && view[1] === 0x50 && view[2] === 0x44 && view[3] === 0x46;
 }
