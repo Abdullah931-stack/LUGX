@@ -45,7 +45,7 @@ next-env.d.ts
 # agents ruls
 .agents
 
-# plans docs
+# internal plans
 .Plans
 
 # Playwright Test Outputs
