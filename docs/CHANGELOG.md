@@ -2,6 +2,27 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.27.0] - 2026-09-19 (Phase 18 Multi-System Integration Testing, Cross-System Lifecycle & Isolated Branch Verification)
+
+### Added & Verified - Phase 18 Closure & Multi-System Integration Verification
+
+- **Live Integration Test Infrastructure Expansion (`vitest.constants.mts`):**
+  - Registered 4 new hermetic live integration test suites in `LIVE_TEST_FILES`, expanding total live database coverage from 15 to 19 suites (89 live tests passing 100%):
+    1. `src/test/cron-expire-reservations.live.test.ts` (3 tests): Validates the automated quota sweeper route (`/api/cron/expire-reservations` - TD-02) against live Neon PostgreSQL rows, asserting stale lease TTL expiration, single-refund idempotency, and `CRON_SECRET` authorization gating.
+    2. `src/test/vault-sync.live.test.ts` (4 tests): Validates client-side AES-GCM-256 vault encryption against live database records, asserting deterministic AAD binding `vault:file:${userId}:${fileId}`, optimistic concurrency control on ciphertext versions, Zero-Knowledge HTTP 403 AI shielding, and cross-user tenant isolation.
+    3. `src/test/document-pipeline.live.test.ts` (4 tests): Validates the client-to-server document ingestion pipeline against real database persistence, asserting disguised binary magic byte rejection (PE/ELF/ZIP), PostgreSQL null-byte (`\0`) scrubbing, and 100% round-trip fidelity (Export -> Read -> Import -> Text Identity).
+    4. `src/test/multi-system-lifecycle.live.test.ts` (1 test): Consolidated 8-stage multi-system integration scenario validating auth session sync, AI quota reservation, ephemeral ghost preview, atomic ACID commit, encrypted vault conversion, OCC collision, 404 tenant masking, and document ingestion in a single sequential execution.
+- **Scythed Test User Cleanup Isolation (`src/server/actions/ai-ops.integrity.test.ts`):**
+  - Scoped user cleanup strictly to `TEST_USER_ID`, preventing global wildcard deletion of concurrent test accounts during serialized suite runs.
+- **Documentation Parity & Technical Debt Synchronization:**
+  - Published comprehensive Phase 18 closure report: [`docs/reference/phase-18-multi-system-integration-closure.md`](reference/phase-18-multi-system-integration-closure.md).
+  - Updated `docs/reference/test-database-isolation.md` to reflect all 19 LIVE suites.
+  - Updated `docs/TECHNICAL_DEBT_REGISTER.md` recording live database verification of TD-02 and current 89-test live baseline.
+- **Repository Verification Parity:**
+  - 100% pass rate across 19 live database integration suites (89 tests passed) executed twice consecutively on isolated Neon test branch (`ep-dry-rain-b1kfmpgk-pooler`).
+  - 100% pass rate across 65 unit and contract test suites (793 tests passed) in `vitest`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`).
+
 ## [1.26.0] - 2026-09-18 (Dual-Mode Rate Limiting, Distributed Correlation IDs, Stale Quota Sweeper & Adversarial Hardening)
 
 ### Added & Hardened - Phase 17 Closure & Adversarial Reliability Hardening

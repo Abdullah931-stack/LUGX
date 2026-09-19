@@ -73,6 +73,7 @@ docs/
 | [vault-phase-4-ai-gates-sync-closure.md](./reference/phase-16/vault-phase-4-ai-gates-sync-closure.md) | Vault Phase 4 closure: Dual-Layer Zero-Knowledge AI Safety Gatekeepers (UI badge + HTTP 403 route + commit re-encryption), Non-Blocking Sync with Encrypted Conflict Isolation (`CONFLICT_LOCKED`), Strong Deterministic Encrypted ETag Generator, Markdown Syntax Integrity Validator (`syntax-validator.ts`), PostgreSQL Migration 0010 & 28-Test Suite |
 | [vault-phase-5-closure-test-matrix.md](./reference/phase-16/vault-phase-5-closure-test-matrix.md) | Vault Phase 5 closure: 10-Point Closure Test Matrix verification, Zero-Knowledge Log Sanitizer, Word-Boundary isolation, Volatile RAM Hygiene in modals, SessionKeyStore lock-in, and Official Plan Closure |
 | [phase-17-monitoring-rate-limiting-errors-closure.md](./reference/phase-17-monitoring-rate-limiting-errors-closure.md) | Phase 17 closure: Dual-mode rate limiting, distributed correlation ID tracking, automated quota reservation expiration cron (TD-02), and adversarial error handling hardening |
+| [phase-18-multi-system-integration-closure.md](./reference/phase-18-multi-system-integration-closure.md) | Phase 18 closure: Multi-system integration testing across sync, AI streaming, vault encryption, Stripe billing, document pipeline, and tenant isolation on isolated Neon branch |
 | [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Bidi Line Plugin, 3 Direction Modes, Arabic/RTL safe decorations, live preview/source modes |
 | [phase-2-editor-replacement-tooling-closure.md](./reference/phase-2-editor-replacement-tooling-closure.md) | Phase 2 closure: TipTap replacement on editor page, EditorAdapter tooling integration, Multi-Range Search & Replace |
 | [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |
@@ -152,8 +153,8 @@ docs/
 npm run lint            # static analysis & ESLint 9 code quality gate
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (62 files, 776 tests via vitest.config.mts)
-npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (via vitest.live.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (65 files, 793 tests via vitest.config.mts)
+npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (19 files, 89 tests via vitest.live.config.mts)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation
 act push --pull=false   # local containerized execution of the 6-stage CI workflow

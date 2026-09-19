@@ -490,10 +490,10 @@ Deploy structured operational telemetry, standardize correlation IDs across rout
 
 ---
 
-## [Phase 18: Multi-System Integration Testing] — Status: ⏳ PARTIALLY DONE
+## [Phase 18: Multi-System Integration Testing] — Status: CLOSED ✅
 
 ### Current State
-15 hermetic live integration suites execute against the isolated Neon test branch (`npm run test:live`). Consolidated multi-system lifecycle test pending.
+Fully verified and officially closed: 19 hermetic live integration suites (89 live tests) execute against the isolated Neon test branch (`ep-dry-rain-b1kfmpgk-pooler`) via `npm run test:live`, governed under `singleFork: true` serialization in `vitest.live.config.mts`. 100% reproducible across two consecutive runs with zero partial mutations and zero flakiness.
 
 ### Derivation Constraint
 Phases 10 through 17.
@@ -501,20 +501,25 @@ Phases 10 through 17.
 ### Technical Objective
 Validate end-to-end multi-system contracts combining authentication, sync, conflict, AI streaming, encryption, and billing across real PostgreSQL and Redis services.
 
-### Test Suites
-- **Files & Sync Suite:** File creation, offline edit, queue, reconnect, stale If-Match, 412, conflict, merge, and reload.
-- **AI Happy Path Suite:** Auth session, reserve, stream NDJSON, preview, atomic commit, version/ETag bump, and reload.
-- **AI Failure Suite:** Provider failure, abort, disconnect, expired reservation, duplicate operation, failed commit, and single refund.
-- **Stripe Suite:** Signed webhook, event ledger, restart deduplication, period mapping, and tier transition.
-- **Encrypted Vault Suite:** Setup, local encryption, cloud sync, locked conflict isolation, unlock, and 3-way merge.
-- **Sanitization & Content Suite:** Malicious import, server sanitize, editor render, AI preview, and export.
+### Test Suites (7 Multi-System Suites)
+- **Files & Sync Lifecycle Suite:** File creation, offline edit in IndexedDB, queue flush, reconnect, stale If-Match, 412 conflict, 3-way Diff3 merge, deterministic ETag, reload recovery, and correlation header propagation.
+- **AI Happy Path & Atomic Commit Suite:** Auth session, Redis/Postgres reservation, streaming NDJSON with correlationId, ghost preview in CodeMirror 6, atomic ACID commit (file update + version bump + reservation settlement + usage counter), and reload.
+- **AI Failure & Quota Sweeper Suite:** Provider failure, client abort signal, single-refund idempotency, and automated reservation expiration sweeper (`/api/cron/expire-reservations` - TD-02).
+- **Stripe Billing & Durable Ledger Suite:** Live signed HMAC webhook verification (`route.live.test.ts`), ACID event ledger (`subscription_events`), restart replay idempotency, period mapping, and terminal status protection.
+- **Encrypted Vault & Zero-Knowledge Security Suite:** BIP-39 12-word seed, transparent local AES-GCM-256 encryption, deterministic AAD binding `vault:file:${userId}:${fileId}`, locked conflict isolation (`CONFLICT_LOCKED`), unlock & safe merge, Zero-Knowledge AI gatekeeper HTTP 403, and cross-user tenant isolation (`src/test/vault-sync.live.test.ts`).
+- **Document Ingestion, Normalization & Export Suite:** Client-side Web Worker PDF extraction, magic bytes disguised binary rejection (PE/ELF/ZIP), path traversal & null-byte scrubbing, CodeMirror 6 BiDi/RTL rendering, and 100% round-trip pure Markdown export (`src/test/document-pipeline.live.test.ts`).
+- **Tenant Isolation & Authorization Boundary Suite:** Cross-user resource isolation on files, folders, and AI streams with 404 anti-enumeration error masking, and atomic concurrent user synchronization (`syncUserToDatabase`).
+- **Consolidated Multi-System Lifecycle:** End-to-end 8-stage verification uniting all platform subsystems under concurrent transactional execution (`src/test/multi-system-lifecycle.live.test.ts`).
 
 ### Exception & Edge Case Handling
-- All integration suites execute on isolated Neon test branch under `singleFork` serialization.
+- All integration suites execute on isolated Neon test branch (`TEST_DATABASE_URL`) guarded fail-closed by `test-db-guard.ts` under `singleFork: true` serialization in `vitest.live.config.mts`.
 - Zero mock workarounds permitted for database or Redis operations.
 
 ### Closure Condition
-All 6 multi-system suites pass repeatedly on the isolated branch with zero partial mutations.
+All 7 multi-system suites pass repeatedly on the isolated branch with zero partial mutations. (VERIFIED: 19 test files, 89 live tests passing 100% across two consecutive runs; zero type errors under `npx tsc --noEmit`).
+
+### Transition Gate
+- **Status:** `CLOSED` ✅. Transition to Phase 19 requires explicit user authorization pursuant to the single-phase session protocol and technical debt item TD-07. Phase 19 must not begin until this phase is closed.
 
 ---
 
@@ -532,53 +537,69 @@ Validate complete user journeys in real browser instances across Next.js App Rou
 ### Tooling Setup
 - **Step 0:** Install `@playwright/test`, generate `playwright.config.ts`, and configure isolated test server environments.
 
-### User Journey Scenarios
-1. User login, document creation, rich text editing, and page reload.
-2. Cross-user authorization isolation on documents and folders.
-3. Offline editing, network reconnection, and manual conflict resolution dialog.
-4. AI streaming ghost preview, keystroke offset tracking, and atomic acceptance.
-5. AI stream cancellation at start, mid-flight, and pre-commit.
-6. HTTP 412 handling during AI commit without partial text leaks.
-7. Graceful degradation when all AI provider keys are exhausted.
-8. Stripe subscription checkout, webhook handling, and tier upgrades.
-9. Malicious file import, sanitization, and clean export.
-10. Vault creation, 12-word seed recovery, and locked conflict resolution.
+### User Journey Scenarios (15 Comprehensive End-to-End Journeys)
+1. Authentication & Session Lifecycle: login, SSR cookie verification, cross-tab persistence, reload recovery, and clean logout storage teardown.
+2. File System, Folder Tree & Trash Lifecycle: nested folders, drag-and-drop move/copy, rename, soft deletion, duplicate name coexistence, restore to root, and permanent purge.
+3. Native CodeMirror 6 Markdown & BiDi RTL: pure Markdown editing, automatic Arabic RTL detection via bidi plugin, LTR code block locking, multi-range search & replace, and debounced autosave.
+4. Offline-First Sync & Interactive Conflict Resolution: offline editing in IndexedDB queue, reconnect, 412 trigger, interactive ConflictDialog diff inspection, and 3-way Diff3 merge.
+5. Client-Side PDF Ingestion & OCR: disguised binary rejection via magic bytes, pdf-extract-dialog flow, 2D spatial table reconstruction, OCR toggle, and 100% roundtrip Markdown export.
+6. AI Streaming, Dynamic Ghost Preview & Atomic Commit: text selection, NDJSON streaming with correlationId, CMStreamingGhostWidget typing offset tracking, and atomic one-click acceptance.
+7. User-Initiated AI Stream Abort (No Refund): mid-stream stop button click, immediate connection abort, zero text leakage, and quota settled as consumed (No Refund) for incurred compute costs.
+8. User-Initiated AI Preview Rejection (No Refund): preview rejection/undo, document left untouched, and quota settled as consumed (No Refund) preventing free regeneration exploits.
+9. System AI Provider Failure (Full Refund): simulated upstream 500 or key exhaustion, safe generic error banner display, and automated full quota refund for system faults.
+10. AI Concurrent Edit Collision (412): concurrent edit in sibling tab, commit rejected with 412 Precondition Failed, preventing partial text overwrite with user conflict prompt.
+11. Zero-Knowledge Vault Creation: CreateVaultModal setup, 12-word BIP-39 mnemonic, 3-word randomized challenge, 600K PBKDF2 Web Worker key derivation, and cloud ciphertext sync.
+12. Vault Auto-Lock, Multi-Modal Unlock & Device Trust: inactivity auto-lock, SessionKeyStore volatile wipe, password unlock, BIP-39 seed recovery, and WebAuthn PRF / 6-digit PIN device trust.
+13. Vault AI Gatekeeper & Encrypted Conflict Quarantine: encrypted note opens with amber AI shield badge, AI route blocked with HTTP 403, and locked conflict quarantined in CONFLICT_LOCKED.
+14. Stripe Subscription Checkout & Durable Ledger: upgrade button, Stripe Sandbox checkout redirect, live webhook processing into subscription_events, and instant real-time tier upgrade.
+15. Cross-User Tenant Isolation & Anti-Enumeration: foreign file/folder access blocked via direct URL navigation or API with strict 404 Anti-Enumeration error masking.
 
 ### Exception & Edge Case Handling
 - Zero flaky tests permitted for closure.
-- Clean namespace isolation between scenario runs.
+- Clean namespace isolation between scenario runs using designated prefix ranges (`9999...`).
+- Any state discrepancy between browser UI and persistent database/IndexedDB fails the journey immediately.
 
 ### Closure Condition
-All 10 user journeys pass twice consecutively on CI pipeline.
+All 15 user journeys pass twice consecutively on CI pipeline with zero partial mutations, zero data leakage, and strict adherence to the AI quota settlement policy.
 
 ---
 
 ## [Phase 20: Final Production Verification & System Readiness Gates] — Status: ⏸️ PENDING
 
 ### Current State
-Pre-release verification gates pending completion of Phases 17, 18, and 19.
+Foundational phases 1 through 17 are officially closed and verified with 100% unit and isolated live test suites. Remaining verification gates prior to the final readiness declaration are strictly bounded by Phase 18 (Live Multi-System Integration) and Phase 19 (Browser E2E User Journeys).
 
 ### Derivation Constraint
-Successful completion of Phases 1 through 19.
+- Official `CLOSED` state recorded for Phase 18 (Multi-System Integration Testing).
+- Official `CLOSED` state recorded for Phase 19 (Playwright E2E User Journeys).
 
 ### Technical Objective
-Enforce strict production readiness criteria before declaring the system ready for deployment.
+Prevent issuing the production `READY` status until all 11 critical readiness criteria are rigorously validated with empirical engineering proof, zero architectural contradictions, resilient fault isolation, and full platform integrity.
 
 ### Direct Implementation Steps
-- **Step 1:** Confirm closure of Phases 9 and 10 (session governance and Neon isolation).
-- **Step 2:** Confirm closure of Phases 11 and 12 (editor orchestration and auth ownership).
-- **Step 3:** Confirm closure of Phases 13 and 14 (Stripe billing and storage decommissioning).
-- **Step 4:** Confirm closure of Phases 15, 16, and 17 (sanitization, vault encryption, and telemetry).
-- **Step 5:** Validate 100% pass rate across Phase 18 integration and Phase 19 E2E suites.
-- **Step 6:** Generate final deployment dossier detailing test results, active database branch, applied migrations, and rollback procedures.
+- **Step 1:** Confirm closure of Phases 9 and 10 (session governance and Neon branch isolation).
+- **Step 2:** Confirm closure of Phases 11 and 12 (native CodeMirror 6 pure-markdown editor and tenant isolation via 404 Anti-Enumeration).
+- **Step 3:** Confirm closure of Phases 13 and 14 (durable Stripe event ledger and complete decommissioning of Supabase Storage enforcing Zero Binary Cloud Storage).
+- **Step 4:** Confirm closure of Phases 15, 16, and 17 (magic bytes file validation, client-side Web Worker PDF extraction, Zero-Knowledge AES-GCM-256 encrypted vault with deterministic AAD binding, distributed `X-Correlation-ID` tracking, dual-mode rate limiter, and cron sweeper TD-02).
+- **Step 5:** Execute and validate 100% pass rate across the 7 multi-system integration suites in Phase 18 on the isolated Neon branch.
+- **Step 6:** Execute and validate 100% pass rate across the 15 browser-driven Playwright user journeys in Phase 19 run twice consecutively with zero flakiness.
+- **Step 7:** Compile the Final Production Readiness Dossier detailing active database branch identity, applied migrations, clean static type and vulnerability audit results, and disaster recovery rollback plans.
 
-### Final Readiness Invariant
-The platform status `READY` will only be issued when all closure criteria are verified:
-- Resource ownership and optimistic locking (`If-Match`) fully enforced.
-- Sync lifecycle, durable queue, and garbage collection verified.
-- 3-way conflict merges validated with structural syntax integrity checks.
-- AI quota reservation and refunds idempotent with automated cron cleanup.
-- AI streaming incorporates dynamic offset mapping and atomic commits.
-- Stripe processing backed by durable database event ledger.
-- Zero-Knowledge client-side vault encryption bound by AAD and BIP-39 recovery.
-- Zero test failures across unit, integration, and browser E2E suites with zero flaky tests.
+### Exceptional Case Handling
+- Critical gate failure: Transition status immediately to `BLOCKED`; halt any progression toward production deployment.
+- Migration or transaction anomaly: Abort execution immediately and revert to the verified recovery snapshot; undocumented manual patching is strictly prohibited.
+- Environmental discrepancy: The active source code and live deterministic test outputs serve as the sole authoritative truth.
+
+### Final Readiness Invariants (11 Essential Gates for `READY` Verdict)
+The platform status `READY` will only be issued when all 11 closure criteria are verified with concrete digital evidence:
+1. **Resource Ownership & Optimistic Locking:** Full enforcement of `If-Match` and `version` headers returning 412/428 across all mutation routes.
+2. **Sync Lifecycle & Durable Queue:** Deterministic IndexedDB transaction handling, atomic rollbacks, and leak-free garbage collection.
+3. **Native CodeMirror 6 & Arabic RTL:** Pure-Markdown data layer, automated BiDi text direction, 3-way Diff3 conflict merging, and AST syntax validation.
+4. **AI Quota Settlement & Sweeper Policy (§4-D):** Streamed NDJSON with correlation tracing, automated sweeper cron (`TD-02`), and strict quota settlement: user-initiated abort (`stopStream`) or preview rejection (`rejectPreview`) after stream commencement settles quota as consumed (`status = committed`, `refundedUnits = 0`) with zero refund, reserving automated refunds strictly for upstream/system failures.
+5. **Durable Stripe Billing Ledger:** Live HMAC signature verification, idempotent event recording in `subscription_events`, and strict protection against reviving canceled subscriptions.
+6. **Zero-Knowledge Encrypted Vault:** Client-side AES-GCM-256 with PBKDF2 (600,000 iterations), deterministic AAD binding (`vault:file:${userId}:${fileId}`), BIP-39 recovery mnemonic validation, WebAuthn PRF/PIN device trust, and instant HTTP 403 AI gating.
+7. **Zero Binary Cloud Storage:** Client-side Web Worker PDF text and table extraction, strict magic bytes binary rejection, and complete absence of cloud bucket binary storage or signed URLs.
+8. **Tenant Isolation & Security Guard:** Consistent 404 Anti-Enumeration masking across all unauthorized resource access attempts.
+9. **Distributed Tracing & Dual-Mode Rate Limiting:** Propagation of `X-Correlation-ID` headers across all responses and streaming frames, with dual IP/User rate limiting.
+10. **Phase 18 Integration Pass:** 100% pass rate across all 7 multi-system test suites on the isolated Neon test branch under `singleFork: true`.
+11. **Phase 19 E2E Journey Pass:** 100% pass rate across all 15 Playwright browser user journeys run twice consecutively in CI with zero flaky tests.

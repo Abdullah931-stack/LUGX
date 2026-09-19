@@ -33,10 +33,10 @@ remain in place as a **second layer of defense**, not a substitute.
 | Command | Scope |
 |---|---|
 | `npm run test` | Unit/contract tests only (runs ONCE via `vitest run`; `test:watch` exists for watch mode). No DB, no external services. Fast, hermetic, and completely decoupled from network/cloud. |
-| `npm run test:live` | The 15 hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch. |
+| `npm run test:live` | The 19 hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch. |
 | `npm run test:all` | Both, sequentially. |
 
-LIVE suites registered in `vitest.constants.mts` (15 hermetic database suites):
+LIVE suites registered in `vitest.constants.mts` (19 hermetic database suites):
 
 1. `src/app/api/files/[id]/route.putguard.test.ts`
 2. `src/server/actions/ai-ops.integrity.test.ts`
@@ -53,13 +53,17 @@ LIVE suites registered in `vitest.constants.mts` (15 hermetic database suites):
 13. `src/test/ai-reservation-status.live.test.ts`
 14. `src/app/api/stripe/webhook/route.live.test.ts`
 15. `src/test/cross-user-ownership.test.ts`
+16. `src/test/cron-expire-reservations.live.test.ts`
+17. `src/test/vault-sync.live.test.ts`
+18. `src/test/document-pipeline.live.test.ts`
+19. `src/test/multi-system-lifecycle.live.test.ts`
 
 *(Note: The external cloud integration suite `src/test/ai-live-e2e.test.ts` is explicitly isolated to Stage 6 `live-provider-smoke` and requires live provider API secrets).*
 
 ### Formerly-mocked suites — LIVE twins now implemented (post Phase 10 follow-up)
 
 The five suites below had fully-mocked persistence when inventoried; real-
-branch live twins were added and registered in `vitest.live.config.ts`:
+branch live twins were added and registered in `vitest.constants.mts`:
 
 | Mocked contract suite | LIVE twin (added 2026-08-24) |
 |---|---|
@@ -127,6 +131,9 @@ to a live URL; push failures surface immediately).
 - **Unit test suite (`npx vitest run`):** **37 files / 488 tests — all passed (100% pass rate)**, zero LIVE files included.
 - **Guard unit tests (`src/test/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Live run (`npm run test:live`):** 16 registered suites executed against isolated PostgreSQL container / Neon branch.
+- **Phase 18 Comprehensive Verification (2026-09-19):**
+  - **Unit & Contract Suite (`npm run test`):** **65 files / 793 tests — all passed (100% pass rate)**, zero LIVE files included.
+  - **Live Multi-System Suite (`npm run test:live`):** **19 registered suites / 89 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - Mandatory identity line printed at the start of every live run:
   `[test-db] Isolated test branch identity — endpointId: 'ep-soft-glade-b1hdcbwm-pooler' host: 'ep-soft-glade-b1hdcbwm-pooler.c-5.eu-central-1.aws.neon.tech'`
 - Main-branch row counts before/after a full live run (2026-08-24, operator

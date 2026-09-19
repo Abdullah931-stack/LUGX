@@ -30,7 +30,9 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   invoked it.
 - **Resolution:** Fixed in Phase 17 by deploying `/api/cron/expire-reservations`
   protected by `CRON_SECRET` and scheduling it via `.github/workflows/cron.yml`.
-  Covered by unit tests in `src/test/cron-expire-reservations.test.ts`.
+  Covered by unit tests in `src/test/cron-expire-reservations.test.ts` and
+  verified against real database rows on the isolated Neon test branch in Phase 18
+  (`src/test/cron-expire-reservations.live.test.ts`).
 
 ## TD-03 — No audit trail for destructive database operations
 
@@ -81,7 +83,7 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   plus a documented manual checklist. Similarly, Phase 18/Vault encryption journeys
   (vault unlock, 6-digit PIN verification, device trust enrollment/revocation,
   and cross-tab inactivity locking) are verified through comprehensive jsdom and WebCrypto
-  integration tests (expanded to 776 tests across 62 suites) — but there are no automated real-browser
+  integration tests (expanded to 65 unit/contract test suites with 793 tests, plus 19 live integration suites with 89 tests on the isolated Neon branch) — but there are no automated real-browser
   journeys yet (`@playwright/test` is intentionally introduced only in Phase 19).
 - **Interim mitigation:** jsdom hard-reload simulation is semantically faithful
   (zero in-memory state survives; recovery runs from sessionStorage seeds), and
@@ -105,7 +107,7 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
 - **Resolution:**
   - Extracted shared test suite arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated Single Source of Truth (`vitest.constants.mts`), restricting config files strictly to default exports (`export default defineConfig(...)`).
   - Migrated configuration files to Native ESM (`vitest.config.mts` and `vitest.live.config.mts`), replaced CommonJS `__dirname` with standard `import.meta.dirname`, and specified explicit `.mjs` import extensions for TypeScript module resolution.
-  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 62 test files and 776 tests).
+  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 65 test files and 793 tests via vitest.config.mts, plus 19 live files via vitest.live.config.mts).
 
 ## TD-10 — Offline Extraction of IndexedDB Device Trust Envelope (Accepted Risk for PIN / Mitigated via WebAuthn PRF)
 
@@ -125,7 +127,7 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   - Strongly typed all cryptographic worker RPC action payloads (`CryptoWorkerResponsePayloads`), indexedDB vault profiles (`UserVaultProfile`), and database encryption metadata (`FileEncryptionMetadata`).
   - Pruned all unused imports, variables, and dead mocks across server actions, sync engines, UI modals, and test suites.
   - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
-  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 62 test suites, 776 tests green).
+  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 65 unit test suites with 793 tests green, plus 19 live integration suites with 89 tests green).
 
 ## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session
 

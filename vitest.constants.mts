@@ -27,6 +27,10 @@ export const LIVE_TEST_FILES = [
     'src/test/ai-reservation-status.live.test.ts',
     'src/app/api/stripe/webhook/route.live.test.ts',
     'src/test/cross-user-ownership.test.ts',
+    'src/test/cron-expire-reservations.live.test.ts',
+    'src/test/vault-sync.live.test.ts',
+    'src/test/document-pipeline.live.test.ts',
+    'src/test/multi-system-lifecycle.live.test.ts',
 ];
 
 /**

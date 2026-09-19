@@ -61,7 +61,7 @@ afterAll(async () => {
     // Remove this suite's seeded test accounts (fixed UUID + random *.test
     // emails); CASCADE removes their dependent files/usage rows too.
     try {
-        await cleanupTestUsers([TEST_USER_ID], { emailPattern: TEST_USER_EMAIL_PATTERN });
+        await cleanupTestUsers([TEST_USER_ID]);
     } catch {
         /* ignore */
     }

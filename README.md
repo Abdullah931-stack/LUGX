@@ -20,6 +20,7 @@
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
   <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-65%20Suites%20·%20793%2F793%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 793 Passing" /></a>
+  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-19%20Suites%20·%2089%2F89%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 89 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
 </p>
 
@@ -48,6 +49,7 @@
   - [7. Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem](#7-zero-knowledge-cloud-vault--client-side-hybrid-encryption-subsystem)
   - [8. Client-Side Document Ingestion, Spatial Table Extractor & Arabic Normalization Pipeline](#8-client-side-document-ingestion-spatial-table-extractor--arabic-normalization-pipeline)
   - [9. Dual-Mode Rate Limiting, Log Sanitization & Distributed Correlation Tracing](#9-dual-mode-rate-limiting-log-sanitization--distributed-correlation-tracing)
+  - [10. Live Multi-System Integration & Isolated Database Test Infrastructure](#10-live-multi-system-integration--isolated-database-test-infrastructure)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -285,7 +287,7 @@ The test suite is partitioned into two isolated tiers to prevent local tests fro
 # Execute unit/contract test suites (65 test files, 793 tests)
 npm run test
 
-# Execute live database integration test suites
+# Execute live database integration test suites on isolated Neon branch (19 test files, 89 tests)
 npm run test:live
 
 # Verify strict TypeScript typing
@@ -537,6 +539,22 @@ flowchart TD
   - Implements word-boundary denylist regex matching (`(^|[^a-zA-Z0-9_])`) to redact sensitive cryptographic tokens (`vaultKey`, `privateKey`, `seedPhrase`, `kek`, `salt`, `authorization`).
   - Eliminates false positives on benign identifiers (such as `key: value` or `keyboard`), guaranteeing that zero plaintext encryption secrets or session tokens leak into serverless runtime stdout or external observability drains.
 
+### 10. Live Multi-System Integration & Isolated Database Test Infrastructure
+
+To ensure platform-wide stability across complex asynchronous boundaries, LUGX deploys a dedicated, fail-closed integration tier executing against a real isolated Neon PostgreSQL database branch (`ep-dry-rain-b1kfmpgk-pooler`) and Upstash Redis instances with zero persistence-layer mocks.
+
+- **Serialized Execution Invariant (`vitest.live.config.mts`):** Integration suites execute under `singleFork: true` serialization to prevent concurrent database teardown races and connection pool starvation across suites.
+- **Fail-Closed Database Guard (`src/test/test-db-guard.ts`):** Enforces strict endpoint inspection before connection pool creation, terminating execution immediately if credentials point to main production branches or non-test hosts.
+- **Seven Core Multi-System Integration Axes Verified:**
+  1. *Files & Sync Lifecycle:* Real row initialization, debounced auto-save persistence, 3-way Diff3 merge resolution, and deterministic ETag generation.
+  2. *AI Happy Path & Atomic Commit:* Quota reservation leases, streaming NDJSON with correlation tracing, and atomic ACID commits (file version bump + quota settlement + usage advancement) in a single database transaction.
+  3. *AI Failure & Quota Sweeper (TD-02):* Upstream provider error handling, client abort propagation, single-refund idempotency, and automated cron sweepers (`/api/cron/expire-reservations`) with bounded 100-row batch execution.
+  4. *Stripe Billing & Event Ledger:* Live HMAC signature verification, ACID event deduplication in `subscription_events`, and terminal state protection.
+  5. *Zero-Knowledge Encrypted Vault:* Client-side AES-GCM-256 encryption, deterministic AAD context binding `vault:file:${userId}:${fileId}`, optimistic concurrency control on ciphertext versions, and HTTP 403 AI shielding.
+  6. *Document Ingestion Pipeline:* Disguised binary rejection (PE/ELF/ZIP magic bytes), PostgreSQL null-byte scrubbing, and 100% round-trip fidelity.
+  7. *Tenant Isolation & Security Boundary:* 404 Anti-Enumeration masking across unauthorized files, folders, and stream operations.
+- **Consolidated 8-Stage Lifecycle Scenario (`src/test/multi-system-lifecycle.live.test.ts`):** Validates all platform subsystems combined in an end-to-end sequential scenario under live transactional conditions.
+
 ---
 
 ## Security Architecture
@@ -565,7 +583,7 @@ Comprehensive architectural designs, specifications, guides, and engineering rec
 | -------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`docs/architecture/`](./docs/architecture/) | Subsystem architectural designs           | [`sync-lifecycle-architecture.md`](./docs/architecture/sync-lifecycle-architecture.md), [`editor-sync-orchestration.md`](./docs/architecture/editor-sync-orchestration.md), [`ai-atomic-commit-architecture.md`](./docs/architecture/ai-atomic-commit-architecture.md), [`ai-quota-reservation-lifecycle.md`](./docs/architecture/ai-quota-reservation-lifecycle.md), [`ai-streaming-protocol.md`](./docs/architecture/ai-streaming-protocol.md), [`three-way-conflict-resolution.md`](./docs/architecture/three-way-conflict-resolution.md), [`security-and-rate-limiting.md`](./docs/architecture/security-and-rate-limiting.md) |
 | [`docs/Plans/`](./docs/Plans/)               | Code-derived roadmap & technical plans    | [`TECHNICAL_EXECUTION_PLAN.md`](./docs/Plans/TECHNICAL_EXECUTION_PLAN.md), [`HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`](./docs/Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md), [`MARKDOWN_EDITOR_MIGRATION_PLAN.md`](./docs/Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) |
-| [`docs/reference/`](./docs/reference/)       | API contracts & phase closure records     | [`SYNC_API.md`](./docs/reference/SYNC_API.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`phase-17-monitoring-rate-limiting-errors-closure.md`](./docs/reference/phase-17-monitoring-rate-limiting-errors-closure.md), [`phase-1` through `phase-17` closure reports](./docs/reference/)                                                                                                                                                                                                                                                                                           |
+| [`docs/reference/`](./docs/reference/)       | API contracts & phase closure records     | [`SYNC_API.md`](./docs/reference/SYNC_API.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`phase-18-multi-system-integration-closure.md`](./docs/reference/phase-18-multi-system-integration-closure.md), [`phase-1` through `phase-18` closure reports](./docs/reference/)                                                                                                                                                                                                                                                                                           |
 | [`docs/specs/`](./docs/specs/)               | Living technical specifications           | [`Plan for an improved synchronization system.md`](./docs/specs/Plan%20for%20an%20improved%20synchronization%20system.md), [`AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md`](./docs/specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md), [`UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md`](./docs/specs/UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md)                                                                                                                                                                                                                                                                                        |
 | [`docs/guides/`](./docs/guides/)             | Developer & operational how-tos           | [`STRIPE_INTEGRATION.md`](./docs/guides/STRIPE_INTEGRATION.md), [`STRIPE_SETUP.md`](./docs/guides/STRIPE_SETUP.md), [`AI_MODELS_CONFIG.md`](./docs/guides/AI_MODELS_CONFIG.md), [`Editor_UI_Enhancements.md`](./docs/guides/Editor_UI_Enhancements.md), [`Search_Replace_Feature.md`](./docs/guides/Search_Replace_Feature.md)                                                                                                                                                                                                                                                                                                     |
 | [`docs/foundation/`](./docs/foundation/)     | Verbatim founding design & divergence log | [`DESIGN_VS_REALITY.md`](./docs/foundation/DESIGN_VS_REALITY.md), [`Project_Structure.md`](./docs/foundation/Project_Structure.md), [`LUGX platform subscription plans.md`](./docs/foundation/LUGX%20platform%20subscription%20plans.md)                                                                                                                                                                                                                                                                                                                                                                                           |
