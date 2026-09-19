@@ -30,6 +30,7 @@ export default async function LoginPage({
                         width={120}
                         height={32}
                         className="h-10 w-auto mx-auto"
+                        style={{ width: "auto" }}
                         priority
                     />
                 </Link>

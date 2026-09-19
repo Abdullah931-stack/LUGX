@@ -20,7 +20,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, sql, and } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb, cleanupTestUsers, TEST_USER_EMAIL_PATTERN } from "@/test/test-db";
+import { testDb, cleanupTestUsers } from "@/test/test-db";
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
 let dbAvailable = false;

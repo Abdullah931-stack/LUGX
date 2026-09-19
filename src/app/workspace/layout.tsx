@@ -33,6 +33,7 @@ export default async function WorkspaceLayout({
                             width={80}
                             height={24}
                             className="h-6 w-auto"
+                            style={{ width: "auto" }}
                         />
                     </Link>
 

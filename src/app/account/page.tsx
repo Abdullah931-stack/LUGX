@@ -48,6 +48,7 @@ export default async function AccountPage() {
                                     width={80}
                                     height={24}
                                     className="h-6 w-auto"
+                                    style={{ width: "auto" }}
                                 />
                             </Link>
                         </div>

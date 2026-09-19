@@ -19,6 +19,7 @@ export default function HomePage() {
                 width={120}
                 height={32}
                 className="h-8 w-auto"
+                style={{ width: "auto" }}
                 priority
               />
             </Link>
@@ -320,6 +321,7 @@ export default function HomePage() {
             width={80}
             height={24}
             className="h-6 w-auto opacity-50"
+            style={{ width: "auto" }}
           />
           <p className="text-sm text-zinc-500">
             © 2026 LUGX. All rights reserved.

@@ -48,6 +48,27 @@ export async function getUserTier(userId: string): Promise<TierName> {
 async function getTodayUsage(userId: string) {
     const today = getToday();
 
+    // Guard against foreign key violation: ensure user exists in 'users' before attempting insert into 'usage'
+    const userExists = await db.query.users.findFirst({
+        where: eq(schema.users.id, userId),
+        columns: { id: true },
+    });
+
+    if (!userExists) {
+        return {
+            id: "",
+            userId,
+            date: today,
+            correctWords: 0,
+            improveWords: 0,
+            translateWords: 0,
+            summarizeCount: 0,
+            summarizeWords: 0,
+            toPromptCount: 0,
+            createdAt: new Date(),
+        };
+    }
+
     // Atomic ensure: inserts only when no row exists yet. If a concurrent
     // request inserts first, the ON CONFLICT clause is a no-op (NOT a race —
     // the DB enforces it under the unique index), and we fall through to the
@@ -84,7 +105,18 @@ async function getTodayUsage(userId: string) {
                     eq(schema.usage.userId, userId),
                     eq(schema.usage.date, today)
                 ),
-            }))
+            })) ?? {
+                id: "",
+                userId,
+                date: today,
+                correctWords: 0,
+                improveWords: 0,
+                translateWords: 0,
+                summarizeCount: 0,
+                summarizeWords: 0,
+                toPromptCount: 0,
+                createdAt: new Date(),
+            }
         );
     }
 
@@ -810,6 +842,23 @@ export async function getRemainingQuota(): Promise<{
     try {
         const user = await getUser();
         if (!user) return null;
+
+        // Self-healing: ensure authenticated user exists in DB before querying tier or usage
+        try {
+            const userEmail = user.email || `${user.id}@auth.local`;
+            const displayName = (user.user_metadata?.full_name as string) || user.email?.split("@")[0] || "User";
+            const avatarUrl = (user.user_metadata?.avatar_url as string) || null;
+
+            await db.insert(schema.users).values({
+                id: user.id,
+                email: userEmail,
+                displayName,
+                avatarUrl,
+                tier: "free",
+            }).onConflictDoNothing();
+        } catch {
+            // Non-fatal if concurrency or conflict occurred
+        }
 
         const tier = await getUserTier(user.id);
         const limits = TIER_LIMITS[tier];

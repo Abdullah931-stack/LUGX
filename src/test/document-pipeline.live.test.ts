@@ -16,7 +16,6 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vites
 import { eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/lib/db/schema";
-import { getUser } from "@/lib/supabase/server";
 import { importFile } from "@/server/actions/import-file";
 import { exportContent } from "@/lib/exporters";
 import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";

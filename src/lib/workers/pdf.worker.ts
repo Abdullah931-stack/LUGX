@@ -6,14 +6,19 @@
  * progress reporting, and user cancellation via AbortSignal.
  */
 
-// Worker-safe DOM polyfills for pdfjs-dist display layer compatibility
-if (typeof document === 'undefined') {
+// Worker-safe DOM polyfills for pdfjs-dist display layer compatibility (scoped strictly to Worker context)
+if (typeof document === 'undefined' && typeof self !== 'undefined' && (typeof (self as unknown as { WorkerGlobalScope?: unknown }).WorkerGlobalScope !== 'undefined' || typeof (self as unknown as { importScripts?: unknown }).importScripts === 'function')) {
     const workerHref = (typeof self !== 'undefined' && 'location' in self && (self as unknown as { location?: { href?: string } }).location?.href) || '';
     (globalThis as unknown as { document: unknown }).document = {
         baseURI: workerHref,
         documentElement: null,
-        createElement: () => ({ append: () => {}, appendChild: () => {} }),
+        head: null,
+        body: null,
+        createElement: () => ({ append: () => {}, appendChild: () => {}, setAttribute: () => {} }),
         getElementsByTagName: () => [],
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        getElementById: () => null,
     };
 }
 
