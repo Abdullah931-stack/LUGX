@@ -19,7 +19,7 @@ Any acceptable architectural solution must rigorously satisfy the following five
 3. **Atomic Commit Invariance (Acceptance-Triggered):** Stream completion does NOT mutate the document. The sanitized output is parked in `preview_ready`, and only an explicit user **Accept** applies the AI transformation in exactly ONE atomic transaction targeting $[from, to]$ via `adapter.replaceRange(from, to, previewContent)` (server-first commit confirmed before the local write). **Reject** and **Retry** leave the document fully untouched.
 4. **Single-Action Undo Invariance:** Exactly one history entry is produced. A single `Ctrl+Z` (or undo command) restores the original document state and selection range prior to the AI invocation.
 5. **Deterministic Rollback Invariance:** If the stream fails, times out, is aborted by the user, or encounters an API error (429/500/503), the ephemeral visual state is purged in $O(1)$ time with zero side effects on the document content.
-6. **Explicit Settlement Invariance (v1.6.0):** Quota refunds apply ONLY to system failures (stream errors, startup errors, 412 conflicts). User-driven outcomes — Reject, Retry, Stop-mid-generation, or abandoning a completed preview — settle the reservation as consumed (`commitAIReservation`, idempotent, no document write) and are never refunded.
+6. **Explicit Settlement & Dual-Side Inversion Invariance (v1.6.0 & v1.29.2):** Quota refunds apply strictly to pre-TTFT aborts and system failures (startup errors, 412 conflicts). User-driven outcomes — Reject, Retry, Stop-mid-generation (`stopStream`), abandoning a completed preview, or post-TTFT disconnects — settle the reservation as consumed (`commitAIReservation`, idempotent, no document write). Client-side stop execution is instantaneous (< 50ms) with zero blocking network delays (TD-05).
 
 ---
 
@@ -61,9 +61,13 @@ sequenceDiagram
             StreamHandler->>Backend: Settle quota as consumed (commitAIReservation)
             StreamHandler->>GhostExt: Teardown Ephemeral Preview (Doc Pristine)
         end
-    else Stream Error / System Abort / Network Loss
+    else Stream Error / System Abort / Network Loss (TD-05 Protocol)
         Backend--xStreamHandler: Socket Error / Abort Event
-        StreamHandler->>Backend: Auto-refund reservation (refundAIReservation)
+        alt Pre-TTFT Disconnect (ttftMs === null)
+            Backend->>Backend: Auto-refund reservation (refundAIReservation)
+        else Post-TTFT Disconnect (ttftMs !== null) or User Stop
+            Backend->>Backend: Autonomous commit (commitAIReservation)
+        end
         StreamHandler->>GhostExt: Immediate Teardown Ephemeral Preview
         StreamHandler->>Editor: Restore Target Selection & Unlock Editor
         Editor-->>User: Display Toast Notification (Original Range Restored)

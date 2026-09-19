@@ -15,10 +15,13 @@ The Next.js 16 Edge proxy runs on every route except static assets (see its
 | Concern | Implementation |
 | :--- | :--- |
 | Protected pages | `/workspace`, `/account`, `/dashboard` require a Supabase session (`supabase.auth.getUser()`); unauthenticated page navigations redirect to `/login?redirectTo=…` (preserving search params / deep links) |
-| Server Actions & API routes | Under the same protected paths, an unauthenticated request receives a **JSON `401 Unauthorized`** instead of an HTML redirect (an HTML redirect breaks the Server Action client runtime) |
+| Fast-Path Routing (TD-12) | Public routes (`/` homepage, static assets) and `/login` requests without auth cookies completely bypass `supabase.auth.getUser()`, eliminating unnecessary network round-trips and socket contention |
+| Watchdog Timeout (TD-12) | `supabase.auth.getUser()` is encapsulated inside a 2500ms timeout watchdog (`AbortSignal.timeout(2500)`). If Supabase auth stalls or hangs, the call safely aborts to `null` user, preventing Chromium socket pool saturation (`CLOSE_WAIT` exhaustion) |
+| Cookie Preservation (TD-12) | Redirect responses (307) and API 401 JSON responses preserve all `Set-Cookie` headers via `copyCookiesAndRedirect`, ensuring cookie deletion and session rotation directives reach the browser |
+| Server Actions & API routes | Under protected paths, an unauthenticated request receives a **JSON `401 Unauthorized`** instead of an HTML redirect (an HTML redirect breaks the Server Action client runtime) |
 | Logged-in access control | Authenticated users hitting `/login` are redirected to `/dashboard` |
 | OAuth code interception | Any request carrying an OAuth `code` query param is redirected to `/auth/callback`, unless it already targets that path |
-| Session refresh | The proxy refreshes the Supabase session cookie on every matched request |
+| Session refresh & Sign-Out | The proxy refreshes the Supabase session cookie on matched requests. When signing out (`signOut()` in `src/server/actions/auth-actions.ts`), `revalidatePath("/", "layout")` purges client router cache and all `sb-*` auth cookies are proactively cleared |
 
 ### 1.1. Open Redirect & Host Header Injection Hardening (`src/lib/auth/safe-redirect.ts`)
 

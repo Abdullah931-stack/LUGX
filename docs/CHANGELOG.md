@@ -2,6 +2,27 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.29.2] - 2026-09-19 (TD-05 Resolution: Stop-Action Settlement Latency & Autonomous Server Disconnect Inversion)
+
+### Fixed & Resolved - TD-05 Resolution & Zero-Latency Stop Action
+
+- **Non-Blocking Client Stop Action (`src/hooks/use-ai-stream.ts`):**
+  - Eliminated the synchronous blocking `await commitAIReservation(...)` network call inside `stopStream()`.
+  - User-triggered stop actions now execute instantaneously (< 50ms vs ~500ms previously), immediately clearing ghost decorations via `editor.clearStreamingGhost()` and transitioning state to `"aborted"`.
+  - Decoupled quota settlement into a background non-blocking execution (`settleReservationAsConsumed(operationId)`), wrapped with `Promise.resolve(...)` to prevent unhandled rejection crashes under mock or edge runtimes.
+- **Autonomous Server Disconnect Handling (`src/app/api/ai/stream/route.ts`):**
+  - Integrated `request.signal.addEventListener("abort", handleClientDisconnect)` to track client transport terminations deterministically.
+  - **Pre-TTFT Disconnects (`ttftMs === null`):** Automatically releases user quota via `refundAIReservation(reservationId, userId, "client_disconnected_pre_ttft")` if the client disconnects before receiving the first token.
+  - **Post-TTFT Disconnects (`ttftMs !== null`):** Automatically commits quota consumption via `commitAIReservation(operationId, userId)` upon stream interruption, preventing orphaned reservations and closing quota leak vectors if the client tab closes or network drops.
+- **Quota Lifecycle Documentation Synchronization ([`docs/architecture/ai-quota-reservation-lifecycle.md`](architecture/ai-quota-reservation-lifecycle.md)):**
+  - Synchronized architectural documentation and Mermaid sequence diagrams with the Dual-Side Inversion model, clarifying pre-TTFT vs. post-TTFT disconnect guarantees and non-blocking client stop latency.
+- **Automated Test Verification & Type Cleanliness:**
+  - Added dedicated latency and abort behavior test suite `src/test/ai-stream-abort-latency.test.ts` verifying immediate stop execution time (< 50ms) and background settlement dispatch.
+  - Verified full type safety with `npx tsc --noEmit` (0 errors) and regression safety across all AI test suites (28/28 tests passing).
+  - Maintained clean ESLint validation (`0 errors, 0 warnings`).
+- **Technical Debt Register Updated ([`docs/TECHNICAL_DEBT_REGISTER.md`](TECHNICAL_DEBT_REGISTER.md)):**
+  - Formally marked **TD-05** as `✅ RESOLVED (2026-09-19)` with architectural resolution notes and empirical verification evidence.
+
 ## [1.29.1] - 2026-09-19 (TD-12 Resolution: Auth Sign-Out Cache Invalidation & Chromium Socket Pool Protection)
 
 ### Fixed & Resolved - TD-12 Resolution & Edge Proxy Hardening

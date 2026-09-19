@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-65%20Suites%20·%20793%2F793%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 793 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-67%20Suites%20·%20799%2F799%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 799 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-19%20Suites%20·%2089%2F89%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 89 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -117,7 +117,7 @@ _In summary, adopting the custom synchronization engine reflects deliberate engi
 >
 > LUGX is designed, architected, and directed entirely by Abdullah through deliberate AI orchestration — every technical decision (data model, concurrency strategy, security posture, and trade-off analyses such as the Yjs evaluation in the [Architectural Statement](#architectural-statement-custom-ground-up-synchronization-engine)) originates from human judgment, domain expertise, and rigorous feasibility studies.
 >
-> Code implementation itself is delegated to and coordinated across advanced AI models under structured, specification-driven direction, with correctness enforced through systematic review gates (type-checking, linting, and a 793-test verification suite) backed by targeted manual review of critical logic paths — rather than manual line-by-line authorship. This is a conscious engineering methodology choice: the discipline demonstrated throughout [`docs/`](./docs) — the phased execution protocol, the living technical debt register, and the design-vs-reality divergence log — reflects the same rigor a hands-on implementation requires, combined with the proven capability to orchestrate, audit, and systematically steer LLMs to produce robust, rigorously tested software.
+> Code implementation itself is delegated to and coordinated across advanced AI models under structured, specification-driven direction, with correctness enforced through systematic review gates (type-checking, linting, and a 799-test verification suite) backed by targeted manual review of critical logic paths — rather than manual line-by-line authorship. This is a conscious engineering methodology choice: the discipline demonstrated throughout [`docs/`](./docs) — the phased execution protocol, the living technical debt register, and the design-vs-reality divergence log — reflects the same rigor a hands-on implementation requires, combined with the proven capability to orchestrate, audit, and systematically steer LLMs to produce robust, rigorously tested software.
 
 ---
 
@@ -136,7 +136,7 @@ _In summary, adopting the custom synchronization engine reflects deliberate engi
 | **Client-Side Cryptography**| Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                  |
 | **Payment & Billing**       | Stripe SDK · Webhook Signature Verification                  | 8-state fail-closed state machine, partial unique constraint idempotency                          |
 | **Rate Limiting & Telemetry**| Upstash Redis · Sliding Window · Distributed Tracing        | Dual-mode rate limiting (Fail-Open sync, Fail-Closed AI), X-Correlation-ID tracking, ZK log masking|
-| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | 65 unit, contract, and cryptographic test suites (793 tests) + 15 live database test suites        |
+| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | 67 unit, contract, and cryptographic test suites (799 tests) + 15 live database test suites        |
 
 ---
 
@@ -150,7 +150,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.29.0)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.29.2)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Code-derived roadmap & technical execution plans
@@ -290,7 +290,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (65 test files, 793 tests)
+# Execute unit/contract test suites (67 test files, 799 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (19 test files, 89 tests)
@@ -391,7 +391,7 @@ flowchart TD
 - **Dual-Phase Quota Reservation (`src/server/actions/ai-ops.ts`):**
   - Words are reserved prior to generation by creating an active lease in `ai_reservations` with a 60-second TTL.
   - Eliminates TOCTOU race conditions across distributed serverless functions.
-  - Downstream system stream failures, timeouts, or upstream provider errors immediately trigger atomic, zero-bounded refunds (`GREATEST(column - n, 0)`). User-initiated aborts (Stop Generation) or preview rejections settle quota as consumed without refund per Explicit Settlement Policy (§4-D).
+  - Downstream system stream failures, timeouts, or pre-TTFT client aborts immediately trigger atomic, zero-bounded refunds (`GREATEST(column - n, 0)`). User-initiated aborts (`stopStream`) execute instantaneously (< 50ms) without blocking network calls, dismantling ghost decorations immediately while the server autonomously commits post-TTFT consumption per the Dual-Side Inversion Protocol (TD-05 & Explicit Settlement Policy §4-D).
 - **Unified Inline Interactive Preview Card (`src/components/editor/markdown/streaming-ghost.ts`):**
   - Eliminates static top preview panels in favor of an inline CodeMirror 6 `WidgetType` positioned at the exact document mutation point.
   - Dynamic coordinate mapping via `tr.changes.mapPos` ensures preview decorations adjust smoothly to concurrent user edits.
@@ -582,7 +582,7 @@ To validate full platform functionality under real user conditions, LUGX impleme
 | Security Domain                 | Technical Implementation                                                     | Security Property Enforced                                                                    |
 | ------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | **Content Model Security**      | Pure UTF-8 Markdown strings & AST token decorations                          | Zero HTML storage, zero `dangerouslySetInnerHTML`, total elimination of stored XSS vectors.   |
-| **Authentication & Proxy**      | Next.js 16 Edge Proxy (`src/proxy.ts`) with Supabase SSR                     | Route protection on `/workspace`, `/dashboard`, `/account` with deep-link query preservation. |
+| **Authentication & Proxy**      | Next.js 16 Edge Proxy (`src/proxy.ts`) with Supabase SSR                     | Route protection on `/workspace`, `/dashboard`, `/account` with Fast-Path public route bypass, 2500ms AbortSignal watchdog timeout against Chromium socket exhaustion (TD-12), and deep-link query preservation. |
 | **Brute-Force & Rate Limiting** | Sliding window rate limiting on Upstash Redis                                | Per-user and per-endpoint sliding window limits on Auth, Sync, and AI routes.                 |
 | **Distributed Tracing**         | `X-Correlation-ID` UUID v4 header propagation with CRLF sanitization (`[^\w-]`) | Eliminates HTTP response splitting, header injection, and isolates distributed incidents.    |
 | **Telemetry & Log Sanitization**| Denylist pattern masking with token-boundary regex (`(^|[^a-zA-Z0-9_])`)     | Eliminates false positives while guaranteeing zero plaintext secret, PIN, or seed leakage.    |

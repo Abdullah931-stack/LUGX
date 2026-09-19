@@ -6,6 +6,7 @@ import {
     getUserTier,
     reserveAndUpdateUsage,
     refundAIReservation,
+    commitAIReservation,
     refundUsage,
 } from "@/server/actions/ai-ops";
 import { streamWithAI, processWithAI, Tier } from "@/lib/ai/client";
@@ -167,6 +168,25 @@ export async function POST(req: NextRequest) {
         // 4. Construct resilient NDJSON output stream
         const decoder = new TextDecoder("utf-8");
 
+        // Canonical TD-05 Resolution: Unified Disconnect Handler.
+        // If the client disconnects pre-TTFT (before any tokens were streamed),
+        // it is refunded as an unfulfilled / early-aborted request.
+        // Once tokens start streaming (post-TTFT), compute was consumed by the provider.
+        // Under the Explicit Settlement Policy (§4-D), the server autonomously commits
+        // the reservation, eliminating client-side settlement round-trip wait times and race conditions.
+        const handleClientDisconnect = async (reason: string) => {
+            if (!operationId) return;
+            try {
+                if (ttftMs === null) {
+                    await refundAIReservation(operationId, `disconnect_pre_generation_${reason}`);
+                } else {
+                    await commitAIReservation(operationId);
+                }
+            } catch (err) {
+                console.warn(`[AI Stream Route] Disconnect settlement error (${operationId}):`, err);
+            }
+        };
+
         const wrappedStream = new ReadableStream<Uint8Array>({
             async start(controller) {
                 // Emit initial canonical start frame with non-sensitive identifiers & correlationId
@@ -185,9 +205,7 @@ export async function POST(req: NextRequest) {
                     while (true) {
                         if (req.signal.aborted) {
                             await reader.cancel("Client aborted");
-                            if (operationId) {
-                                refundAIReservation(operationId, "client_aborted").catch(() => {});
-                            }
+                            await handleClientDisconnect("signal_aborted");
                             try {
                                 const cancelFrame = JSON.stringify({
                                     type: "cancelled",
@@ -308,10 +326,8 @@ export async function POST(req: NextRequest) {
                 }
             },
             cancel() {
-                // Downstream cancel handler - ensure quota is refunded if client disconnects abruptly
-                if (operationId) {
-                    refundAIReservation(operationId, "stream_cancelled_by_client").catch(() => {});
-                }
+                // Downstream cancel handler: autonomously commit if post-TTFT or refund if pre-TTFT
+                void handleClientDisconnect("stream_cancelled");
             }
         });
 

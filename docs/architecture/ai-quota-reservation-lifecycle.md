@@ -86,11 +86,13 @@ flowchart TD
   - **Quota settlement:** the abort is a *user decision*, so the reservation is settled as consumed under the Explicit Settlement Policy (§4-D) — it is NOT refunded.
   - **Critical Rule:** The system **NEVER** silently resets user edits. All manual edits written by the user are preserved 100% without data loss.
 
-### C. Server-Side Disconnect Safety Net
-- In `/api/ai/stream/route.ts`, if the client tab closes or socket drops (`req.signal.aborted` or `ReadableStream.cancel()`), the server still triggers `refundAIReservation(operationId, 'stream_cancelled_by_client')` as a safety net so no quota remains locked from orphaned sessions.
-- **Ordering guarantee:** when the stop is client-initiated (`stopStream`), the client FIRST settles the reservation explicitly (see §4-D) and only then aborts the stream. The later server-side refund therefore no-ops with `already_committed`, so the safety net can never reverse an intentional settlement.
+### C. Server-Side Autonomous Disconnect Settlement (TD-05 Canonical Resolution)
+- In `/api/ai/stream/route.ts`, if the client disconnects, tab closes, or socket drops (`req.signal.aborted` or `ReadableStream.cancel()`), the server executes `handleClientDisconnect`:
+  - **Pre-TTFT Disconnect (`ttftMs === null`):** No tokens were produced or streamed to the client (early cancel or provider stall). The server triggers `refundAIReservation(operationId, 'disconnect_pre_generation')`.
+  - **Post-TTFT Disconnect (`ttftMs !== null`):** Output chunks were already generated and delivered to the client, consuming upstream compute. The server autonomously executes `commitAIReservation(operationId)` to settle the reservation as consumed.
+- **Zero-Latency Client Stop:** Because the server commits autonomously upon post-TTFT disconnect, `stopStream` on the client aborts immediately (0ms) and dismantles ghost decorations instantly without awaiting an out-of-band network round-trip. The client dispatches a non-blocking `commitAIReservation` call in the background as defense-in-depth. Both commit calls are idempotent, eliminating the previous 100–300ms stop latency and terminating upstream Gemini token generation without delay.
 
-### D. Explicit Settlement Policy (User Decisions) — v1.6.0
+### D. Explicit Settlement Policy (User Decisions) — v1.6.0 & v1.29.2
 Quota refunds are reserved for **system failures**. Any outcome driven by a **user decision** consumes the reservation, because the compute cost was already spent. Settlement is performed idempotently via `commitAIReservation(operationId)` (status `reserved -> committed`, no document write), which also pins the deduction against the TTL sweeper (`expireStaleReservations`) and any stray refund call (returns `already_committed`).
 
 | Outcome | Trigger | Quota action |
@@ -102,7 +104,7 @@ Quota refunds are reserved for **system failures**. Any outcome driven by a **us
 | HARD page reload with a completed undecided preview | Undecided generation | **Settle as consumed** (`commitAIReservation`, idempotent) — preview itself is never applied |
 | User rejects the completed preview (`rejectPreview`) | User decision | **Settle as consumed** |
 | User re-runs the operation (`retryPreview`) — old session | User decision | **Settle as consumed** (new session reserves fresh quota) |
-| User stops a running generation (`stopStream`) | User decision | **Settle as consumed** before abort |
+| User stops a running generation (`stopStream`) | User decision | **Settle as consumed** (instant 0ms client abort + server post-TTFT auto-commit) |
 | Teardown while output awaits decision (unmount in `preview_ready`) | Undecided user teardown | **Settle as consumed** |
 
 Rationale: the provider call completed (or partially completed) for every settled case above — the tokens were spent regardless of what the user chooses to do with the output. Refunding would allow unlimited free regeneration by reject/retry cycles.

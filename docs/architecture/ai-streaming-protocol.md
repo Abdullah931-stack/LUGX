@@ -12,7 +12,7 @@ This specification details the end-to-end NDJSON (Newline-Delimited JSON) Stream
 ### Architectural Guarantees
 1. **Zero Document Model Mutation During Streaming**: Chunks stream exclusively into `EphemeralPreviewBuffer` and UI preview overlays. Neither document source state nor IndexedDB storage is modified until atomic commit.
 2. **Deterministic Single-Phase Commit**: Atomic server and local transaction commits occur strictly on stream completion.
-3. **Atomic Quota Reservation & Idempotent Settlement**: Automatic quota refunds occur on startup errors, mid-stream disconnects, or version conflicts. User-initiated stops or rejections settle quota as consumed without refund (Explicit Settlement Policy §4-D).
+3. **Atomic Quota Reservation & Idempotent Settlement**: Automatic quota refunds occur on startup errors, pre-TTFT disconnects (`ttftMs === null`), or version conflicts. Post-TTFT disconnects (`ttftMs !== null`) and user-initiated stops (`stopStream`) or rejections settle quota as consumed without refund under the Dual-Side Inversion Protocol (TD-05 & Explicit Settlement Policy §4-D).
 4. **Multi-Byte UTF-8 & Line Boundary Preservation**: Resilient stream parsing protects against chunk slicing, surrogate splits, and network fragmentation.
 5. **Adversarial Resilience**: Line buffer flooding guards (`MAX_LINE_BUFFER_CHARS = 256KB`), payload ceiling guards (`MAX_INPUT_CHARS = 100,000`), DOM XSS immunity, and dynamic position tracking.
 
@@ -83,7 +83,7 @@ and embedded directly inside the inline `CMStreamingGhostWidget` at the document
   reservation settled as consumed (never refunded).
 - **Retry (`retryPreview`)** — old session settled exactly like a rejection, then a brand-new
   `startStream` runs with identical inputs (fresh quota reservation).
-- **Stop Generation (`stopStream`)** — `streaming -> aborted`: user halts in-flight streaming directly from the inline card.
+- **Stop Generation (`stopStream`)** — `streaming -> aborted`: user halts in-flight streaming directly from the inline card with instant (< 50ms) client abort and ghost teardown, while the server autonomously commits post-TTFT token consumption in the background.
 
 The legacy top fixed preview panel has been completely eliminated in favor of this single, cohesive inline interactive card.
 Quota rule of thumb: **system failures refund; user decisions settle-as-consumed.**
@@ -167,4 +167,5 @@ The implementation is verified with automated tests covering all parser, FSM, an
 - `src/test/vault-sync-ai-gate.test.ts`: 28 tests verifying Zero-Knowledge AI route rejection, atomic commit re-encryption guard, user vault setting updates, syntax validator, non-blocking sync conflict isolation, and adversarial multi-device edge cases.
 - `src/test/rate-limit.test.ts`: 7 tests verifying `aiStreamRateLimiter` sliding window, fail-open degradation, and `Retry-After >= 1`.
 - `src/test/correlation.test.ts`: 5 tests verifying correlation ID generation, CRLF sanitization, and header injection.
+- `src/test/ai-stream-abort-latency.test.ts`: 2 tests verifying zero-latency client stop execution (< 50ms) and server-side disconnect settlement invariants.
 

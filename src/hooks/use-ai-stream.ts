@@ -173,7 +173,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
      * speculative deduction so no TTL sweeper or stray refund can reverse it.
      */
     const settleReservationAsConsumed = useCallback((operationId: string): void => {
-        commitAIReservation(operationId).catch(() => {});
+        Promise.resolve(commitAIReservation(operationId)).catch(() => {});
     }, []);
 
     /**
@@ -248,21 +248,21 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         }
 
         try {
-            transitionSession(session, 'aborting');
-
-            // Settle FIRST (await the round-trip), THEN tear down the stream —
-            // this ordering guarantees the server-side disconnect refund can
-            // never win the race against the explicit settlement.
-            await commitAIReservation(session.operationId).catch(() => {});
-
+            // ZERO-LATENCY STOP PROTOCOL (Canonical TD-05 Resolution):
+            // Abort stream socket immediately (0ms). Upstream Gemini generation terminates
+            // instantly through the downstream AbortSignal, preventing token bleed.
             session.abortController.abort();
             transitionSession(session, 'aborted');
             setStatus('aborted');
 
-            // Dismantle ghost preview in editor
+            // Dismantle ghost preview in editor immediately
             if (editorRef.current) {
                 clearGhostDecoration(editorRef.current);
             }
+
+            // Non-blocking redundant settlement notification (defense-in-depth).
+            // Server-side disconnect handler already commits autonomously upon post-TTFT abort.
+            settleReservationAsConsumed(session.operationId);
         } catch (err) {
             console.error('[useAIStream] Error stopping stream:', err);
         } finally {
@@ -271,7 +271,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             clearPendingAIOperation(session.operationId);
             activeSessionRef.current = null;
         }
-    }, [clearGhostDecoration, rejectPreview]);
+    }, [clearGhostDecoration, rejectPreview, settleReservationAsConsumed]);
 
     /**
      * Initiate an AI streaming operation with Ephemeral Preview & Atomic Commit
