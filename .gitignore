@@ -48,3 +48,7 @@ next-env.d.ts
 # plans docs
 .Plans
 
+# Playwright Test Outputs
+/test-results/
+/playwright-report/
+/blob-report/
