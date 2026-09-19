@@ -2,6 +2,49 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.28.0] - 2026-09-19 (Phase 19 Browser-Driven E2E Testing, TD-07 Resolution & Terminal Error Remediation)
+
+### Added & Verified - Phase 19 Closure & Browser-Driven E2E Testing
+
+- **Automated Real-Browser Test Infrastructure (`@playwright/test` v1.63.0):**
+  - Configured Chromium headless testing harness in `playwright.config.ts` targeting isolated Next.js web server (`port: 3001`) and dedicated Neon PostgreSQL test branch (`TEST_DATABASE_URL`).
+  - Registered test scripts in `package.json`: `"test:e2e": "playwright test"` and `"test:e2e:ui": "playwright test --ui"`.
+  - Implemented 14 test specification suites under `e2e/specs/` covering all 15 comprehensive user journeys:
+    1. `01-auth-session.spec.ts`: Authentication lifecycle, SSR cookies, reload persistence, cross-tab session sharing, and clean logout storage teardown.
+    2. `02-file-tree-trash.spec.ts`: Hierarchical folder navigation, drag-and-drop move/copy, rename, soft deletion, duplicate name coexistence, restore to root, and permanent purge.
+    3. `03-codemirror-bidi.spec.ts`: Native CodeMirror 6 Markdown editing, automatic Arabic RTL detection (`bidiLinePlugin`), LTR code block locking, multi-range search & replace, and debounced autosave.
+    4. `04-offline-sync-conflict.spec.ts`: Offline IndexedDB editing queue, reconnect synchronization, remote concurrent 412 trigger, interactive `ConflictDialog` diff inspection, and 3-way Diff3 merge.
+    5. `05-pdf-ocr-pipeline.spec.ts`: Disguised executable rejection via magic bytes, client-side PDF text extraction, 2D spatial table reconstruction, and 100% roundtrip Markdown export.
+    6. `06-ai-streaming-commit.spec.ts`: NDJSON token streaming with correlation tracking, dynamic `CMStreamingGhostWidget` typing offset tracking, and atomic one-click commit.
+    7. `07-ai-abort-reject.spec.ts`: User-initiated stream abort and preview rejection, asserting zero text leakage and quota settled as consumed (No Refund).
+    8. `08-ai-failure-refund.spec.ts`: Simulated system AI provider 500 error, safe error banner display, and automated full quota refund (`refundedUnits`).
+    9. `09-ai-conflict-412.spec.ts`: Concurrent edit in sibling tab during stream, commit blocked with 412 Precondition Failed, preventing partial text overwrite.
+    10. `10-vault-lifecycle.spec.ts`: 12-word BIP-39 mnemonic setup, 600K PBKDF2 Web Worker key derivation, AES-GCM-256 encryption, and deterministic AAD binding.
+    11. `11-vault-lock-trust.spec.ts`: Inactivity auto-lock, `SessionKeyStore` volatile memory wiping, RAM key zeroing, password unlock, and WebAuthn PRF / 6-digit PIN device trust.
+    12. `12-vault-ai-shield.spec.ts`: Amber AI Shield badge on encrypted note, HTTP 403 route blocking on `/api/ai/stream`, and zero quota deduction.
+    13. `13-stripe-billing.spec.ts`: Account settings tier display, durable `subscription_events` ledger insertion, and instant real-time UI upgrade to Pro.
+    14. `14-tenant-isolation.spec.ts`: Unauthorized direct editor URL bounce to `/workspace`, and API 404 Anti-Enumeration error masking with correlation header.
+- **Zero-Flakiness Validation Proof:**
+  - 100% pass rate achieved across all 15 scenarios across two consecutive automated validation runs (Run 1: 15/15 passed in 2.4m, Run 2: 15/15 passed in 2.1m).
+  - Officially resolved and closed **TD-07** in `docs/TECHNICAL_DEBT_REGISTER.md`.
+  - Published comprehensive Phase 19 closure report: [`docs/reference/phase-19-browser-e2e-testing-closure.md`](reference/phase-19-browser-e2e-testing-closure.md).
+
+### Fixed & Hardened - Terminal Warnings & Errors Remediation (PID: 3104 Clean Sweep)
+
+- **PostgreSQL Foreign Key 23503 Self-Healing (`src/server/actions/ai-ops.ts`):**
+  - Added user existence pre-check in `getTodayUsage()` before attempting insert into `schema.usage`, returning default counters if absent.
+  - Added self-healing user creation (`onConflictDoNothing()`) in `getRemainingQuota()` to guarantee a record exists in `schema.users` before quota inspection.
+- **Next.js Image Aspect Ratio Standardization:**
+  - Added `style={{ width: "auto" }}` across all 6 `<Image src="/logo.png" ... />` elements in `src/app/workspace/layout.tsx`, `src/app/dashboard/page.tsx`, `src/app/login/page.tsx`, `src/app/account/page.tsx`, and `src/app/page.tsx`, eliminating Next.js height-without-width aspect ratio warnings.
+- **Next.js Smooth Scrolling Attribute Compliance (`src/app/layout.tsx`):**
+  - Added `data-scroll-behavior="smooth"` attribute to `<html lang="en" className="dark">` to satisfy App Router navigation requirements.
+- **Web Worker DOM Polyfill Scoping (`src/lib/workers/pdf.worker.ts`, `src/lib/parsers/pdf-corruption-detector.ts`):**
+  - Scoped DOM polyfills strictly to Worker threads (`WorkerGlobalScope` / `importScripts`), completely eliminating SSR `globalThis.document` pollution in Node.js runtime.
+- **ESLint Code Quality Gate:**
+  - Removed unused imports (`TEST_USER_EMAIL_PATTERN`, `getUser`, `and`, `randomUUID`) across test suites, achieving `0 problems (0 errors, 0 warnings)` under `npm run lint`.
+- **Repository Hygiene (`.gitignore`):**
+  - Ignored Playwright ephemeral artifacts (`/test-results/`, `/playwright-report/`, `/blob-report/`).
+
 ## [1.27.0] - 2026-09-19 (Phase 18 Multi-System Integration Testing, Cross-System Lifecycle & Isolated Branch Verification)
 
 ### Added & Verified - Phase 18 Closure & Multi-System Integration Verification

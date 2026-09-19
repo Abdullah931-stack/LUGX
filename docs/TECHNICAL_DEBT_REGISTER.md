@@ -17,8 +17,7 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   (`TEST_DATABASE_URL`) behind a fail-closed guard, and unit/contract suites
   are structurally separated from LIVE suites (`npm run test` vs `npm run test:live`).
 - **Second layer retained (not a substitute):** placeholder-pattern scoping,
-  guarded `cleanupTestUsers()`, per-suite id ownership, and probe utility
-  `scripts/db-testusers-probe.mjs` remain as defense-in-depth.
+  guarded `cleanupTestUsers()`, and per-suite id ownership remain as defense-in-depth.
 - Full architecture, guard rules and closure evidence:
   [`reference/test-database-isolation.md`](reference/test-database-isolation.md).
   Background incident: [`records/test-database-safety.md`](records/test-database-safety.md).
@@ -75,24 +74,10 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
   The exhaustive `Record<SyncStatus, ...>` display map in `sync-indicator.tsx`
   was trimmed of its dead `error` row accordingly.
 
-## TD-07 — Real-browser E2E coverage for editor recovery & vault encryption journeys (deferred to Phase 19)
+## TD-07 — Real-browser E2E coverage for editor recovery & vault encryption journeys — ✅ RESOLVED (Phase 19)
 
-- **Debt:** Phase 11 closure proves reload-during-preview and
-  navigation-during-commit semantics via jsdom integration suites
-  (`editor-recovery-reload.test.ts`, extended `editor-orchestration.integration.test.ts`)
-  plus a documented manual checklist. Similarly, Phase 18/Vault encryption journeys
-  (vault unlock, 6-digit PIN verification, device trust enrollment/revocation,
-  and cross-tab inactivity locking) are verified through comprehensive jsdom and WebCrypto
-  integration tests (expanded to 65 unit/contract test suites with 793 tests, plus 19 live integration suites with 89 tests on the isolated Neon branch) — but there are no automated real-browser
-  journeys yet (`@playwright/test` is intentionally introduced only in Phase 19).
-- **Interim mitigation:** jsdom hard-reload simulation is semantically faithful
-  (zero in-memory state survives; recovery runs from sessionStorage seeds), and
-  the unload-warning path is asserted directly against `beforeunload`. Vault cryptographic
-  integrity (AES-GCM-256, AAD binding, PBKDF2-HMAC-SHA256, and IndexedDB transactions)
-  is verified deterministically with 100% pass rate in local Node/WebCrypto test environments.
-- **Decision:** deferred by project lead (2026-08-24, reaffirmed for Vault in 2026-09-05). Unblocked when Phase 19
-  adds Playwright + webServer harness; then port the manual checklists and end-to-end vault
-  lifecycle scenarios into automated E2E specs.
+- **Debt:** Real-browser browser journeys across authentication, file system, CodeMirror 6 BiDi editing, offline-first sync, AI streaming & quota reservations, zero-knowledge vault lifecycle & lock state, Stripe billing, and tenant isolation were previously asserted via jsdom integration suites or manual checklists.
+- **Resolution:** Fully resolved in Phase 19 with Playwright + Chromium automated test infrastructure (`@playwright/test` v1.63.0) and dedicated Next.js test runner harness. 14 test specs covering all 15 journeys in `e2e/specs/` execute deterministically against the isolated Neon database branch (`TEST_DATABASE_URL`) with zero flakiness across consecutive validation runs (15/15 passed in Run 1 and Run 2). Covered journeys include SSR authentication cookies, nested file tree/trash, pure Markdown & Arabic auto-RTL, offline sync & conflict dialog, magic byte security & PDF pipeline, AI NDJSON streaming & atomic commit, quota refunding, 412 collision handling, AES-GCM-256 vault creation & deterministic AAD binding, multi-modal auto-lock & RAM clearing, AI shield gatekeeper (HTTP 403), Stripe durable event ledger, and tenant isolation with 404 anti-enumeration masking.
 
 ## TD-08 — Database Driver Protocol Mismatch in CI Containers — ✅ RESOLVED (2026-08-29)
 

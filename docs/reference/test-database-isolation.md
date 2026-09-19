@@ -170,12 +170,10 @@ const p = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUn
 "
 ```
 
-## 6. Known limitations / follow-ups
+## 6. Verification Status & Operational Invariants
 
-- `scripts/db-testusers-probe.mjs` still resolves its own connection string;
-  updating it to target the branch explicitly belongs to a separate cleanup.
-- TD-01 in `docs/TECHNICAL_DEBT_REGISTER.md` must be rewritten (decision
-  reversal) in a dedicated documentation session per the roadmap.
+- **Decision Reversal Confirmed:** TD-01 is officially resolved in `docs/TECHNICAL_DEBT_REGISTER.md`, strictly enforcing fail-closed Neon branch isolation on `TEST_DATABASE_URL`.
+- **Zero Test User Pollution:** Database state integrity is asserted via scoped `cleanupTestUsers()` and isolated namespace prefixes across all test executions.
 
 ## 7. Multi-Stage CI/CD Pipeline Automation (`.github/workflows/ci.yml`)
 
