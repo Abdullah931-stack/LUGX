@@ -10,7 +10,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 
 ---
 
-## 2. Readiness Gates Compliance Matrix (G1 - G10)
+## 2. Readiness Gates Compliance Matrix (G1 - G11)
 
 | Gate | Specification | Implementation File(s) | Status |
 | :--- | :--- | :--- | :--- |
@@ -34,7 +34,10 @@ To prevent distributed transaction failure modes, the system decouples commit in
 
 ```mermaid
 flowchart TD
-    Client["Client Session: completed"] --> Step1["Step 1: Server Commit (commitAIFileOperation)"]
+    Client["Client Session: streaming -> preview_ready (Parked)"] --> UserChoice{"User Decision Trigger"}
+    UserChoice -->|"Accept (commitPreview)"| Step1["Step 1: Server Commit (commitAIFileOperation)"]
+    UserChoice -->|"Reject / Retry (rejectPreview)"| SettleConsumed["Settle Quota as Consumed (commitAIReservation)<br/>Dismantle Preview (Doc Pristine, No Refund)"]
+    
     Step1 --> VerifyRes["Verify ai_reservations status == 'reserved'"]
     Step1 --> VerifyVer["Verify files.version == expectedVersion"]
     Step1 --> VerifyZK["Verify Vault Opt-In & Encryption Metadata (if encrypted)"]
@@ -57,24 +60,24 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> idle
-    idle --> reserved: startStream()
-    reserved --> streaming: onMeta(reservationId)
-    streaming --> completed: onComplete(streamDone)
-    completed --> committing: startCommit()
-    committing --> committed: serverCommitSuccess
-    committed --> idle: reset()
+    idle --> reserving: startStream()
+    reserving --> streaming: onMeta / onStart received
+    streaming --> preview_ready: onDone received (Result parked, NO auto-commit)
+    preview_ready --> committing: User ACCEPTS (commitPreview)
+    committing --> committed: Local atomic Editor transaction
+    committed --> idle: Session recycled
 
-    reserved --> aborting: stopStream() / cancel()
-    streaming --> aborting: stopStream() / cancel()
-    completed --> aborting: stopStream() / cancel()
-    aborting --> aborted: abortCleanupComplete
-    aborted --> idle: reset()
+    streaming --> aborted: User STOPS (settle-as-consumed, never refund)
+    preview_ready --> aborted: User REJECTS / RETRIES (settle-as-consumed)
 
-    reserved --> failed: streamError / timeout
-    streaming --> failed: streamError / timeout
-    committing --> rolled_back: versionConflict412
-    failed --> idle: reset()
-    rolled_back --> idle: reset()
+    reserving --> failed: Startup / quota error (refund)
+    streaming --> failed: Network / model error (refund)
+    committing --> failed: Database commit error (refund)
+    committing --> conflict: Version mismatch (HTTP 412, refund)
+    
+    aborted --> idle: Reset
+    failed --> idle: Reset
+    conflict --> idle: Reset
 ```
 
 ---

@@ -58,7 +58,7 @@ LIVE suites registered in `vitest.constants.mts` (19 hermetic database suites):
 18. `src/test/document-pipeline.live.test.ts`
 19. `src/test/multi-system-lifecycle.live.test.ts`
 
-*(Note: The external cloud integration suite `src/test/ai-live-e2e.test.ts` is explicitly isolated to Stage 6 `live-provider-smoke` and requires live provider API secrets).*
+*(Note: The external cloud integration suite `src/test/ai-live-e2e.test.ts` is explicitly isolated to Stage 7 `live-provider-smoke` and requires live provider API secrets).*
 
 ### Formerly-mocked suites — LIVE twins now implemented (post Phase 10 follow-up)
 
@@ -186,5 +186,6 @@ The repository runs a deterministic multi-stage CI pipeline on GitHub Actions co
 | **3. Schema Integrity** | `migration-integrity` | Ephemeral `postgres:16-alpine` service container verifies sequential migration application (`scripts/verify-migrations.mjs`) and Drizzle schema sync (`drizzle-kit push --config drizzle.config.test.ts --force`). |
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | Runs `npm run test:live` against isolated PostgreSQL 16 + Redis 7 service containers with `TEST_DB_FORBIDDEN_HOSTS` configured to reject production hosts, verifying lost-update guards, AI quota idempotency, and Stripe ledger deduplication. |
 | **5. Production Build** | `build-verification` | Full Next.js 16 production build (`npm run build`) with asset compilation and route validation. |
-| **6. Live Smoke (Gated)** | `live-provider-smoke` | Gated provider live smoke (`src/test/ai-live-e2e.test.ts`) executed only on `main` push or manual `workflow_dispatch`. |
+| **6. Browser E2E Testing** | `e2e-browser-testing` | Playwright E2E test execution in Chromium across 15 automated user journeys with failure artifact reporting (`playwright-report`). |
+| **7. Live Smoke (Gated)** | `live-provider-smoke` | Gated provider live smoke (`src/test/ai-live-e2e.test.ts`) executed only on `main` push or manual `workflow_dispatch`. |
 

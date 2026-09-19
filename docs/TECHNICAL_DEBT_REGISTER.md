@@ -2,7 +2,7 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
+Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
 
 ---
 
@@ -82,7 +82,7 @@ Last reviewed: 2026-08-29 (post Node 22 upgrade & CI hermeticity round).
 ## TD-08 — Database Driver Protocol Mismatch in CI Containers — ✅ RESOLVED (2026-08-29)
 
 - **Debt:** `src/lib/db/index.ts` was hardcoded to `@neondatabase/serverless` (`neon-http`), which dispatches queries over HTTPS port 443. When running inside GitHub Actions CI service containers or local Docker (`postgres:16-alpine`), connections failed with `ECONNREFUSED ::1:443`.
-- **Resolution:** Replaced with a Smart Hybrid Database Client in `src/lib/db/index.ts` that dynamically detects the target host: uses `neon-http` for Neon Cloud and standard `pg.Pool` (`drizzle-orm/node-postgres`) over TCP on port 5432 for local Docker and CI containers. All 6 stages of the CI pipeline pass deterministically.
+- **Resolution:** Replaced with a Smart Hybrid Database Client in `src/lib/db/index.ts` that dynamically detects the target host: uses `neon-http` for Neon Cloud and standard `pg.Pool` (`drizzle-orm/node-postgres`) over TCP on port 5432 for local Docker and CI containers. All 7 stages of the CI pipeline (including Stage 6 Playwright E2E browser testing) pass deterministically.
 
 ## TD-09 — Rollup Mixed Exports and Vite ConfigLoader Native Deprecation Warnings — ✅ RESOLVED (2026-09-05)
 

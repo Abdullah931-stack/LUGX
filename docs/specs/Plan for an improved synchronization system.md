@@ -3,7 +3,7 @@
 > ⚠️ **Design Blueprint Notice:** This document records the original offline-first architecture blueprint.
 > For the active runtime implementation and API contracts, see:
 > - Architecture: [`../architecture/sync-lifecycle-architecture.md`](../architecture/sync-lifecycle-architecture.md) & [`../architecture/editor-sync-orchestration.md`](../architecture/editor-sync-orchestration.md)
-> - API Contract: [`../reference/SYNC_API.md`](../reference/SYNC_API.md) (`GET /api/files/sync?since=...`)
+> - API Contract: [`../reference/SYNC_API.md`](../reference/SYNC_API.md) (`GET /api/files/sync?updated_after=...`)
 > - Client Storage: `textai_db_${userId}` / user-partitioned IndexedDB (`src/lib/sync/idb-types.ts`)
 
 This document outlines the technical architecture, protocol specifications, data models, and implementation roadmap for an enterprise-grade, offline-first synchronization engine for LUGX. The system guarantees zero data loss, optimistic user interactions, resilient network failure recovery, and deterministic multi-device conflict resolution.

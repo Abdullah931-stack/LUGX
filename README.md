@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://nextjs.org"><img src="https://img.shields.io/badge/Next.js-16.1.4-black?style=for-the-badge&logo=next.js" alt="Next.js 16" /></a>
+  <a href="https://nextjs.org"><img src="https://img.shields.io/badge/Next.js-16.3.3-black?style=for-the-badge&logo=next.js" alt="Next.js 16" /></a>
   <a href="https://react.dev"><img src="https://img.shields.io/badge/React-19.2.3-20232A?style=for-the-badge&logo=react" alt="React 19" /></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-22_LTS-339933?style=for-the-badge&logo=node.js" alt="Node.js 22 LTS" /></a>
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript" alt="TypeScript 5" /></a>
@@ -146,26 +146,29 @@ _In summary, adopting the custom synchronization engine reflects deliberate engi
 lugx/
 ├── .github/
 │   └── workflows/
+│       ├── ci.yml                 # 7-stage CI/CD pipeline (Quality gate, unit, migration, db isolation, build, Playwright E2E, live smoke)
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.26.0)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.29.0)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Code-derived roadmap & technical execution plans
 │   ├── architecture/              # Subsystem designs (sync, bidi, quota, streaming, security, etc.)
 │   ├── foundation/                # Verbatim founding design records & DESIGN_VS_REALITY.md
 │   ├── guides/                    # Operational how-tos (Stripe, AI models, Editor Bidi enhancements)
-│   ├── reference/                 # API contracts, test isolation, and phase-1 through phase-17 closure records
+│   ├── reference/                 # API contracts, test isolation, phase-1 through phase-20 closure records & readiness dossier
 │   └── specs/                     # Living technical specifications and architectural blueprints
 ├── public/                        # Static brand assets (lugx-icon.svg, icon.svg)
 ├── src/
-│   ├── app/                       # Next.js App Router
+│   ├── app/                       # Next.js App Router (flat routing hierarchy)
 │   │   ├── api/                   # REST API endpoints (sync, AI stream, Stripe webhook, cron)
 │   │   │   ├── cron/              # purge-deleted (soft-deletes) & expire-reservations (AI quota leases)
 │   │   │   └── ...
-│   │   ├── (auth)/                # Login & OAuth callback routes
-│   │   ├── (dashboard)/           # Workspace dashboard & file manager
+│   │   ├── auth/callback/         # OAuth callback route
+│   │   ├── login/                 # Authentication entry point
+│   │   ├── dashboard/             # Workspace dashboard & file manager
+│   │   ├── account/               # User profile & subscription tier management
 │   │   ├── workspace/editor/      # Dedicated Markdown editor interface
 │   │   ├── layout.tsx             # Root layout with bilingual typography and theme providers
 │   │   └── globals.css            # Design tokens, Dark Glassmorphism, and Tailwind utilities
@@ -366,7 +369,7 @@ flowchart TD
     A["User AI Request"] --> B["1. Reserve Quota<br/>(ai_reservations Lease in PostgreSQL)"]
     B -->|Insufficient Quota| C["Return HTTP 429 Rate Limit"]
     B -->|Quota Reserved| D["2. Stream Gemini NDJSON via Route Handler"]
-    D -->|Stream Failure / Abort| E["Atomic Quota Refund<br/>GREATEST(usage - n, 0)"]
+    D -->|Stream / Provider Failure| E["Atomic Quota Refund<br/>GREATEST(usage - n, 0)"]
     D -->|Stream Success| F["Inline Ghost Preview Card<br/>(CMStreamingGhostWidget)"]
     F --> G{"User Decision Trigger"}
     G -->|Accept / Apply| H["Atomic Commit Server Transaction & Local Replace"]
@@ -388,7 +391,7 @@ flowchart TD
 - **Dual-Phase Quota Reservation (`src/server/actions/ai-ops.ts`):**
   - Words are reserved prior to generation by creating an active lease in `ai_reservations` with a 60-second TTL.
   - Eliminates TOCTOU race conditions across distributed serverless functions.
-  - Downstream stream failures, timeouts, or client aborts immediately trigger atomic, zero-bounded refunds (`GREATEST(column - n, 0)`).
+  - Downstream system stream failures, timeouts, or upstream provider errors immediately trigger atomic, zero-bounded refunds (`GREATEST(column - n, 0)`). User-initiated aborts (Stop Generation) or preview rejections settle quota as consumed without refund per Explicit Settlement Policy (§4-D).
 - **Unified Inline Interactive Preview Card (`src/components/editor/markdown/streaming-ghost.ts`):**
   - Eliminates static top preview panels in favor of an inline CodeMirror 6 `WidgetType` positioned at the exact document mutation point.
   - Dynamic coordinate mapping via `tr.changes.mapPos` ensures preview decorations adjust smoothly to concurrent user edits.
@@ -600,7 +603,7 @@ Comprehensive architectural designs, specifications, guides, and engineering rec
 | -------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`docs/architecture/`](./docs/architecture/) | Subsystem architectural designs           | [`sync-lifecycle-architecture.md`](./docs/architecture/sync-lifecycle-architecture.md), [`editor-sync-orchestration.md`](./docs/architecture/editor-sync-orchestration.md), [`ai-atomic-commit-architecture.md`](./docs/architecture/ai-atomic-commit-architecture.md), [`ai-quota-reservation-lifecycle.md`](./docs/architecture/ai-quota-reservation-lifecycle.md), [`ai-streaming-protocol.md`](./docs/architecture/ai-streaming-protocol.md), [`three-way-conflict-resolution.md`](./docs/architecture/three-way-conflict-resolution.md), [`security-and-rate-limiting.md`](./docs/architecture/security-and-rate-limiting.md) |
 | [`docs/Plans/`](./docs/Plans/)               | Code-derived roadmap & technical plans    | [`TECHNICAL_EXECUTION_PLAN.md`](./docs/Plans/TECHNICAL_EXECUTION_PLAN.md), [`HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`](./docs/Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md), [`MARKDOWN_EDITOR_MIGRATION_PLAN.md`](./docs/Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) |
-| [`docs/reference/`](./docs/reference/)       | API contracts & phase closure records     | [`SYNC_API.md`](./docs/reference/SYNC_API.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`phase-18-multi-system-integration-closure.md`](./docs/reference/phase-18-multi-system-integration-closure.md), [`phase-19-browser-e2e-testing-closure.md`](./docs/reference/phase-19-browser-e2e-testing-closure.md), [`phase-1` through `phase-19` closure reports](./docs/reference/) |
+| [`docs/reference/`](./docs/reference/)       | API contracts & phase closure records     | [`SYNC_API.md`](./docs/reference/SYNC_API.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`phase-18-multi-system-integration-closure.md`](./docs/reference/phase-18-multi-system-integration-closure.md), [`phase-19-browser-e2e-testing-closure.md`](./docs/reference/phase-19-browser-e2e-testing-closure.md), [`phase-20-production-readiness-dossier.md`](./docs/reference/phase-20-production-readiness-dossier.md), [`phase-1` through `phase-20` closure reports](./docs/reference/) |
 | [`docs/specs/`](./docs/specs/)               | Living technical specifications           | [`Plan for an improved synchronization system.md`](./docs/specs/Plan%20for%20an%20improved%20synchronization%20system.md), [`AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md`](./docs/specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md), [`UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md`](./docs/specs/UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md)                                                                                                                                                                                                                                                                                        |
 | [`docs/guides/`](./docs/guides/)             | Developer & operational how-tos           | [`STRIPE_INTEGRATION.md`](./docs/guides/STRIPE_INTEGRATION.md), [`STRIPE_SETUP.md`](./docs/guides/STRIPE_SETUP.md), [`AI_MODELS_CONFIG.md`](./docs/guides/AI_MODELS_CONFIG.md), [`Editor_UI_Enhancements.md`](./docs/guides/Editor_UI_Enhancements.md), [`Search_Replace_Feature.md`](./docs/guides/Search_Replace_Feature.md)                                                                                                                                                                                                                                                                                                     |
 | [`docs/foundation/`](./docs/foundation/)     | Verbatim founding design & divergence log | [`DESIGN_VS_REALITY.md`](./docs/foundation/DESIGN_VS_REALITY.md), [`Project_Structure.md`](./docs/foundation/Project_Structure.md), [`LUGX platform subscription plans.md`](./docs/foundation/LUGX%20platform%20subscription%20plans.md)                                                                                                                                                                                                                                                                                                                                                                                           |

@@ -12,7 +12,7 @@ This specification details the end-to-end NDJSON (Newline-Delimited JSON) Stream
 ### Architectural Guarantees
 1. **Zero Document Model Mutation During Streaming**: Chunks stream exclusively into `EphemeralPreviewBuffer` and UI preview overlays. Neither document source state nor IndexedDB storage is modified until atomic commit.
 2. **Deterministic Single-Phase Commit**: Atomic server and local transaction commits occur strictly on stream completion.
-3. **Atomic Quota Reservation & Idempotent Refunds**: Automatic quota refunds occur on startup errors, mid-stream disconnects, version conflicts, or user cancellations.
+3. **Atomic Quota Reservation & Idempotent Settlement**: Automatic quota refunds occur on startup errors, mid-stream disconnects, or version conflicts. User-initiated stops or rejections settle quota as consumed without refund (Explicit Settlement Policy §4-D).
 4. **Multi-Byte UTF-8 & Line Boundary Preservation**: Resilient stream parsing protects against chunk slicing, surrogate splits, and network fragmentation.
 5. **Adversarial Resilience**: Line buffer flooding guards (`MAX_LINE_BUFFER_CHARS = 256KB`), payload ceiling guards (`MAX_INPUT_CHARS = 100,000`), DOM XSS immunity, and dynamic position tracking.
 

@@ -34,7 +34,7 @@ docs/
 
 | Document | Scope |
 | :--- | :--- |
-| [TECHNICAL_EXECUTION_PLAN.md](./Plans/TECHNICAL_EXECUTION_PLAN.md) | Code-based technical execution plan covering all 20 phases (closed foundations, active session contract, pending integration & browser automation) |
+| [TECHNICAL_EXECUTION_PLAN.md](./Plans/TECHNICAL_EXECUTION_PLAN.md) | Code-based technical execution plan covering all 20 phases (all 20 phases closed, technical plan fully completed) |
 | [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](./Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan (Milestones M1–M5 closed) |
 | [MARKDOWN_EDITOR_MIGRATION_PLAN.md](./Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6 closed) |
 
@@ -75,6 +75,7 @@ docs/
 | [phase-17-monitoring-rate-limiting-errors-closure.md](./reference/phase-17-monitoring-rate-limiting-errors-closure.md) | Phase 17 closure: Dual-mode rate limiting, distributed correlation ID tracking, automated quota reservation expiration cron (TD-02), and adversarial error handling hardening |
 | [phase-18-multi-system-integration-closure.md](./reference/phase-18-multi-system-integration-closure.md) | Phase 18 closure: Multi-system integration testing across sync, AI streaming, vault encryption, Stripe billing, document pipeline, and tenant isolation on isolated Neon branch |
 | [phase-19-browser-e2e-testing-closure.md](./reference/phase-19-browser-e2e-testing-closure.md) | Phase 19 closure: Browser-driven E2E testing (Playwright), 15 automated user journeys, zero flakiness verification, and resolution of TD-07 |
+| [phase-20-production-readiness-dossier.md](./reference/phase-20-production-readiness-dossier.md) | Phase 20 closure: Final verification dossier, 11-point gate verification matrix, applied migration audit, and 100% technical plan completion |
 | [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Bidi Line Plugin, 3 Direction Modes, Arabic/RTL safe decorations, live preview/source modes |
 | [phase-2-editor-replacement-tooling-closure.md](./reference/phase-2-editor-replacement-tooling-closure.md) | Phase 2 closure: TipTap replacement on editor page, EditorAdapter tooling integration, Multi-Range Search & Replace |
 | [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |
@@ -159,7 +160,7 @@ npm run test:live       # live database integration suites against isolated test
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation
-act push --pull=false   # local containerized execution of the 6-stage CI workflow
+act push --pull=false   # local containerized execution of the 7-stage CI workflow
 node scripts/verify-migrations.mjs     # test database migration & schema verification
 ```
 
