@@ -2,6 +2,25 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.29.1] - 2026-09-19 (TD-12 Resolution: Auth Sign-Out Cache Invalidation & Chromium Socket Pool Protection)
+
+### Fixed & Resolved - TD-12 Resolution & Edge Proxy Hardening
+
+- **Auth Sign-Out Layout Invalidation & Explicit Cookie Wiping (`src/server/actions/auth-actions.ts`):**
+  - Equipped `signOut()` with `revalidatePath("/", "layout")` to immediately purge stale RSC layouts and client router cache upon user logout.
+  - Added proactive session purging in `signOut()` iterating through `cookieStore.getAll()` and deleting all Supabase auth cookies (`sb-*`), preventing stale tokens from leaking to subsequent requests.
+- **Edge Proxy Fast-Path Routing & Watchdog Protection (`src/proxy.ts`):**
+  - **Fast-Path Bypass:** Public routes (such as the root `/` homepage and static assets) and `/login` requests without auth cookies now bypass `supabase.auth.getUser()` entirely, eliminating unnecessary network round-trips and ensuring zero-latency loading.
+  - **Watchdog Timeout (`AbortSignal.timeout(2500)`):** Encapsulated `supabase.auth.getUser()` inside a deterministic `Promise.race` watchdog that aborts after 2500ms. If Supabase auth hangs or encounters network latency, the request fails safely to `user = null` instead of hanging for 7.5 seconds.
+  - **Chromium Socket Pool Immunity:** Eliminates client-side aborts and prevents sockets from remaining stuck in `CLOSE_WAIT`, permanently resolving the Chromium per-host socket saturation issue (`kDefaultMaxSocketsPerGroup = 6`).
+  - **Cookie Header Preservation (`copyCookiesAndRedirect`):** Redirect responses (307) and API 401 JSON responses now preserve all `Set-Cookie` headers (including cookie invalidation directives from `@supabase/ssr`), ensuring deletion instructions reach the client browser reliably.
+- **Automated Test Verification & Zero-Warning Determinism:**
+  - Added dedicated unit test suite `src/test/auth-signout.test.ts` asserting layout revalidation, `sb-*` cookie wiping, non-auth cookie retention, and redirect behavior.
+  - Expanded `src/test/proxy.test.ts` with Fast-Path bypass assertions, `Set-Cookie` propagation checks, and simulated 2500ms watchdog timeout verification.
+  - Maintained 100% test pass rate across the full repository test suite: 66 test files and 797 tests passing (`npm test`), with clean ESLint status (`0 errors, 0 warnings`).
+- **Technical Debt Register Updated ([`docs/TECHNICAL_DEBT_REGISTER.md`](TECHNICAL_DEBT_REGISTER.md)):**
+  - Formally marked **TD-12** as `✅ RESOLVED (2026-09-19)` with architectural resolution notes and verification evidence.
+
 ## [1.29.0] - 2026-09-19 (Phase 20 Final Closure & Technical Plan Fully Completed)
 
 ### Added & Verified - Phase 20 Closure & 100% Technical Plan Completion

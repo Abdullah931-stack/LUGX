@@ -60,13 +60,12 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
         });
 
         it("does not intercept request if code is already on /auth/callback", async () => {
-            mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
-
             const req = new NextRequest("https://lugx.app/auth/callback?code=oauth-sample-code");
             const res = await proxy(req);
 
-            // Should proceed without redirecting back to /auth/callback
+            // Should proceed without redirecting back to /auth/callback (Fast-Path bypasses getUser)
             expect(res.status).toBe(200);
+            expect(mockGetUser).not.toHaveBeenCalled();
         });
     });
 
@@ -170,13 +169,24 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
     });
 
     describe("Public Routes & Fault Tolerance", () => {
-        it("allows unauthenticated visitor on public homepage", async () => {
-            mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
-
+        it("allows unauthenticated visitor on public homepage via fast-path without calling getUser", async () => {
             const req = new NextRequest("https://lugx.app/");
             const res = await proxy(req);
 
             expect(res.status).toBe(200);
+            expect(mockGetUser).not.toHaveBeenCalled();
+        });
+
+        it("propagates Set-Cookie headers through redirect responses", async () => {
+            mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
+
+            const req = new NextRequest("https://lugx.app/workspace");
+            const res = await proxy(req);
+
+            expect(res.status).toBe(307);
+            expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
+            // Verify that cookies set on supabaseResponse (e.g. session tokens or deletion directives) are preserved on redirect
+            expect(res.cookies.get("sb-access-token")?.value).toBe("test-token");
         });
 
         it("handles Supabase network / offline errors gracefully without crashing", async () => {
@@ -195,6 +205,35 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
 
             warnSpy.mockRestore();
+        });
+
+        it("handles getUser watchdog timeout gracefully without hanging indefinitely", async () => {
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+            // Simulate a hanging getUser call that exceeds the 2500ms watchdog
+            mockGetUser.mockImplementationOnce(() => new Promise((resolve) => setTimeout(resolve, 5000)));
+
+            vi.useFakeTimers();
+            try {
+                const req = new NextRequest("https://lugx.app/workspace");
+                const proxyPromise = proxy(req);
+
+                // Advance clock past the 2500ms watchdog
+                await vi.advanceTimersByTimeAsync(2600);
+
+                const res = await proxyPromise;
+
+                expect(warnSpy).toHaveBeenCalledWith(
+                    "[Proxy] supabase.auth.getUser error (network/offline):",
+                    expect.objectContaining({
+                        message: expect.stringContaining("watchdog timeout"),
+                    })
+                );
+                expect(res.status).toBe(307);
+                expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
+            } finally {
+                vi.useRealTimers();
+                warnSpy.mockRestore();
+            }
         });
     });
 

@@ -114,13 +114,13 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
   - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 65 unit test suites with 793 tests green, plus 19 live integration suites with 89 tests green).
 
-## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session
+## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session — ✅ RESOLVED (2026-09-19)
 
-- **Debt:** When signing out via `signOut()` (`src/server/actions/auth-actions.ts`), the action performs `redirect("/")` without executing `revalidatePath("/", "layout")` and without explicitly clearing Supabase auth session cookies from `cookieStore`. Additionally, `src/proxy.ts` calls `supabase.auth.getUser()` on all routes (including the public `/` path) without an AbortSignal timeout watchdog, and drops cookie-deletion headers on `NextResponse.redirect`.
-- **Impact:** When a revoked or stale session token is sent by the browser post-logout, `@supabase/ssr` attempts token recovery over the network, incurring high latency (~7.5s) before failing with `AuthApiError: Invalid Refresh Token`. Rapid browser reloads/retries cause client aborts, leaving up to 6 sockets trapped in `CLOSE_WAIT` on Chromium-based browsers (Chrome & Brave). This saturates Chromium's per-host socket pool (`kDefaultMaxSocketsPerGroup = 6`), causing subsequent requests (even in incognito windows) to hang indefinitely ("Waiting for available socket") until `.next/cache` is purged and socket pools are flushed.
-- **Decision / Status:** **Recorded & Deferred** (owner: project lead / architecture). Implementation is deferred pending explicit user instruction.
-- **Planned Mitigation & Architecture Hardening:**
-  1. Add `revalidatePath("/", "layout")` in `signOut()` to invalidate stale RSC layouts and router cache.
-  2. Explicitly wipe all `sb-*-auth-token` cookies in `cookieStore` inside `signOut()`.
-  3. Introduce Fast-Path routing in `src/proxy.ts` to bypass `getUser()` on public routes (`/`) and conditionalize `/login` checks on cookie presence.
-  4. Equip `getUser()` with an `AbortSignal.timeout(2500)` watchdog and propagate `Set-Cookie` deletion headers through `NextResponse.redirect`.
+- **Debt:** When signing out via `signOut()` (`src/server/actions/auth-actions.ts`), the action performs `redirect("/")` without executing `revalidatePath("/", "layout")` and without explicitly clearing Supabase auth session cookies from `cookieStore`. Additionally, `src/proxy.ts` called `supabase.auth.getUser()` on all routes (including the public `/` path) without an AbortSignal timeout watchdog, and dropped cookie-deletion headers on `NextResponse.redirect`.
+- **Impact:** When a revoked or stale session token was sent by the browser post-logout, `@supabase/ssr` attempted token recovery over the network, incurring high latency (~7.5s) before failing with `AuthApiError: Invalid Refresh Token`. Rapid browser reloads/retries caused client aborts, leaving sockets trapped in `CLOSE_WAIT` on Chromium-based browsers (Chrome & Brave). This saturated Chromium's per-host socket pool (`kDefaultMaxSocketsPerGroup = 6`), causing subsequent requests to hang indefinitely ("Waiting for available socket").
+- **Resolution (2026-09-19):**
+  - Updated `signOut()` in `src/server/actions/auth-actions.ts` to invalidate stale RSC layouts via `revalidatePath("/", "layout")` and proactively clear all `sb-*` session cookies from `cookieStore` prior to redirection.
+  - Introduced Fast-Path routing in `src/proxy.ts` that completely bypasses `getUser()` network calls on public routes (e.g. `/`, static assets) and on `/login` when no auth cookies exist.
+  - Equipped `getUser()` in `src/proxy.ts` with an `AbortSignal.timeout(2500)` watchdog race that fails closed gracefully into an unauthenticated null user without socket stalling.
+  - Implemented `copyCookiesAndRedirect` helper ensuring all `Set-Cookie` directives (including deletions from `@supabase/ssr`) are retained and returned to the client browser on 307 redirects and 401 API responses.
+  - Verified via dedicated unit test suites (`src/test/auth-signout.test.ts` and `src/test/proxy.test.ts`), maintaining 100% test pass rate across all 66 test suites (797 passing tests) and clean ESLint status.

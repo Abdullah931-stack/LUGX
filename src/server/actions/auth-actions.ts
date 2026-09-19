@@ -1,6 +1,8 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { db, schema } from "@/lib/db";
 import { createClient, getUser } from "@/lib/supabase/server";
 import { eq } from "drizzle-orm";
@@ -39,6 +41,19 @@ export async function signInWithGoogle(redirectTo?: string) {
 export async function signOut() {
     const supabase = await createClient();
     await supabase.auth.signOut();
+
+    // Invalidate stale RSC layouts and router cache
+    revalidatePath("/", "layout");
+
+    // Explicitly wipe all Supabase auth session cookies
+    const cookieStore = await cookies();
+    const allCookies = cookieStore.getAll();
+    for (const cookie of allCookies) {
+        if (cookie.name.startsWith("sb-")) {
+            cookieStore.delete(cookie.name);
+        }
+    }
+
     redirect("/");
 }
 
