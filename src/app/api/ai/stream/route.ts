@@ -362,7 +362,22 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        const res = new NextResponse("An unexpected error occurred while processing your request. Please try again.", { status: 500 });
+        const isOverload =
+            detail.includes("503") ||
+            detail.includes("high demand") ||
+            detail.includes("service unavailable") ||
+            detail.includes("overloaded") ||
+            detail.includes("Circuit Breaker is OPEN");
+
+        const status = isOverload ? 503 : 500;
+        const errorMessage = isOverload
+            ? "The AI service is currently experiencing high demand. Spikes in demand are usually temporary. Please try again shortly."
+            : "An unexpected error occurred while processing your request. Please try again.";
+
+        const res = new NextResponse(errorMessage, { status });
+        if (isOverload) {
+            res.headers.set("Retry-After", "30");
+        }
         addCorrelationHeader(res.headers, correlationId);
         return res;
     }

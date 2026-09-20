@@ -37,6 +37,60 @@ function getMaxRetryAttempts(): number {
 }
 
 /**
+ * Resolve full model hierarchy (primary and ordered fallbacks) for an operation and subscription tier.
+ * Declarations are strictly sourced from models.config.json.
+ */
+export function getModelHierarchy(
+    operation: AIOperation,
+    tier: Tier
+): { primary: string | null; fallbacks: string[] } {
+    const config = MODEL_CONFIG[operation];
+    if (!config) {
+        return { primary: null, fallbacks: [] };
+    }
+
+    // Typed projection of the JSON entry: per-tier model ids plus optional
+    // fallbacks as per-tier maps, bare identifiers, or fallback arrays.
+    type ModelEntry = Partial<Record<Tier, string | null>> & {
+        fallback?: Partial<Record<Tier, string | null>> | string;
+        secondaryFallback?: Partial<Record<Tier, string | null>> | string;
+        tertiaryFallback?: Partial<Record<Tier, string | null>> | string;
+        fallbacks?: Partial<Record<Tier, string[]>> | string[];
+    };
+    const entry = config as unknown as ModelEntry;
+
+    const primary = entry[tier] ?? null;
+    const fallbacks: string[] = [];
+
+    const resolveModel = (field: Partial<Record<Tier, string | null>> | string | undefined): string | null => {
+        if (!field) return null;
+        if (typeof field === "object") return field[tier] ?? null;
+        if (typeof field === "string") return field;
+        return null;
+    };
+
+    const fb1 = resolveModel(entry.fallback);
+    if (fb1 && !fallbacks.includes(fb1)) fallbacks.push(fb1);
+
+    const fb2 = resolveModel(entry.secondaryFallback);
+    if (fb2 && !fallbacks.includes(fb2)) fallbacks.push(fb2);
+
+    const fb3 = resolveModel(entry.tertiaryFallback);
+    if (fb3 && !fallbacks.includes(fb3)) fallbacks.push(fb3);
+
+    if (entry.fallbacks) {
+        const list = Array.isArray(entry.fallbacks)
+            ? entry.fallbacks
+            : (entry.fallbacks[tier] || []);
+        for (const m of list) {
+            if (m && !fallbacks.includes(m)) fallbacks.push(m);
+        }
+    }
+
+    return { primary, fallbacks };
+}
+
+/**
  * Resolve primary and fallback model names for an operation and subscription tier.
  * Declarations are strictly sourced from models.config.json.
  */
@@ -44,28 +98,8 @@ export function getModelPair(
     operation: AIOperation,
     tier: Tier
 ): { primary: string | null; fallback: string | null } {
-    const config = MODEL_CONFIG[operation];
-    if (!config) {
-        return { primary: null, fallback: null };
-    }
-
-    // Typed projection of the JSON entry: per-tier model ids plus an optional
-    // fallback that is either a per-tier map or a bare model identifier.
-    type ModelEntry = Partial<Record<Tier, string | null>> & {
-        fallback?: Partial<Record<Tier, string | null>> | string;
-    };
-    const entry = config as unknown as ModelEntry;
-
-    const primary = entry[tier] ?? null;
-    let fallback: string | null = null;
-
-    if (entry.fallback && typeof entry.fallback === "object") {
-        fallback = entry.fallback[tier] ?? null;
-    } else if (typeof entry.fallback === "string") {
-        fallback = entry.fallback;
-    }
-
-    return { primary, fallback };
+    const { primary, fallbacks } = getModelHierarchy(operation, tier);
+    return { primary, fallback: fallbacks[0] ?? null };
 }
 
 /**
@@ -103,17 +137,32 @@ function buildGenerationConfig(
  */
 async function selectModelWithCircuitBreaker(
     primary: string | null,
-    fallback: string | null
+    fallbackInput: string | null | string[]
 ): Promise<{ selectedModel: string; isProbe: boolean }> {
-    if (!primary && !fallback) {
+    const fallbacks: string[] = Array.isArray(fallbackInput)
+        ? fallbackInput.filter(Boolean)
+        : fallbackInput ? [fallbackInput] : [];
+
+    if (!primary && fallbacks.length === 0) {
         throw new Error("No model configured for this operation and tier");
     }
 
+    const selectHealthyFallback = async (): Promise<string> => {
+        for (const fb of fallbacks) {
+            const state = await getModelCircuitState(fb);
+            if (state !== "open") {
+                return fb;
+            }
+        }
+        return fallbacks[0];
+    };
+
     if (!primary) {
-        return { selectedModel: fallback!, isProbe: false };
+        const selected = await selectHealthyFallback();
+        return { selectedModel: selected, isProbe: false };
     }
 
-    if (!fallback) {
+    if (fallbacks.length === 0) {
         // Only primary available - check circuit state
         const circuitState = await getModelCircuitState(primary);
         if (circuitState === "open") {
@@ -125,6 +174,7 @@ async function selectModelWithCircuitBreaker(
     const circuitState = await getModelCircuitState(primary);
 
     if (circuitState === "open") {
+        const fallback = await selectHealthyFallback();
         console.log(`[Circuit Breaker] Fast-path active: Primary model '${primary}' is OPEN. Using fallback '${fallback}'`);
         return { selectedModel: fallback, isProbe: false };
     }
@@ -135,6 +185,7 @@ async function selectModelWithCircuitBreaker(
             console.log(`[Circuit Breaker] Half-Open Single Probe acquired for primary model '${primary}'`);
             return { selectedModel: primary, isProbe: true };
         } else {
+            const fallback = await selectHealthyFallback();
             console.log(`[Circuit Breaker] Half-Open probe in flight: Routing concurrent request to fallback '${fallback}'`);
             return { selectedModel: fallback, isProbe: false };
         }
@@ -173,9 +224,10 @@ export async function processWithAI(
         throw abortErr;
     }
 
-    const { primary, fallback } = getModelPair(operation, tier);
+    const { primary, fallbacks } = getModelHierarchy(operation, tier);
+    const fallback = fallbacks[0] || null;
 
-    if (!primary && !fallback) {
+    if (!primary && fallbacks.length === 0) {
         throw new Error(`Operation '${operation}' is not available for ${tier} tier`);
     }
 
@@ -184,11 +236,11 @@ export async function processWithAI(
 
     // Initial model selection via Circuit Breaker state
     const { selectedModel: initialModel, isProbe: initialIsProbe } =
-        await selectModelWithCircuitBreaker(primary, fallback);
+        await selectModelWithCircuitBreaker(primary, fallbacks);
 
     let targetModel = initialModel;
     let isProbe = initialIsProbe;
-    let triedFallbackInRequest = targetModel === fallback;
+    const attemptedModels = new Set<string>([targetModel]);
     let retries = getMaxRetryAttempts();
     let lastError: Error | null = null;
     let keyInfo: KeyInfo | null = null;
@@ -269,24 +321,37 @@ export async function processWithAI(
                 throw error;
             }
 
-            // 3. Model Overload / 503 -> Failover immediately to fallback model
+            // 3. Model Overload / 503 -> Failover immediately to next fallback model in chain
             if (
-                (classification.category === "overload" || is503OrOverloadError(error)) &&
-                primary &&
-                fallback &&
-                !triedFallbackInRequest
+                classification.category === "overload" ||
+                is503OrOverloadError(error)
             ) {
-                console.warn(
-                    `[AI Client] Model '${primary}' returned 503/Overload. Failing over to fallback '${fallback}' in same request...`
-                );
-
                 // Record failure and trip circuit breaker in Redis
-                recordModelFailure(primary).catch(() => {});
+                if (targetModel) {
+                    recordModelFailure(targetModel).catch(() => {});
+                }
 
-                targetModel = fallback;
-                triedFallbackInRequest = true;
-                isProbe = false;
-                continue; // Retry immediately with fallback model
+                const nextFallback = fallbacks.find((m) => !attemptedModels.has(m));
+                if (nextFallback) {
+                    console.warn(
+                        `[AI Client] Model '${targetModel}' returned 503/Overload. Failing over to fallback '${nextFallback}' in same request...`
+                    );
+                    targetModel = nextFallback;
+                    attemptedModels.add(nextFallback);
+                    isProbe = false;
+                    continue; // Retry immediately with fallback model
+                }
+
+                // If all fallback models in chain have been attempted, do 1 micro-retry with jitter if retries remain
+                if (retries > 1 && !signal?.aborted) {
+                    const jitterMs = 300 + Math.floor(Math.random() * 400);
+                    console.warn(
+                        `[AI Client] All models in fallback chain exhausted on 503/Overload. Pausing ${jitterMs}ms for micro-retry...`
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, jitterMs));
+                    retries--;
+                    continue;
+                }
             }
 
             // If probe failed on a non-overload error, release lock
@@ -344,9 +409,10 @@ export async function streamWithAI(
         throw abortErr;
     }
 
-    const { primary, fallback } = getModelPair(operation, tier);
+    const { primary, fallbacks } = getModelHierarchy(operation, tier);
+    const fallback = fallbacks[0] || null;
 
-    if (!primary && !fallback) {
+    if (!primary && fallbacks.length === 0) {
         throw new Error(`Operation '${operation}' is not available for ${tier} tier`);
     }
 
@@ -355,11 +421,11 @@ export async function streamWithAI(
 
     // Initial model selection via Circuit Breaker
     const { selectedModel: initialModel, isProbe: initialIsProbe } =
-        await selectModelWithCircuitBreaker(primary, fallback);
+        await selectModelWithCircuitBreaker(primary, fallbacks);
 
     let targetModel = initialModel;
     let isProbe = initialIsProbe;
-    let triedFallbackInRequest = targetModel === fallback;
+    const attemptedModels = new Set<string>([targetModel]);
     let retries = getMaxRetryAttempts();
     let lastError: Error | null = null;
     let keyInfo: KeyInfo | null = null;
@@ -483,24 +549,37 @@ export async function streamWithAI(
                 throw error;
             }
 
-            // 3. In-flight 503 / Overload -> Immediately failover to fallback model
+            // 3. In-flight 503 / Overload -> Immediately failover to fallback model in chain
             if (
-                (classification.category === "overload" || is503OrOverloadError(error)) &&
-                primary &&
-                fallback &&
-                !triedFallbackInRequest
+                classification.category === "overload" ||
+                is503OrOverloadError(error)
             ) {
-                console.warn(
-                    `[AI Client] Stream initiation on '${primary}' returned 503/Overload. Failing over to fallback model '${fallback}' in same request...`
-                );
-
                 // Record failure and trip circuit in Redis
-                recordModelFailure(primary).catch(() => {});
+                if (targetModel) {
+                    recordModelFailure(targetModel).catch(() => {});
+                }
 
-                targetModel = fallback;
-                triedFallbackInRequest = true;
-                isProbe = false;
-                continue; // Retry with fallback model
+                const nextFallback = fallbacks.find((m) => !attemptedModels.has(m));
+                if (nextFallback) {
+                    console.warn(
+                        `[AI Client] Stream initiation on '${targetModel}' returned 503/Overload. Failing over to fallback model '${nextFallback}' in same request...`
+                    );
+                    targetModel = nextFallback;
+                    attemptedModels.add(nextFallback);
+                    isProbe = false;
+                    continue; // Retry with fallback model
+                }
+
+                // If all fallback models in chain have been attempted, do 1 micro-retry with jitter if retries remain
+                if (retries > 1 && !signal?.aborted) {
+                    const jitterMs = 300 + Math.floor(Math.random() * 400);
+                    console.warn(
+                        `[AI Client] All models in fallback chain exhausted on 503/Overload. Pausing ${jitterMs}ms for micro-retry...`
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, jitterMs));
+                    retries--;
+                    continue;
+                }
             }
 
             if (isProbe && primary) {

@@ -9,7 +9,7 @@ This document describes the architectural design, failover mechanics, 24-hour fi
 ## 2. Distributed Circuit Breaker & Multi-Tier Model Failover
 
 ### 2.1 Model Declaration Hierarchy (`src/config/models.config.json`)
-All AI models (primary and fallback) are strictly declared within `src/config/models.config.json` per operation and subscription tier:
+All AI models (primary and cascading fallbacks) are strictly declared within `src/config/models.config.json` per operation and subscription tier:
 
 ```json
 {
@@ -22,8 +22,18 @@ All AI models (primary and fallback) are strictly declared within `src/config/mo
       "pro": "gemini-3.6-flash",
       "ultra": "gemini-3.6-flash"
     },
-    "temperature": 0.3,
-    "topP": 0.8
+    "secondaryFallback": {
+      "free": "gemini-3.5-flash-lite",
+      "pro": "gemini-3.5-flash-lite",
+      "ultra": "gemini-3.5-flash-lite"
+    },
+    "tertiaryFallback": {
+      "free": "gemini-3.1-flash-lite",
+      "pro": "gemini-3.1-flash-lite",
+      "ultra": "gemini-3.1-flash-lite"
+    },
+    "temperature": 0.1,
+    "topP": 0.75
   },
   "improve": { ... },
   "summarize": { ... },
@@ -49,24 +59,30 @@ sequenceDiagram
     Route->>Client: streamWithAI(operation, text, tier)
     Client->>Redis: getModelCircuitState("gemini-3.7-flash")
     
-    alt Circuit Breaker is OPEN (Model Overloaded / 10m TTL)
+    alt Circuit Breaker is OPEN (Primary Model Overloaded / 10m TTL)
         Redis-->>Client: Open
-        Note over Client: Fast-Path: Immediately route to fallback "gemini-3.6-flash"
+        Note over Client: Fast-Path: Scan fallback chain & route to first non-open fallback
     else Circuit Breaker is HALF-OPEN (Probe Lock 5m)
         Client->>Redis: tryAcquireHalfOpenProbe (SET NX EX 300)
         alt Won Probe Lock
             Note over Client: Single Probe: Test primary model
         else Lost Probe Lock
-            Note over Client: Probe in Flight: Route concurrent request to fallback
+            Note over Client: Probe in Flight: Route concurrent request to fallback chain
         end
     else Circuit Breaker is CLOSED (Normal)
         Redis-->>Client: Closed
         Client->>Gemini: generateContentStream("gemini-3.7-flash")
-        alt HTTP 503 / Model High Demand
+        alt HTTP 503 / Primary Model High Demand
             Gemini--xClient: 503 Service Unavailable
             Client->>Redis: recordModelFailure / tripModelCircuit (10m TTL)
-            Note over Client: In-Flight Failover: Immediately retry with fallback model
+            Note over Client: In-Flight Failover #1: Immediately retry with fallback #1
             Client->>Gemini: generateContentStream("gemini-3.6-flash")
+            alt Fallback #1 Also Overloaded (503)
+                Gemini--xClient: 503 Service Unavailable
+                Client->>Redis: recordModelFailure("gemini-3.6-flash")
+                Note over Client: In-Flight Failover #2: Cascade to secondary fallback
+                Client->>Gemini: generateContentStream("gemini-3.5-flash-lite")
+            end
         else HTTP 429 / Quota Limit Exceeded
             Gemini--xClient: 429 Too Many Requests
             Client->>Redis: markKeyCooldown(300s) & forceKeyRotationAndGetKey()
@@ -85,7 +101,7 @@ sequenceDiagram
     Client->>Redis: confirmApiKeyUsage(keyIndex)
     Note over Redis: Increments counter; establishes 24h TTL on 1st request
     Client->>Redis: recordModelSuccess("gemini-3.7-flash")
-    Route->>User: Structured NDJSON Stream (meta, delta, done)
+    Route->>User: Structured NDJSON Stream (start, chunk, done)
 ```
 
 ---
@@ -109,8 +125,8 @@ sequenceDiagram
 ### 4.2 Distributed 3-State Circuit Breaker (`src/lib/ai/key-rotation.ts`, `src/lib/ai/client.ts`)
 * **States**:
   - `CLOSED`: Normal operation, calls primary model.
-  - `OPEN`: 2 consecutive 503 failures within 5m trip circuit for 10 minutes (600s). Fast-paths to fallback model (`gemini-3.6-flash`).
-  - `HALF-OPEN`: Cooldown expired. Allows a single probe request via atomic `SET key probing NX EX 300` (5-minute lock). Concurrent requests safely bypass to fallback.
+  - `OPEN`: 2 consecutive 503 failures within 5m trip circuit for 10 minutes (600s). Fast-paths to first healthy model in fallback chain (`gemini-3.6-flash` -> `gemini-3.5-flash-lite` -> `gemini-3.1-flash-lite`).
+  - `HALF-OPEN`: Cooldown expired. Allows a single probe request via atomic `SET key probing NX EX 300` (5-minute lock). Concurrent requests safely bypass to fallback chain.
 * **Probe Cleanup**: `releaseProbeLock` cleans up locks immediately on non-overload errors or cancellation.
 
 ### 4.3 In-Flight Deduplication & Double-Click Protection
@@ -118,7 +134,11 @@ sequenceDiagram
 * **Server Race Recovery (`reserveAndUpdateUsage`):** Catches PostgreSQL unique constraint collisions, reverses speculative usage increments, and returns winner's reservation.
 
 ### 4.4 AI Client (`src/lib/ai/client.ts`)
+* **Model Hierarchy Resolution (`getModelHierarchy`)**: Sourced from `models.config.json`, resolves `{ primary, fallbacks }` providing a complete multi-tier fallback chain.
 * **Synchronous Generation (`processWithAI`)** and **Stream Generation (`streamWithAI`)**.
+* **Cascading In-Flight Failover**: Maintains `attemptedModels = new Set()` in each request. If a model returns 503 / Overload, records failure in Redis and seamlessly cascades to the next healthy untried fallback without dropping the client request.
+* **Micro-Retry with Jitter**: If all fallback models in the chain have been attempted and 503 persists, pauses for 300ms–700ms jittered backoff before re-evaluating, absorbing transient Google traffic spikes.
+* **Structured 503 Route Response**: If capacity is entirely exhausted, `/api/ai/stream` emits `HTTP 503 Service Unavailable` with `Retry-After: 30` header and clear client guidance instead of opaque `HTTP 500`.
 * **Fail-Fast on 400**: Immediately throws on client errors / safety blocks without wasting quota.
 * **Native AbortSignal & Teardown**: Handles client aborts cleanly, stopping generator loops via `ReadableStream.cancel()`. As of v1.5.0 the signal is additionally forwarded into the Gemini SDK request options (`generateContent(request, { signal })` / `generateContentStream(request, { signal })`), so cancellation terminates the upstream provider HTTP socket instead of leaving the server pinned in `reader.read()` until generation finishes on its own (see Section 7, DEF-2).
 * **Dynamic Max Retries**: Bounded by key pool size `Math.min(Math.max(6, keys.length), 10)`.

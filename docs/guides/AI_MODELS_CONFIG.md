@@ -24,6 +24,16 @@ This document specifies the decoupled JSON configuration architecture for Gemini
       "pro": "fallback-model-identifier",
       "ultra": "fallback-model-identifier"
     },
+    "secondaryFallback": {
+      "free": "secondary-fallback-model-identifier",
+      "pro": "secondary-fallback-model-identifier",
+      "ultra": "secondary-fallback-model-identifier"
+    },
+    "tertiaryFallback": {
+      "free": "tertiary-fallback-model-identifier",
+      "pro": "tertiary-fallback-model-identifier",
+      "ultra": "tertiary-fallback-model-identifier"
+    },
     "temperature": 0.0 - 1.0,
     "topP": 0.0 - 1.0,
     "frequencyPenalty": 0.0 - 1.0,
@@ -38,15 +48,15 @@ This document specifies the decoupled JSON configuration architecture for Gemini
 
 ---
 
-## 3. Supported AI Operations & Primary / Fallback Model Matrix
+## 3. Supported AI Operations & Cascading Model Fallback Matrix
 
-| Operation Key | Description | Free Tier (Primary / Fallback) | Pro Tier (Primary / Fallback) | Ultra Tier (Primary / Fallback) |
-| :--- | :--- | :--- | :--- | :--- |
-| `correct` | Grammar & spelling correction | `gemini-3.7-flash` / `gemini-3.6-flash` | `gemini-3.7-flash` / `gemini-3.6-flash` | `gemini-3.7-flash` / `gemini-3.6-flash` |
-| `improve` | Style & phrasing enhancement | `gemini-3.7-flash` / `gemini-3.6-flash` | `gemini-3.7-flash` / `gemini-3.6-flash` | `gemini-3.7-flash` / `gemini-3.6-flash` |
-| `summarize` | Executive & concise summarization | `gemini-3.7-flash` / `gemini-3.6-flash` | `gemini-3.7-flash` / `gemini-3.6-flash` | `gemini-3.7-flash` / `gemini-3.6-flash` |
-| `toPrompt` | Text-to-LLM system prompt generation | `null` (Disabled) | `gemini-3.7-flash` (Thinking: medium) | `gemini-3.7-flash` (Thinking: high) |
-| `translate` | High-fidelity translation | `gemini-3.7-flash` / `gemini-3.6-flash` | `gemini-3.7-flash` / `gemini-3.6-flash` | `gemini-3.7-flash` / `gemini-3.6-flash` |
+| Operation Key | Description | Primary Model | Fallback #1 | Fallback #2 (Secondary) | Fallback #3 (Emergency) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `correct` | Grammar & spelling correction | `gemini-3.7-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `improve` | Style & phrasing enhancement | `gemini-3.7-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `summarize` | Executive & concise summarization | `gemini-3.7-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `toPrompt` | Text-to-LLM prompt generation | `gemini-3.7-flash` (Pro/Ultra) | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `translate` | High-fidelity translation | `gemini-3.7-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
 
 ---
 

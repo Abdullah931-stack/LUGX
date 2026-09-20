@@ -99,7 +99,7 @@ vi.mock('@/lib/ai/key-rotation', () => ({
 }));
 
 // Import client module after mocks are set up
-import { processWithAI, streamWithAI, getModelPair, MODEL_CONFIG } from '@/lib/ai/client';
+import { processWithAI, streamWithAI, getModelPair, getModelHierarchy, MODEL_CONFIG } from '@/lib/ai/client';
 import type { AIOperation } from '@/lib/ai/prompts';
 
 describe('AI Client (Robust & Fault-Tolerant Execution)', () => {
@@ -177,11 +177,21 @@ describe('AI Client (Robust & Fault-Tolerant Execution)', () => {
     // =========================================================================
     // getModelPair Tests
     // =========================================================================
-    describe('getModelPair', () => {
+    describe('getModelPair & getModelHierarchy', () => {
         it('should return primary and fallback for correct operation', () => {
             const pair = getModelPair('correct', 'free');
             expect(pair.primary).toBe(MODEL_CONFIG.correct.free);
             expect(pair.fallback).toBe(MODEL_CONFIG.correct.fallback.free);
+        });
+
+        it('should return full cascading fallback chain in getModelHierarchy', () => {
+            const hierarchy = getModelHierarchy('correct', 'free');
+            expect(hierarchy.primary).toBe('gemini-3.7-flash');
+            expect(hierarchy.fallbacks).toEqual([
+                'gemini-3.6-flash',
+                'gemini-3.5-flash-lite',
+                'gemini-3.1-flash-lite',
+            ]);
         });
 
         it('should return null primary and fallback for toPrompt free tier', () => {
@@ -268,6 +278,37 @@ describe('AI Client (Robust & Fault-Tolerant Execution)', () => {
             expect(mocks.recordModelFailure).toHaveBeenCalled();
             expect(mocks.getGenerativeModel).toHaveBeenLastCalledWith(
                 expect.objectContaining({ model: MODEL_CONFIG.correct.fallback.free })
+            );
+        });
+
+        it('should cascade through secondary fallback when primary and first fallback return 503', async () => {
+            const error503 = new Error('503 Service Unavailable');
+            mocks.classifyGeminiError
+                .mockReturnValueOnce({
+                    category: 'overload',
+                    statusCode: 503,
+                    retryableWithKey: false,
+                    retryableWithModel: true,
+                    reason: 'Overloaded 1',
+                })
+                .mockReturnValueOnce({
+                    category: 'overload',
+                    statusCode: 503,
+                    retryableWithKey: false,
+                    retryableWithModel: true,
+                    reason: 'Overloaded 2',
+                });
+            mocks.generateContent
+                .mockRejectedValueOnce(error503)
+                .mockRejectedValueOnce(error503)
+                .mockResolvedValueOnce({ response: { text: () => 'Recovered via secondary fallback' } });
+
+            const result = await processWithAI('correct', 'Test input', 'free');
+
+            expect(result).toBe('Recovered via secondary fallback');
+            expect(mocks.recordModelFailure).toHaveBeenCalledTimes(2);
+            expect(mocks.getGenerativeModel).toHaveBeenLastCalledWith(
+                expect.objectContaining({ model: 'gemini-3.5-flash-lite' })
             );
         });
 
@@ -402,6 +443,37 @@ describe('AI Client (Robust & Fault-Tolerant Execution)', () => {
             expect(mocks.recordModelFailure).toHaveBeenCalled();
             expect(mocks.getGenerativeModel).toHaveBeenLastCalledWith(
                 expect.objectContaining({ model: MODEL_CONFIG.correct.fallback.free })
+            );
+        });
+
+        it('should cascade stream through secondary fallback when primary and first fallback return 503', async () => {
+            const error503 = new Error('503 Service Unavailable');
+            mocks.classifyGeminiError
+                .mockReturnValueOnce({
+                    category: 'overload',
+                    statusCode: 503,
+                    retryableWithKey: false,
+                    retryableWithModel: true,
+                    reason: 'Primary overloaded',
+                })
+                .mockReturnValueOnce({
+                    category: 'overload',
+                    statusCode: 503,
+                    retryableWithKey: false,
+                    retryableWithModel: true,
+                    reason: 'Fallback 1 overloaded',
+                });
+            mocks.generateContentStream
+                .mockRejectedValueOnce(error503)
+                .mockRejectedValueOnce(error503)
+                .mockResolvedValueOnce(createMockStream(['Stream recovered via secondary fallback']));
+
+            const stream = await streamWithAI('correct', 'Test input', 'free');
+
+            expect(stream).toBeInstanceOf(ReadableStream);
+            expect(mocks.recordModelFailure).toHaveBeenCalledTimes(2);
+            expect(mocks.getGenerativeModel).toHaveBeenLastCalledWith(
+                expect.objectContaining({ model: 'gemini-3.5-flash-lite' })
             );
         });
 

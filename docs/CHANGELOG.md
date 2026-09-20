@@ -2,6 +2,35 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.31.3] - 2026-09-20 (AI Resilience Hardening: Cascading Fallback Chain & In-Flight Model Failover)
+
+### Added & Enhanced - AI Multi-Tier Fallback Chain, In-Flight Failover & Graceful Overload Recovery
+
+- **Multi-Tier Cascading Fallback Hierarchy (`src/config/models.config.json`):**
+  - Expanded AI operation configurations (`correct`, `improve`, `summarize`, `toPrompt`, `translate`) from two-tier (`primary`, `fallback`) to a comprehensive four-tier cascading hierarchy:
+    - Primary Model: `gemini-3.7-flash` (cutting-edge reasoning, fast TTFT)
+    - Fallback #1: `gemini-3.6-flash` (high-stability production fallback)
+    - Secondary Fallback: `gemini-3.5-flash-lite` (lightweight, high-throughput model)
+    - Tertiary Fallback: `gemini-3.1-flash-lite` (maximum capacity resilience fallback)
+  - Enforced full JSON schema compliance across all 5 operational targets with zero runtime overhead.
+
+- **Resilient Fallback Hierarchy & In-Flight Failover Engine (`src/lib/ai/client.ts`):**
+  - Introduced `getModelHierarchy(operation: AIOperation): string[]` to resolve the ordered sequence of candidate models for any given AI operation.
+  - Refactored `getModelPair` to delegate directly to `getModelHierarchy` for complete backward compatibility.
+  - Upgraded `selectModelWithCircuitBreaker` to scan the full candidate model list in sequence, returning the first candidate whose Circuit Breaker is closed.
+  - Implemented dynamic in-flight model failover in both `processWithAI` and `streamWithAI`: when a model fails with a transient 503 or quota rejection, the runtime loops over the remaining hierarchy candidates while tracking `attemptedModels`, preventing duplicate attempts.
+  - Integrated micro-retry with randomized jitter (300ms–700ms) on retryable upstream errors prior to triggering fallback progression, absorbing transient gateway spikes.
+
+- **HTTP 503 Service Unavailable & Client Guidance (`src/app/api/ai/stream/route.ts`):**
+  - Upgraded the streaming route startup error handler: when upstream AI capacity is exhausted across all fallback tiers (e.g., Google GenAI 503 / `UNAVAILABLE`), the route immediately responds with `HTTP 503 Service Unavailable`.
+  - Injected standard `Retry-After: 30` header and user-friendly guidance message (`"AI service is temporarily unavailable due to high demand. Please retry in a few moments."`), preserving client UX without leaking internal infrastructure traces.
+
+- **Automated Verification & Architectural Documentation Synchronization:**
+  - Expanded `src/test/ai/ai-client.test.ts` to 11 tests verifying `getModelHierarchy` resolution, cascading in-flight failover across models on 503 errors, and HTTP 503 service unavailable response generation with `Retry-After: 30`.
+  - Verified 100% test pass rate across the AI test suite: 13 test files passed, 129 tests passed (`npx vitest run src/test/ai/`).
+  - Successfully validated production build with zero TypeScript or route compilation errors (`npm run build`).
+  - Synchronized living documentation in `docs/guides/AI_MODELS_CONFIG.md`, `docs/specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md`, and `docs/architecture/ai-streaming-protocol.md`.
+
 ## [1.31.2] - 2026-09-20 (Modular Test Suite Restructuring & Production Code Clean-up)
 
 ### Refactored & Enhanced - Test Harness Architecture & Production Code Clean-up

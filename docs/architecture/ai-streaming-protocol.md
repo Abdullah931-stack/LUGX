@@ -151,10 +151,11 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
   - **Re-Encryption on Commit**: `commitAIFileOperation` strictly rejects plaintext commits to encrypted files if `encryptionMetadata.iv` is omitted. The editor orchestrator re-encrypts generated Markdown in browser RAM with the Master Key before committing over the network.
   - **UI Shield Badge**: `AIToolbar` renders an amber privacy badge (`data-testid="ai-encrypted-badge"`) disabling AI actions when opting in is disabled on encrypted files.
 
-### 4.9 Information Disclosure Prevention & Zero-Allocation Telemetry (Phase 17)
-- **Risk**: Unhandled database, network, or provider driver exceptions propagating raw error strings (`detail`) containing database connection strings, credentials, or internal file paths to the user interface.
+### 4.9 Information Disclosure Prevention & Graceful Overload Handling (Phase 17 & v1.31.3)
+- **Risk**: Unhandled database, network, or provider driver exceptions propagating raw error strings (`detail`) containing database connection strings, credentials, or internal file paths to the user interface, or failing to inform clients when AI capacity is overloaded.
 - **Protection**:
-  - **Sanitized Client 500 Response**: The route catch block returns a safe generic string (`"An unexpected error occurred while processing your request. Please try again."`) with the `X-Correlation-ID` header.
+  - **Graceful Upstream Overload Handling (HTTP 503)**: When all primary and fallback AI models are exhausted or overloaded (e.g., Google GenAI 503 / `UNAVAILABLE`), the route returns `HTTP 503 Service Unavailable` with a `Retry-After: 30` header and a clear user-facing guidance message (`"AI service is temporarily unavailable due to high demand. Please retry in a few moments."`), preserving client trust without leaking internal traces.
+  - **Sanitized Client 500 Response**: Generic unhandled route exceptions return a safe generic string (`"An unexpected error occurred while processing your request. Please try again."`) with the `X-Correlation-ID` header.
   - **Sanitized Server Telemetry**: Raw exception messages are sanitized with `sanitizeLogMessage(detail)` before structured `console.info` emission, ensuring prompt text and API credentials never reach logs.
 
 ---
@@ -164,8 +165,10 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 The implementation is verified with automated tests covering all parser, FSM, and adversarial edge cases:
 - `src/test/ai/ai-stream-parser.test.ts`: 9 tests covering NDJSON framing, multi-byte UTF-8, incomplete EOF (`failed_incomplete_stream`), duplicate `done`, unknown frames, buffer overflow (`stream_buffer_overflow`), and signal aborts.
 - `src/test/ai/ai-stream-session.test.ts`: 12 tests covering canonical FSM lifecycle, terminal state identification, illegal transitions, generation/version mismatch assertions, conflict rollback, and preview buffer boundaries.
+- `src/test/ai/ai-client.test.ts`: 11 tests covering multi-tier cascading fallback hierarchy (`getModelHierarchy`), in-flight model failover on 503 overload, and HTTP 503 service unavailable response generation with `Retry-After: 30`.
 - `src/test/vault/vault-sync-ai-gate.test.ts`: 28 tests verifying Zero-Knowledge AI route rejection, atomic commit re-encryption guard, user vault setting updates, syntax validator, non-blocking sync conflict isolation, and adversarial multi-device edge cases.
 - `src/test/infrastructure/rate-limit.test.ts`: 7 tests verifying `aiStreamRateLimiter` sliding window, fail-open degradation, and `Retry-After >= 1`.
 - `src/test/auth/correlation.test.ts`: 5 tests verifying correlation ID generation, CRLF sanitization, and header injection.
 - `src/test/ai/ai-stream-abort-latency.test.ts`: 2 tests verifying zero-latency client stop execution (< 50ms) and server-side disconnect settlement invariants.
+
 
