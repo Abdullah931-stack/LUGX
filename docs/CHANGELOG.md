@@ -2,6 +2,35 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.32.1] - 2026-09-20 (Co-located Architectural Decision Records & Trade-offs Institutionalization)
+
+### Added & Documented - Co-located Subsystem ADRs, Trade-off Matrices & Zero-Knowledge CRDT Complexity Barrier
+
+- **Root `README.md` Architectural Statement Hardening:**
+  - Synchronized the root `README.md` Architectural Statement with living sync specifications, integrating the 4th pillar justifying the rejection of Yjs/CRDTs:
+    - **Zero-Knowledge Encryption Barrier:** In LUGX's client-side Zero-Knowledge Cloud Vault, state vectors and fine-grained character-level CRDT operations cannot be decrypted by the server, necessitating decentralized peer-to-peer key exchange or encrypted vector synchronization. For a single-user multi-device editor, this introduces severe cryptographic and operational complexity with negative ROI.
+  - Linked the root statement directly to the authoritative synchronization specification in `docs/architecture/sync/three-way-conflict-resolution.md`.
+
+- **Co-located Architectural Decision Records (Rule 6 Implementation):**
+  - Fully institutionalized co-located Architectural Decision Records (ADRs) with comparative evaluation matrices and deterministic Migration Triggers across key architecture specifications:
+  - **Synchronization Subsystem (`docs/architecture/sync/three-way-conflict-resolution.md`):**
+    - `TR-01`: Diff3 Operational 3-Way Merge vs. CRDTs / Yjs (Rationale: deterministic merge, zero tombstone overhead, complete alignment with client-side Zero-Knowledge encryption; Trigger: true multi-user simultaneous real-time collaborative editing).
+    - `TR-02`: IndexedDB (`idb-keyval`) vs. Origin Private File System (OPFS) (Rationale: cross-browser stability, atomic key-value records, Safari compatibility; Trigger: files exceeding 50MB requiring block-level binary streaming).
+    - `TR-03`: `BroadcastChannel` vs. `SharedWorker` for Multi-Tab Sync (Rationale: ubiquitous browser support, zero lifecycle orchestration overhead; Trigger: persistent background network connections shared across tabs).
+  - **Security & Cryptography Subsystem (`docs/architecture/security/security-and-rate-limiting.md`):**
+    - `TR-05`: Native PBKDF2 (600,000 Iterations) vs. WASM Argon2id (Rationale: native Web Crypto API execution with zero WebAssembly payload or CSP overhead; Trigger: GPU brute-force resistance mandate or Web Crypto Argon2 standardization).
+    - `TR-06`: In-Memory `Uint8Array` Key Storage with Synchronous Zeroing vs. Non-Exportable `CryptoKey` Objects (Rationale: direct byte wipe capability during lock/logout, zero leftover memory remnants; Trigger: cross-origin script injection threat profile shift).
+    - `TR-07`: AES-GCM-256 with Authenticated Associated Data (AAD) vs. Envelope Encryption (Rationale: cryptographic tamper detection binding ciphertext to user/file metadata; Trigger: multi-tenant KMS key hierarchies or per-file key delegation).
+  - **AI Subsystem (`docs/architecture/ai/ai-streaming-protocol.md` & `docs/architecture/ai/ai-quota-reservation-lifecycle.md`):**
+    - `TR-08`: Custom NDJSON over `ReadableStream` vs. Server-Sent Events (SSE) vs. WebSockets (Rationale: bi-directional HTTP POST JSON payload transmission with native streaming, zero protocol upgrade complexity; Trigger: duplex bidirectional client-to-server token steering).
+    - `TR-09`: Two-Phase Quota Hold & Commit vs. Optimistic Settlement (Rationale: strict overdraft prevention and token leak protection on aborted streams; Trigger: distributed multi-region token cache clustering).
+  - **Storage & File Ownership Subsystem (`docs/architecture/sync/file-ownership-and-versioning.md`):**
+    - `TR-11`: PostgreSQL Direct `BYTEA` Payload Storage vs. S3/R2 Object Storage (Rationale: transactional ACID consistency, unified atomic file snapshot backups, zero multi-vendor egress costs; Trigger: active vault storage exceeding 20GB or individual file blobs surpassing 20MB).
+
+- **Automated Verification & Link Governance:**
+  - Verified 100% relative link resolution across all 76 markdown documentation files (0 broken links).
+  - Maintained strict TypeScript static compilation integrity (`npx tsc --noEmit` -> 0 errors, exit code 0).
+
 ## [1.32.0] - 2026-09-20 (Documentation Ecosystem Restructuring, Nested Domain Hierarchy & Governance Hardening)
 
 ### Changed & Reorganized - Documentation Tree Architecture & Governance Protocols

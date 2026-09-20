@@ -123,4 +123,26 @@ When recursively collecting descendant file/folder IDs for cascading deletion or
  - `src/test/server/import-file.test.ts`: Tests text import, 10MB payload size ceiling, title deduplication, and null-byte sanitization.
  - `src/test/parsers/parser-pdf-settings.test.ts`: Unit tests verifying local preference toggling for spatial table extraction.
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
- - Full suite execution: 67 test files, 817 tests passing (100% pass rate).
+ - Full suite execution: 67 test files, 820 tests passing (100% pass rate).
+
+---
+
+## 5. Storage Engine Decisions & Trade-offs
+
+### Decision TR-11: PostgreSQL Direct BYTEA/TEXT Storage vs. External Object Storage (S3 / Cloudflare R2)
+
+- **Context:** Storing user Markdown notes and encrypted zero-knowledge ciphertexts in the cloud backend.
+- **Chosen Architecture:** Direct persistence in the primary PostgreSQL `files` table (`src/lib/db/schema.ts`) using the `content` column (`text` / binary-safe string), co-located with version metadata, ETag, and encryption parameters.
+- **Rejected Alternatives:**
+  1. **External S3 / Cloudflare R2 Object Storage:** Storing content blobs in S3 buckets and referencing URLs in Postgres.
+  2. **Supabase Storage:** Third-party storage abstraction (formally evaluated and dropped; see [`docs/foundation/DESIGN_VS_REALITY.md`](../../foundation/DESIGN_VS_REALITY.md)).
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (Postgres Direct Storage) | Alternative (External S3 / R2) |
+  | :--- | :--- | :--- |
+  | **Transaction Atomicity (ACID)** | **100% Atomic**: File metadata, folder hierarchy, version counter, ETag, and encrypted payload mutate within a single database transaction. | **Dual-State Vulnerability**: Requires two-phase commits between DB and S3. Network crashes leave orphaned S3 objects or dangling DB pointers. |
+  | **Latency & Round-Trips** | **Single Round-Trip**: One SQL query saves/retrieves complete note state. | **Multi-Step Overhead**: Presigned URL generation, client upload to S3, followed by DB confirmation write. |
+  | **Zero-Knowledge Security** | **Unified Security Boundary**: Client-encrypted ciphertext is stored directly in DB; no external third-party storage credentials or bucket access policies to leak. | **Complex Policy Management**: S3 bucket policies, CORS configuration, and presigned URL token expiration. |
+  | **Storage Cost at Scale** | **Higher per Gigabyte**: Database NVMe block storage costs more than S3 object storage ($0.12/GB vs $0.015/GB). | **Lowest Cost**: S3/R2 is orders of magnitude cheaper for massive media archives. |
+
+- **Migration Trigger (When to Switch to Object Storage):**
+  Migrating document content payloads to external object storage (e.g., Cloudflare R2 / AWS S3) is triggered **if the application expands to support large multimedia attachments or arbitrary file uploads exceeding 5MB–10MB per document**, at which point database row bloat and Neon write IOPS outweigh the architectural benefits of single-transaction ACID co-location. Text and code notes remain optimal in Postgres.

@@ -171,4 +171,26 @@ The implementation is verified with automated tests covering all parser, FSM, an
 - `src/test/auth/correlation.test.ts`: 5 tests verifying correlation ID generation, CRLF sanitization, and header injection.
 - `src/test/ai/ai-stream-abort-latency.test.ts`: 2 tests verifying zero-latency client stop execution (< 50ms) and server-side disconnect settlement invariants.
 
+---
+
+## 6. Architectural Decisions & Protocol Trade-offs
+
+### Decision TR-08: Custom NDJSON over ReadableStream vs. Server-Sent Events (SSE) vs. WebSockets
+
+- **Context:** Streaming real-time AI linguistic edits (token-by-token deltas) from Google Gemini LLM via Next.js Route Handlers to CodeMirror 6 inline ghost widgets.
+- **Chosen Architecture:** Custom line-delimited JSON (NDJSON) over standard HTTP/2 `ReadableStream` (`fetch` body stream).
+- **Rejected Alternatives:**
+  1. **Server-Sent Events (`text/event-stream` / EventSource):** Standard browser SSE API.
+  2. **WebSockets (`ws://` / `wss://`):** Persistent full-duplex TCP socket connections.
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (NDJSON / Fetch) | Alternative #1 (SSE / EventSource) | Alternative #2 (WebSockets) |
+  | :--- | :--- | :--- | :--- |
+  | **Serverless & Edge Affinity** | **Native**: Direct Next.js App Router Route Handler response streaming; zero socket server infrastructure. | **Moderate**: Requires specialized buffering headers (`X-Accel-Buffering: no`). | **Poor**: Serverless lambda runtimes cannot sustain persistent long-lived TCP state. |
+  | **Custom Request Headers** | **Full Support**: Transmits standard `Authorization: Bearer`, custom correlation IDs, and CSRF tokens. | **Severely Restricted**: Native browser `EventSource` cannot send custom HTTP authorization headers. | **Moderate**: Initial handshake only; requires subprotocol workarounds for headers. |
+  | **Connection Pool Limits** | **Multiplexed**: Operates over multiplexed HTTP/2 or HTTP/3 connections. | **Vulnerable**: Under HTTP/1.1, browsers enforce a strict limit of 6 open SSE connections per domain. | **Resource-Intensive**: Each socket holds a persistent port/descriptor. |
+  | **Cancellation & Abort** | **Instant**: Direct `AbortController.abort()` cleanly severs the socket and triggers server-side cleanup. | **Moderate**: Requires explicit `.close()` call on EventSource instance. | **Heavy**: Custom application-level heartbeat and disconnect framing. |
+
+- **Migration Trigger (When to Switch to WebSockets):**
+  Migrating AI streaming to WebSockets is triggered **if the application introduces bidirectional interactive multi-modal AI sessions** (e.g., continuous live audio dictation or video frame streaming alongside generation), where client-to-server data must be pushed continuously into the active LLM context without round-trip HTTP overhead.
+
 

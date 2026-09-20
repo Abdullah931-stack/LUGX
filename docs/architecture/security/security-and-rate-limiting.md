@@ -242,3 +242,45 @@ npx vitest run --config vitest.live.config.mts src/test/server/file-ops.ownershi
 npx tsc --noEmit                                                                                    # type safety gate
 ```
 
+---
+
+## 7. Cryptographic Architecture Decisions & Trade-offs
+
+### Decision TR-05: Web Worker PBKDF2-HMAC-SHA256 (600K) vs. WASM Argon2id
+
+- **Context:** Deriving high-entropy encryption keys from user passwords for the client-side Zero-Knowledge Vault without blocking the editor UI thread or degrading bundle performance.
+- **Chosen Architecture:** Dedicated background Web Worker (`src/lib/workers/crypto.worker.ts`) executing native `PBKDF2` with HMAC-SHA256 at **600,000 iterations** (OWASP recommended baseline) via the browser's native `SubtleCrypto` engine.
+- **Rejected Alternative:** Compiling `Argon2id` via WebAssembly (WASM).
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (Web Worker PBKDF2) | Alternative (WASM Argon2id) |
+  | :--- | :--- | :--- |
+  | **Dependency Footprint** | **Zero External Dependencies**: Uses native browser Web Crypto API; 0 KB added to JavaScript bundle. | **Heavy**: Adds ~1.2MB–1.8MB binary WASM payload plus JavaScript loader glue. |
+  | **Security Policy (CSP) Friction** | **Zero**: Executes cleanly under strict Content Security Policies (`script-src 'self'`). | **High**: Frequently blocked by enterprise CSP rules disallowing `wasm-eval` or external WASM compilation. |
+  | **GPU Resistance** | **Moderate**: Computationally expensive for CPUs (600K rounds), but theoretically more parallelizable on GPUs than memory-hard Argon2. | **Maximum**: Memory-hard design provides superior resistance against ASIC/GPU cracking. |
+  | **Execution Isolation** | **Complete**: Background Web Worker prevents 600K hashing from freezing CodeMirror typing input. | **Complete**: Also offloaded to worker. |
+
+- **Migration Trigger (When to Switch to Argon2id):**
+  Migrating to Argon2id is triggered **when the W3C Web Cryptography Working Group formally ratifies Argon2id into native browser `SubtleCrypto` implementations**, eliminating the need for third-party WebAssembly binary blobs.
+
+---
+
+### Decision TR-06: Volatile RAM Raw `Uint8Array` vs. Non-Extractable `CryptoKey`
+
+- **Context:** Securely holding master encryption keys in client volatile memory during active user editing sessions.
+- **Chosen Architecture:** Maintaining keys in `SessionKeyStore` (`src/lib/sync/session-key-store.ts`) as raw `Uint8Array` byte buffers, augmented with strict multi-tab broadcast synchronization and explicit `.fill(0)` memory sanitization via `wipeBuffer()`.
+- **Rejected Alternative:** Restricting key storage exclusively to non-extractable (`extractable: false`) `CryptoKey` objects.
+- **Trade-off Analysis:**
+  - **Thread-Boundary Transferability:** `CryptoKey` instances cannot be transferred across Web Worker boundaries via standard `postMessage` in all browser engines without re-exporting raw bytes or structured-clone duplication.
+  - **Deterministic Memory Sanitization:** A `CryptoKey` object is an opaque black-box managed by the browser engine's internal garbage collector. When a user locks their vault or signs out, JavaScript cannot force the browser engine to overwrite the underlying cryptographic memory. In contrast, storing raw `Uint8Array` enables instant, deterministic zeroing of the memory buffer via `.fill(0)` across all open tabs simultaneously upon receiving `vault_locked`.
+
+---
+
+### Decision TR-07: AES-GCM-256 with Domain AAD Binding vs. Envelope Encryption
+
+- **Context:** Encrypting user Markdown document content before transmission to cloud storage.
+- **Chosen Architecture:** Direct `AES-GCM-256` with mandatory Additional Authenticated Data (AAD) binding formatted canonically as `vault:file:${userId}:${fileId}`.
+- **Rejected Alternative:** Envelope Encryption (generating per-file Data Encryption Keys wrapped by a Master Key via KMS).
+- **Trade-off Analysis:**
+  - **Hardware Acceleration:** Native `AES-GCM-256` leverages hardware AES-NI instructions in modern CPUs, enabling near-instant encryption/decryption on multi-megabyte notes.
+  - **Ciphertext Substitution Prevention:** The strict domain AAD binding cryptographically binds the ciphertext to the exact owning user ID and file ID. If an adversary attempts to swap an encrypted payload from one file into another, or across different tenants in the database, `SubtleCrypto.decrypt` fails unconditionally with `OperationError`.
+

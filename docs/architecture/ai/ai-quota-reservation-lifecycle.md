@@ -169,3 +169,26 @@ export const aiReservations = pgTable("ai_reservations", {
 | **Editor Data Safety** | Preserves manual typing on generation mismatch | `ai-stream-session.test.ts` |
 | **Atomic Quota Refund** | Bounded subtraction `GREATEST(col - units, 0)` | `ai-ops.refund.test.ts` |
 | **Idempotent Commit** | Atomic conditional status transition to `committed` | `ai-server-atomic-commit.test.ts` |
+
+---
+
+## 7. Architectural Decisions & Quota Settlement Trade-offs
+
+### Decision TR-09: Two-Phase Quota Reservation (Hold & Commit) vs. Optimistic Post-Settlement
+
+- **Context:** Preventing concurrent subscription tier quota abuse (e.g. an automated script firing 10 parallel 5,000-word requests simultaneously when the user only has 5,000 words remaining).
+- **Chosen Architecture:** Two-Phase Quota Reservation (`src/server/actions/ai-ops.ts`):
+  1. **Phase 1 (Hold):** Atomically creates an `ai_reservations` row with status `reserved` and decrements available balance before establishing the LLM stream.
+  2. **Phase 2 (Settle):** Atomically transitions the reservation to `committed` upon user acceptance or `refunded` / `expired` upon rejection/abandonment.
+- **Rejected Alternatives:**
+  1. **Optimistic Post-Settlement:** Deducting quota only after the LLM completes generation and the user accepts.
+  2. **Immediate Debit with Best-Effort Refund:** Fully burning quota immediately upon request and issuing refund credits if generation fails.
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (Two-Phase Hold) | Alternative #1 (Optimistic Post-Settlement) | Alternative #2 (Immediate Debit) |
+  | :--- | :--- | :--- | :--- |
+  | **Concurrency Overdraft Protection** | **100% Guaranteed**: Second parallel request finds zero remaining quota and is immediately rejected (402). | **Zero**: An adversary can burst $10 \times$ their quota in parallel before any post-settlement runs. | **100% Guaranteed**: Balance drops on first request. |
+  | **Database Write Amplification** | **High**: 2–3 database write transactions per generation (`reserve` + `commit/refund`). | **Lowest**: Exactly 1 database write per successful generation. | **Moderate**: 1 write on success, 2 writes on failure refund. |
+  | **Abandonment & Orphan Risk** | **Handled by Sweeper**: Requires periodic cron (`/api/cron/expire-reservations`) to sweep abandoned holds. | **Zero**: No reservation records created to orphan. | **High Customer Friction**: Users temporarily lose quota on dropped connections until refunded. |
+
+- **Migration Trigger (When to Switch to Optimistic Post-Settlement):**
+  Transitioning to optimistic post-settlement is triggered **if Postgres transaction write IOPS becomes a primary cost bottleneck AND AI model inference costs drop to near-zero commodity pricing**, where the financial cost of database write amplification exceeds the monetary risk of occasional client concurrency overdraft.

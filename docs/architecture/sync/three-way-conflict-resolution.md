@@ -196,3 +196,59 @@ If-Match: "server_etag"
 | `src/test/sync/encrypted-conflict-decryption.integration.test.ts` | 4 | Passed | End-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution, locked vault safety. |
 | **Total Test Count** | **241** | **100% Passed** | **All suites verified against real database and runtime contracts.** |
 | **TypeScript Typecheck** | `tsc --noEmit` | **0 Errors** | **Strict TypeScript compliance verified across all workspace files.** |
+
+---
+
+## 5. Architectural Decisions & Trade-offs
+
+### Decision TR-01: Choosing Diff3 LCS over CRDTs (Yjs) and Operational Transformation (OT)
+
+- **Context:** LUGX requires an offline-first document synchronization engine capable of resolving concurrent edits across multiple devices for a single authenticated user, while strictly preserving end-to-end zero-knowledge encryption in client-side vaults.
+- **Chosen Architecture:** Custom, deterministic Three-Way Line-Based Merge Engine (`src/lib/sync/conflict-resolver.ts`) using linear-memory Longest Common Subsequence (LCS) with common prefix/suffix trimming, integrated with an AST-aware Markdown syntax integrity validator (`syntax-validator.ts`).
+- **Rejected Alternatives:**
+  1. **CRDTs (Yjs / Automerge):** Standard state-vector conflict-free replicated data types.
+  2. **Operational Transformation (OT):** Centralized sequence transformation (e.g., ShareDB, Google Docs algorithm).
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (Diff3 LCS) | Alternative #1 (Yjs / CRDTs) | Alternative #2 (OT) |
+  | :--- | :--- | :--- | :--- |
+  | **Memory & Storage Overhead** | **Minimal**: Linear $O(D)$ memory via flat `Int32Array` buffers; zero metadata tombstones. | **High**: Indefinite retention of character-level deletion tombstones and state vectors in client memory. | **Moderate**: Server maintains entire sequential revision log. |
+  | **Bundle Footprint** | **Zero-Dependency**: 0 KB external bundle weight; pure native TypeScript. | **Heavy**: ~60–120 KB minified dependency graph (`yjs`, `y-codemirror.next`, `y-protocols`). | **Heavy**: Client-server transformation engine dependencies. |
+  | **Offline-First Resilience** | **Native**: Works deterministically in isolated local client contexts against base snapshots. | **Native**: Strong peer-to-peer eventual convergence. | **Poor**: Requires authoritative central server to transform concurrent operations. |
+  | **Zero-Knowledge Encryption Harmony** | **Frictionless**: Plaintext 3-way merge occurs entirely inside volatile client RAM after Web Worker decryption. | **Severe Incompatibility**: Encrypting fine-grained CRDT operations requires complex decentralized key exchange or homomorphic encryption. | **Incompatible**: Server cannot transform operations on encrypted ciphertexts. |
+
+- **Zero-Knowledge Cryptographic Barrier:**
+  Following the implementation of the Zero-Knowledge Cloud Vault, integrating Yjs would introduce extreme architectural complexity. Because the server is strictly blind to document contents (`content BYTEA` ciphertext), any CRDT synchronization must occur either through encrypted state updates or peer-to-peer WebRTC connections. In a single-user workstation, managing encrypted peer-to-peer session states, distributing per-session ephemeral keys, and storing deletion tombstones imposes significant memory and battery overhead without any measurable user-facing ROI.
+- **Migration Trigger (When to Switch to CRDTs):**
+  Adopting Yjs or an equivalent CRDT framework is justified **only if the product requirement evolves to support real-time multi-user concurrent live collaboration** (multiple users simultaneously editing the exact same note with live cursor presence). In that event, the clean abstraction boundaries in `EditorAdapter` (`src/components/editor/markdown/editor-adapter.ts`) and `SyncManager` allow swapping the underlying synchronization transport without redesigning editor UI or database schemas.
+
+---
+
+### Decision TR-02: Native IndexedDB vs. Origin Private File System (OPFS)
+
+- **Context:** The offline synchronization engine requires persistent client-side storage to retain local document snapshots, mutation queues, and synchronization cursors across browser restarts.
+- **Chosen Architecture:** Native browser **IndexedDB API** with transactional schema versioning (`src/lib/sync/indexeddb.ts`), partitioned per user (`textai_db_${userId}`) across three stores: `files`, `operations`, and `sync_metadata`.
+- **Rejected Alternatives:**
+  - **Origin Private File System (OPFS):** Direct private filesystem access (`navigator.storage.getDirectory()`).
+  - **LocalStorage:** Synchronous string key-value storage.
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (IndexedDB) | Alternative (OPFS) |
+  | :--- | :--- | :--- |
+  | **Structured Querying** | **High**: Secondary indices (`by_user`, `by_status`, `by_file`, `by_retry`) allow instantaneous queue inspection. | **None**: Raw byte files without indexing; queries require manual directory scanning. |
+  | **Transactional Atomicity** | **Native**: Multi-store ACID transactions (`readwrite`) ensure atomic rollback of mutation operations. | **Low**: File locking semantics; no multi-file atomic transactions. |
+  | **Raw I/O Throughput** | **Moderate**: Subject to structured cloning serialization overhead. | **Extreme**: Synchronous fast access handles for high-throughput byte streams. |
+  | **Storage Quota & Eviction** | **High**: Large browser quota (typically gigabytes) under persistent storage permissions. | **High**: Equal quota allowance. |
+
+- **Migration Trigger (When to Switch to OPFS):**
+  Migrating storage of document contents to OPFS is triggered **if the application introduces large binary attachments (>50MB per file, such as raw high-resolution PDF scans or media files)** where IndexedDB structured cloning serialization introduces visible main-thread latency.
+
+---
+
+### Decision TR-03: Native BroadcastChannel vs. SharedWorker for Cross-Tab Sync
+
+- **Context:** Synchronizing editor lock states, active drafts, and volatile RAM key purges across sibling browser tabs in real time.
+- **Chosen Architecture:** Native `BroadcastChannel('textai_cross_tab_sync')` (`src/lib/sync/cross-tab-sync.ts`) with sender isolation (`senderTabId !== currentTabId`).
+- **Rejected Alternative:** `SharedWorker` coordination hub.
+- **Trade-off Analysis:**
+  - **BroadcastChannel:** Zero setup, universally supported across all modern desktop and mobile browsers, zero lifecycle teardown friction, and degrades silently in restricted headless environments.
+  - **SharedWorker:** Complex worker lifecycle management, historically unsupported or flaky on iOS Safari, and introduces significant debugging complexity for multi-tab state tracking.
+- **Migration Trigger:** Adopting a `SharedWorker` is triggered only if client-side architecture requires a persistent, long-running background sync coordinator that must remain active and maintain network sockets even when individual browser windows are closed.
