@@ -2,6 +2,27 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.31.0] - 2026-09-20 (Phase 22: Cross-Tab Volatile RAM Purge Synchronization & Local Auto-Lock Hardening)
+
+### Added & Enhanced - Phase 22: Cross-Tab Volatile RAM Purge Synchronization
+
+- **Cross-Tab Volatile RAM Purge Synchronization (`src/lib/sync/session-key-store.ts`):**
+  - Integrated `BroadcastChannel('textai_cross_tab_sync')` subscriptions directly into `SessionKeyStore` constructor for instant detection of `vault_locked` events across sibling browser tabs.
+  - Sibling tabs receiving `vault_locked` automatically invoke `this.lock(false)`, immediately zeroing volatile heap buffers (`Uint8Array`) via `wipeBuffer()` (`.fill(0)`), clearing active session storage, and notifying local subscribers without re-broadcasting, eliminating infinite echo loops.
+  - Enhanced method signatures for `lock(broadcast = true)` and `purgeKeys(broadcast = true)` to ensure all programmatic and user-initiated lock transitions automatically dispatch cross-tab notifications while preserving 100% backward compatibility for zero-argument callers.
+  - Added clean resource teardown method `destroy(): void` to cleanly disconnect `BroadcastChannel` listeners and purge volatile state on instance disposal.
+  - Maintained strict 1-hour (`3,600,000 ms`) default inactivity timeout invariant, ensuring full compliance with existing contract assertions.
+
+- **Local SessionKeyStore Lock Lifecycle Synchronization (`src/hooks/use-editor-orchestrator.ts`):**
+  - Bound the editor orchestrator directly to the local `sessionKeyStore.subscribe((isUnlocked) => ...)` lifecycle, eliminating local lock blindness when background inactivity timers fire within the active tab.
+  - Immediately cancels pending debounced auto-save timers (`debouncedAutoSaveRef.current?.cancel?.()`) upon lock transitions, preventing delayed write attempts from throwing unhandled master key extraction errors.
+  - Synchronously updates hydration state to `"vault_locked"`, opens unlock modal dialogs, and freezes the CodeMirror editor editing surface (`adapter.setEditable(false)`).
+
+- **Automated Verification Suite Expansion & Anti-Regression Baseline:**
+  - Expanded `src/test/vault-crypto.test.ts` from 35 to 40 unit tests by adding Section 10 (`10. Cross-Tab Volatile RAM Purge Synchronization (Phase 22 Closure)`), proving 100% buffer zeroing (`.fill(0)`), broadcast dispatch on `lock()`, suppression of echo loops on `lock(false)`, silent auto-lock broadcast via `isUnlocked()` check, and clean teardown on `destroy()`.
+  - Expanded `src/test/editor-orchestration.integration.test.ts` from 16 to 18 integration tests, verifying sibling tab `vault_locked` propagation and local `SessionKeyStore.lock(false)` auto-save cancellation.
+  - Increased project-wide test baseline from **805 tests to 812 tests across 67 test files** (100% passing, 0 failures, 0 regressions) with clean TypeScript compilation (`npx tsc --noEmit` -> 0 errors).
+
 ## [1.30.0] - 2026-09-20 (Phase 21: Distributed Webhook Lock, Upstash Redis Fast-Path Deduplication & Node.js 22 CI Hardening)
 
 ### Added & Enhanced - Phase 21: Distributed Concurrency Lock & Multi-Tiered Idempotency

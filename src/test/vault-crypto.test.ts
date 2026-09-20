@@ -647,4 +647,162 @@ describe('Phase 1: Crypto Worker, Defensive RAM Sanitization & Key Management', 
         }, 120000);
     });
 
+    describe('10. Cross-Tab Volatile RAM Purge Synchronization (Phase 22 Closure)', () => {
+        let originalWindow: any;
+
+        beforeEach(() => {
+            originalWindow = (globalThis as any).window;
+            (globalThis as any).window = {
+                BroadcastChannel,
+                sessionStorage: {
+                    removeItem: vi.fn(),
+                },
+            };
+        });
+
+        afterEach(() => {
+            (globalThis as any).window = originalWindow;
+            sessionKeyStore.purgeKeys(false);
+            vi.restoreAllMocks();
+        });
+
+        it('should purge volatile RAM in listening store when vault_locked is received from sibling tab', async () => {
+            const storeB = new SessionKeyStore();
+            const keyB = await generateMasterKeyRaw();
+            storeB.setMasterKey(keyB);
+            expect(storeB.isUnlocked()).toBe(true);
+
+            const internalRawRef = storeB.getMasterKeyRaw() as Uint8Array;
+            expect(internalRawRef).toBeDefined();
+            expect(internalRawRef.some((b) => b !== 0)).toBe(true);
+
+            // Sibling tab broadcasts vault_locked
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            siblingChannel.postMessage({
+                type: 'vault_locked',
+                senderTabId: 'sibling-tab-uuid-999',
+                timestamp: Date.now(),
+            });
+
+            // Wait for cross-tab message delivery
+            await new Promise((r) => setTimeout(r, 60));
+
+            expect(storeB.isUnlocked()).toBe(false);
+            expect(storeB.getMasterKey()).toBeNull();
+            expect(storeB.getMasterKeyRaw()).toBeNull();
+            // Confirm memory buffer was 100% wiped with .fill(0)
+            expect(Array.from(internalRawRef)).toEqual(new Array(32).fill(0));
+
+            siblingChannel.close();
+            storeB.destroy();
+            wipeBuffer(keyB);
+        });
+
+        it('should broadcast vault_locked to sibling tabs when lock() is called locally', async () => {
+            const receivedEvents: any[] = [];
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            siblingChannel.onmessage = (e) => {
+                receivedEvents.push(e.data);
+            };
+
+            const storeA = new SessionKeyStore();
+            const keyA = await generateMasterKeyRaw();
+            storeA.setMasterKey(keyA);
+            expect(storeA.isUnlocked()).toBe(true);
+
+            // Lock storeA locally with broadcast = true (default)
+            storeA.lock();
+
+            // Wait for message delivery
+            await new Promise((r) => setTimeout(r, 60));
+
+            expect(receivedEvents.length).toBeGreaterThanOrEqual(1);
+            const lockEvent = receivedEvents.find((e) => e.type === 'vault_locked');
+            expect(lockEvent).toBeDefined();
+            expect(lockEvent.type).toBe('vault_locked');
+            expect(lockEvent.timestamp).toBeGreaterThan(0);
+
+            siblingChannel.close();
+            storeA.destroy();
+            wipeBuffer(keyA);
+        });
+
+        it('should NOT broadcast vault_locked when lock(false) is called (preventing echo loops)', async () => {
+            const receivedEvents: any[] = [];
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            siblingChannel.onmessage = (e) => {
+                receivedEvents.push(e.data);
+            };
+
+            const store = new SessionKeyStore();
+            const key = await generateMasterKeyRaw();
+            store.setMasterKey(key);
+
+            // Lock locally with broadcast = false
+            store.lock(false);
+
+            // Wait to ensure no broadcast is emitted
+            await new Promise((r) => setTimeout(r, 60));
+
+            expect(receivedEvents.length).toBe(0);
+
+            siblingChannel.close();
+            store.destroy();
+            wipeBuffer(key);
+        });
+
+        it('should broadcast vault_locked when inactivity timeout triggers lock via isUnlocked() check', async () => {
+            const receivedEvents: any[] = [];
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            siblingChannel.onmessage = (e) => {
+                receivedEvents.push(e.data);
+            };
+
+            // Create store with very short 20ms timeout
+            const shortStore = new SessionKeyStore({ inactivityTimeoutMs: 20 });
+            const key = await generateMasterKeyRaw();
+            shortStore.setMasterKey(key);
+            expect(shortStore.isUnlocked()).toBe(true);
+
+            // Wait past timeout (35ms)
+            await new Promise((r) => setTimeout(r, 35));
+
+            // Calling isUnlocked() triggers silent auto-lock
+            const unlocked = shortStore.isUnlocked();
+            expect(unlocked).toBe(false);
+
+            // Wait for broadcast delivery
+            await new Promise((r) => setTimeout(r, 60));
+
+            const lockEvent = receivedEvents.find((e) => e.type === 'vault_locked');
+            expect(lockEvent).toBeDefined();
+
+            siblingChannel.close();
+            shortStore.destroy();
+            wipeBuffer(key);
+        });
+
+        it('should cleanly unsubscribe from cross-tab channel when destroy() is invoked', async () => {
+            const store = new SessionKeyStore();
+            const key = await generateMasterKeyRaw();
+            store.setMasterKey(key);
+
+            store.destroy();
+
+            // After destroy, incoming vault_locked events should not cause any error
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            expect(() => {
+                siblingChannel.postMessage({
+                    type: 'vault_locked',
+                    senderTabId: 'sibling-tab-uuid-888',
+                    timestamp: Date.now(),
+                });
+            }).not.toThrow();
+
+            siblingChannel.close();
+            wipeBuffer(key);
+        });
+    });
+
 });
+

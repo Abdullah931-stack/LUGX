@@ -1248,6 +1248,24 @@ export function useEditorOrchestrator({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fileId, currentAdapter]);
 
+    // Local SessionKeyStore lock/unlock lifecycle listener
+    useEffect(() => {
+        const unsubscribe = sessionKeyStore.subscribe((isUnlocked) => {
+            if (!isUnlocked && isEncryptedRef.current) {
+                debouncedAutoSaveRef.current?.cancel?.();
+                setIsVaultLocked(true);
+                setIsUnlockModalOpen(true);
+                setHydration("vault_locked");
+                if (adapterRef.current) {
+                    adapterRef.current.setEditable(false);
+                }
+            }
+        });
+        return () => {
+            unsubscribe();
+        };
+    }, []);
+
     // Cross-tab synchronization listener
     useEffect(() => {
         const unsubscribe = subscribeCrossTabSync(async (event) => {
@@ -1261,6 +1279,11 @@ export function useEditorOrchestrator({
             }
 
             if (event.type === "vault_locked") {
+                // 1. Cancel pending auto-save immediately
+                debouncedAutoSaveRef.current?.cancel?.();
+                // 2. Purge RAM immediately (no re-broadcast)
+                sessionKeyStore.lock(false);
+                // 3. Update UI state
                 if (isEncryptedRef.current) {
                     setIsVaultLocked(true);
                     setIsUnlockModalOpen(true);

@@ -204,7 +204,7 @@ sequenceDiagram
 | Suite | Coverage |
 |-------|----------|
 | `src/lib/sync/reconciliation.test.ts` (10 tests) | Closed matrix incl. cold-start rows (`bootstrap_server`, `adopt_metadata_keep_edits`); fast-forward on clean+newer; metadata adoption on identical payloads (precedence over dirty); dirty-divergent retention; non-newer retention (equal version, regressed version, version-without-ETag); weak-validator normalization (`W/`, quotes) derived from the REAL baseline |
-| `src/test/editor-orchestration.integration.test.ts` (15 tests) | Orchestrator integration vs mocked `fileOps`: suspension gates, committing exclusivity, unload warnings (dirty / committing / parked preview), PLUS cold-start painting of a server-v1 file with a lost local snapshot, and sync-before-write anchor ordering |
+| `src/test/editor-orchestration.integration.test.ts` (18 tests) | Orchestrator integration vs mocked `fileOps`: suspension gates, committing exclusivity, unload warnings (dirty / committing / parked preview), cold-start painting of a server-v1 file with a lost local snapshot, sync-before-write anchor ordering, sibling tab `vault_locked` propagation, and local auto-lock `debouncedAutoSave` cancellation |
 
 ---
 
@@ -403,6 +403,11 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
    - If the file is encrypted and the vault is unlocked, the payload is transparently decrypted into clean Markdown plaintext before updating the editor surface (`adapter.setValue(remote.content)`).
    - If the vault is locked, the update is safely isolated without mutating the editor, preserving the `vault_locked` barrier and preventing raw ciphertext leakage into CodeMirror or the DOM.
 
+9. **Cross-Tab Volatile RAM Purge Synchronization & Local Auto-Lock Hardening (Phase 22):**
+   - Direct integration between `SessionKeyStore` and `BroadcastChannel('textai_cross_tab_sync')` guarantees that when any tab locks the vault (manual lock or inactivity timeout), a `vault_locked` broadcast message purges volatile RAM (`Uint8Array.fill(0)`) across all sibling tabs without echo loops (`this.lock(false)`).
+   - Sibling tabs immediately cancel pending auto-saves, set hydration state to `"vault_locked"`, and freeze the editor.
+   - The originating tab binds directly to `sessionKeyStore.subscribe()`, eliminating local auto-lock blindness and canceling `debouncedAutoSave` instantly upon local inactivity timeout.
+
 ---
 
 ## 7. Verification Proof
@@ -410,7 +415,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 - **Automated Test Execution Evidence:**
   - `src/lib/sync/conflict-resolver.test.ts` (32/32 passing)
   - `src/lib/sync/sync-manager.test.ts` (36/36 passing)
-  - `src/test/editor-orchestration.integration.test.ts` (12/12 passing)
+  - `src/test/editor-orchestration.integration.test.ts` (18/18 passing)
   - `src/hooks/use-sync.test.ts` (14/14 passing)
   - `src/test/editor-recovery-reload.test.ts` (5/5 passing)
   - `src/test/editor-atomic-commit.test.ts` (4/4 passing)
@@ -421,7 +426,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
   - `src/test/markdown-editor.test.ts` (21/21 passing)
   - `src/test/markdown-editor-e2e.test.ts` (9/9 passing)
   - **Vault Cryptographic & Orchestration Subsystem Suites:**
-    - `src/test/vault-crypto.test.ts` (31/31 passing - W3C chunking, timeout & circuit-breaker queue draining)
+    - `src/test/vault-crypto.test.ts` (40/40 passing - W3C chunking, timeout & circuit-breaker queue draining, cross-tab volatile RAM purge & auto-lock synchronization)
     - `src/test/vault-storage.test.ts` (15/15 passing - transparent IndexedDB encryption & raw store inspection)
     - `src/test/vault-orchestration.test.ts` (29/29 passing - dual wrapping, seed recovery, 6-digit PIN, AAD re-encryption, double-encryption guards)
     - `src/test/vault-actions.unit.test.ts` (20/20 passing - server actions CRUD, validation, 401/404/409 guards, device trust revocation)
@@ -431,8 +436,8 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
     - `src/test/vault-sync-ai-gate.test.ts` (28/28 passing - dual-layer AI safety barriers, non-blocking sync with CONFLICT_LOCKED quarantine, Markdown syntax validator)
     - `src/lib/sync/sync-crypto-gateway.test.ts` (5/5 passing - transparent inbound decryption gateway, fresh outbound CSPRNG IV re-encryption, vault-lock quarantine)
     - `src/test/encrypted-conflict-decryption.integration.test.ts` (4/4 passing - end-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution)
-  - **Vault Subsystem Total:** 10/10 test files, 157/157 tests passing (100% success rate).
-  - **Project Full Test Suite:** 48/48 test files, 666/666 tests passing (100% success rate) via `vitest.config.mts`.
+  - **Vault Subsystem Total:** 10/10 test files, 173/173 tests passing (100% success rate).
+  - **Project Full Test Suite:** 67/67 test files, 812/812 tests passing (100% success rate) via `vitest.config.mts`.
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).
 
 

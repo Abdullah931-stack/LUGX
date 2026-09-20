@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
+import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import * as fileOps from "@/server/actions/file-ops";
 import { commitAIFileOperation } from "@/server/actions/ai-commit";
 
@@ -779,6 +780,126 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
             expect(adapter.getValue()).toBe("# Brand New Server Content");
             // Selection should be preserved at 12 without jumping to 0
             expect(adapter.getSelection()).toEqual({ from: 12, to: 12 });
+        });
+
+        it("should lock editor UI, disable editing, and transition hydration when sibling tab broadcasts vault_locked", async () => {
+            mockLocalDb[fileId] = {
+                id: fileId,
+                title: "Encrypted Note",
+                content: "Secret content",
+                version: 1,
+                etag: "etag-v1",
+                isDirty: false,
+                isEncrypted: true,
+            };
+            vi.mocked(fileOps.getFile).mockResolvedValue({
+                success: true,
+                data: {
+                    id: fileId,
+                    title: "Encrypted Note",
+                    content: "Secret content",
+                    version: 1,
+                    etag: "etag-v1",
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                    userId,
+                    parentFolderId: null,
+                    isFolder: false,
+                    isEncrypted: true,
+                    encryptionMetadata: null,
+                    deletedAt: null,
+                },
+            });
+
+            const dummyKey = new Uint8Array(32).fill(7);
+            sessionKeyStore.setMasterKey(dummyKey);
+
+            const { result } = renderHook(() =>
+                useEditorOrchestrator({ fileId, userId, adapter })
+            );
+
+            await waitFor(() => expect(result.current.title).toBe("Encrypted Note"));
+
+            // Broadcast vault_locked from sibling tab
+            act(() => {
+                const channel = new BroadcastChannel("textai_cross_tab_sync");
+                channel.postMessage({
+                    type: "vault_locked",
+                    senderTabId: "sibling_tab_999",
+                    timestamp: Date.now(),
+                });
+                channel.close();
+            });
+
+            await waitFor(() => {
+                expect(result.current.isVaultLocked).toBe(true);
+                expect(result.current.hydration).toBe("vault_locked");
+                expect(adapter.setEditable).toHaveBeenCalledWith(false);
+            });
+            sessionKeyStore.purgeKeys(false);
+        });
+
+        it("should lock editor UI, disable editing, and cancel pending auto-save when local SessionKeyStore locks", async () => {
+            mockLocalDb[fileId] = {
+                id: fileId,
+                title: "Encrypted Note Local Lock",
+                content: "Secret content",
+                version: 1,
+                etag: "etag-v1",
+                isDirty: false,
+                isEncrypted: true,
+            };
+            vi.mocked(fileOps.getFile).mockResolvedValue({
+                success: true,
+                data: {
+                    id: fileId,
+                    title: "Encrypted Note Local Lock",
+                    content: "Secret content",
+                    version: 1,
+                    etag: "etag-v1",
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                    userId,
+                    parentFolderId: null,
+                    isFolder: false,
+                    isEncrypted: true,
+                    encryptionMetadata: null,
+                    deletedAt: null,
+                },
+            });
+
+            const dummyKey = new Uint8Array(32).fill(8);
+            sessionKeyStore.setMasterKey(dummyKey);
+
+            const { result } = renderHook(() =>
+                useEditorOrchestrator({ fileId, userId, adapter })
+            );
+
+            await waitFor(() => expect(result.current.title).toBe("Encrypted Note Local Lock"));
+
+            // User types to trigger debounced auto-save schedule
+            act(() => {
+                adapter.setValue("Unsaved encrypted edits");
+                result.current.handleEditorChange("Unsaved encrypted edits");
+            });
+            expect(result.current.isDirty).toBe(true);
+
+            // Local SessionKeyStore lock fires (e.g. idle timeout in current tab)
+            act(() => {
+                sessionKeyStore.lock(false);
+            });
+
+            await waitFor(() => {
+                expect(result.current.isVaultLocked).toBe(true);
+                expect(result.current.hydration).toBe("vault_locked");
+                expect(adapter.setEditable).toHaveBeenCalledWith(false);
+            });
+
+            // Wait past autosave debounce to confirm no server write was triggered
+            await new Promise((r) => setTimeout(r, 1200));
+            expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+
+            sessionKeyStore.purgeKeys(false);
         });
     });
 });

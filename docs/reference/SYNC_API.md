@@ -551,13 +551,14 @@ Volatile in-memory Master Key management with strict inactivity enforcement:
 ```typescript
 export class SessionKeyStore {
     public isUnlocked(): boolean;
-    public getMasterKey(): CryptoKey | null;
+    public getMasterKey(): CryptoKey | Uint8Array | null;
     public getMasterKeyRaw(): Uint8Array | null;
-    public setMasterKey(key: Uint8Array): void;
-    public storeMasterKeyRaw(key: Uint8Array): void;
-    public lock(): void;
-    public purgeKeys(): void;
+    public setMasterKey(key: CryptoKey | Uint8Array, keyVersion?: number): void;
+    public storeMasterKeyRaw(key: Uint8Array, timeoutSeconds?: number): void;
+    public lock(broadcast?: boolean): void;
+    public purgeKeys(broadcast?: boolean): void;
     public touch(): void;
+    public destroy(): void;
     public subscribe(listener: KeyStoreListener): () => void;
 }
 ```
@@ -566,4 +567,5 @@ export class SessionKeyStore {
 1. **Volatile RAM Only**: Raw Master Key bytes (`masterKeyRaw`) and derived WebCrypto keys are held strictly in memory and are never serialized to `localStorage`, `sessionStorage`, or `IndexedDB`.
 2. **Deterministic Auto-Lock**: Enforces a strict 1-hour inactivity window (3,600,000 ms). `storeMasterKeyRaw(key)` operates purely in memory without allowing callers to mutate the global inactivity timeout.
 3. **Caller Buffer Independence**: Modals and derivation routines wipe their local key buffers (`wipeBuffer(localKey)`) in `finally` blocks without zeroing the persistent `masterKeyRaw` instance held within `SessionKeyStore`.
+4. **Cross-Tab Volatile RAM Purge Synchronization**: When `lock()` or `purgeKeys()` is invoked (or upon inactivity timeout expiration via `isUnlocked()`), a `vault_locked` broadcast event is dispatched across sibling tabs via `BroadcastChannel('textai_cross_tab_sync')`. All sibling tabs immediately sanitize volatile RAM via `wipeBuffer()` (`.fill(0)`) and transition to locked state without re-broadcasting, preventing echo loops.
 

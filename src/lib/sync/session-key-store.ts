@@ -11,6 +11,7 @@
 import { wipeBuffer } from './crypto-worker-bridge';
 import { SessionKeyStoreError } from './types/vault';
 import { sanitizeLogValue } from './log-sanitizer';
+import { broadcastCrossTabEvent, subscribeCrossTabSync } from './cross-tab-sync';
 
 export type KeyStoreListener = (isUnlocked: boolean) => void;
 
@@ -35,11 +36,33 @@ export class SessionKeyStore {
   private inactivityTimeoutMs = 60 * 60 * 1000; // 1 hour default (3,600,000 ms)
   private lastActivityTimestamp = 0;
   private listeners = new Set<KeyStoreListener>();
+  private _unsubCrossTab?: () => void;
 
   constructor(config: SessionKeyStoreConfig = {}) {
     if (config.inactivityTimeoutMs !== undefined) {
       this.inactivityTimeoutMs = config.inactivityTimeoutMs;
     }
+
+    // Cross-tab vault lock synchronization
+    if (typeof window !== 'undefined') {
+      this._unsubCrossTab = subscribeCrossTabSync((event) => {
+        if (event.type === 'vault_locked') {
+          this.lock(false); // Purge locally without re-broadcasting
+        }
+      });
+    }
+  }
+
+  /**
+   * Cleans up cross-tab synchronization subscriptions and clears listeners
+   */
+  public destroy(): void {
+    if (this._unsubCrossTab) {
+      this._unsubCrossTab();
+      this._unsubCrossTab = undefined;
+    }
+    this.purgeKeys(false);
+    this.listeners.clear();
   }
 
   /**
@@ -196,25 +219,33 @@ export class SessionKeyStore {
   }
 
   /**
-   * Purges master key only and transitions vault state to locked
+   * Purges master key only and transitions vault state to locked.
+   * Broadcasts vault_locked event across tabs unless broadcast is set to false.
    */
-  public lock(): void {
+  public lock(broadcast = true): void {
     const wasUnlocked = this.masterKey !== null || this.masterKeyRaw !== null;
     this.purgeMasterKey();
     if (wasUnlocked) {
       this.notifyListeners(false);
+      if (broadcast && typeof window !== 'undefined') {
+        broadcastCrossTabEvent({ type: 'vault_locked' });
+      }
     }
   }
 
   /**
-   * Purges all keys (Master Key & Local Device Key) and zeroes volatile RAM
+   * Purges all keys (Master Key & Local Device Key) and zeroes volatile RAM.
+   * Broadcasts vault_locked event across tabs unless broadcast is set to false.
    */
-  public purgeKeys(): void {
+  public purgeKeys(broadcast = true): void {
     const wasUnlocked = this.masterKey !== null || this.masterKeyRaw !== null;
     this.purgeMasterKey();
     this.purgeLocalDeviceKey();
     if (wasUnlocked) {
       this.notifyListeners(false);
+      if (broadcast && typeof window !== 'undefined') {
+        broadcastCrossTabEvent({ type: 'vault_locked' });
+      }
     }
   }
 
