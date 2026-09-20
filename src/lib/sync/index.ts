@@ -56,8 +56,8 @@ export { concurrencyManager, ConcurrencyManager } from './concurrency-manager';
 export type { LockStatus } from './concurrency-manager';
 
 // Sync Manager
-export { syncManager, SyncManager, createSyncManager } from './sync-manager';
-export type { SyncStatus, FileSyncResult, SyncResult, SyncStatusCallback, ConflictCallback, SyncManagerConfig, RemoteUpdateEvent, RemoteUpdateCallback } from './sync-manager';
+export { syncManager, SyncManager, createSyncManager, MAX_QUARANTINED_CONFLICTS } from './sync-manager';
+export type { SyncStatus, FileSyncResult, SyncResult, SyncStatusCallback, ConflictCallback, SyncManagerConfig, RemoteUpdateEvent, RemoteUpdateCallback, QuarantineDiagnostics } from './sync-manager';
 
 // Conflict Resolution
 export { conflictResolver, ConflictResolver } from './conflict-resolver';

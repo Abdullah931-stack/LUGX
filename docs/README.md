@@ -57,7 +57,7 @@ docs/
 | Document | Scope |
 | :--- | :--- |
 | [SYNC_API.md](./reference/SYNC_API.md) | REST contract for `/api/files/sync` and `/api/files/:id`, client-side sync events, cryptographic interfaces, `LogSanitizer`, `SyncErrorHandler` & `SyncPerformanceMonitor` contracts |
-| [SYNC_ARCHITECTURE.md](./reference/SYNC_ARCHITECTURE.md) | Layered sync system overview with Mermaid architecture & sequence flows, actual `useSync` hook contract, Phase 4 sync components, `SyncCryptoGateway`, `LogSanitizer`, and volatile caller buffer wiping |
+| [SYNC_ARCHITECTURE.md](./reference/SYNC_ARCHITECTURE.md) | Layered sync system overview with Mermaid architecture & sequence flows, actual `useSync` hook contract, Phase 23 quarantine backpressure & diagnostics governance, `SyncCryptoGateway`, `LogSanitizer`, and volatile caller buffer wiping |
 | [SYNC_SYSTEM.md](./reference/SYNC_SYSTEM.md) | Original sync delivery snapshot *(historical banner inside)* |
 | [UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md](./reference/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md) | G1–G11 readiness-gate compliance matrix, dual atomicity model, feature flags |
 | [test-database-isolation.md](./reference/test-database-isolation.md) | Phase 10: isolated Neon test branch — fail-closed guard, `test` vs `test:live` split, CI multi-stage pipeline, closure evidence |

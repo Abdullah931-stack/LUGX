@@ -102,6 +102,15 @@ sequenceDiagram
 ### 2.7 Non-Blocking Encrypted Conflict Isolation (`CONFLICT_LOCKED`)
 - **Isolation State**: When a 412 Precondition Failed or 409 Conflict occurs on an encrypted file while the user's vault is locked (`!sessionKeyStore.isVaultUnlocked()`), the conflict cannot be decrypted or auto-merged in background queues without Master Key exposure. The engine isolates it into `pendingEncryptedConflicts` tagged with `CONFLICT_LOCKED`.
 - **Non-Blocking Invariant**: `pushDirtyFiles` explicitly filters out `!this.pendingEncryptedConflicts.has(file.id)`. Other unencrypted dirty documents synchronize concurrently without being stalled or blocked by locked encrypted files.
+- **Quarantine Capacity & Backpressure Governance (Phase 23)**:
+  - Bounded memory quarantine via `MAX_QUARANTINED_CONFLICTS = 100`.
+  - False-eviction immunity: updating an existing quarantined file never evicts other documents (`!has(conflict.fileId)` check).
+  - Deterministic $O(N)$ linear scan evicts the oldest conflict (`detectedAt`) when capacity is exceeded without intermediate array allocations.
+- **Observability & Diagnostics**: `getQuarantineDiagnostics()` returns `QuarantineDiagnostics` tracking total quarantined count, stale count (> 24 hours), oldest/newest timestamps, and capacity state.
+- **Atomic Discard & Cleanup**: `discardPendingEncryptedConflict(fileId)` safely cancels an isolated conflict under `concurrencyManager.withLock` mutual exclusion:
+  1. Evicts entry from `pendingEncryptedConflicts`.
+  2. Cleans up in-memory checkpoints in `SyncRollback`.
+  3. Transitions linked operations in IndexedDB to `'discarded'`, strictly preserving `localFile.isDirty` to prevent silent user edit data loss (`DATA-SAFETY GUARD`).
 - **Unlock Event & Auto-Resolution**: When the user unlocks the vault, `resolvePendingEncryptedConflict(fileId)` automatically:
   1. Decrypts `remoteEnvelope`, `localEnvelope`, and `baseEnvelope` in RAM using the Master Key.
   2. Runs 3-way Diff3 merge via `conflictResolver.attemptThreeWayMerge`.

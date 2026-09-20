@@ -123,6 +123,22 @@ export interface SyncManagerConfig {
 }
 
 /**
+ * Maximum number of quarantined encrypted conflicts held in-memory before backpressure eviction
+ */
+export const MAX_QUARANTINED_CONFLICTS = 100;
+
+/**
+ * Diagnostics and metrics for isolated encrypted conflicts
+ */
+export interface QuarantineDiagnostics {
+    totalQuarantined: number;
+    staleCount: number;             // Conflicts quarantined for longer than 24 hours
+    oldestQuarantinedAt: number | null;  // Timestamp ms
+    newestQuarantinedAt: number | null;  // Timestamp ms
+    isAtCapacity: boolean;          // True if quarantine has reached capacity limit
+}
+
+/**
  * Sync Manager Class
  * Manages user-scoped synchronization operations and lifecycle
  */
@@ -381,6 +397,109 @@ class SyncManager {
                 console.error('[SyncManager] Error in encrypted conflict listener:', err);
             }
         }
+    }
+
+    /**
+     * Add an encrypted conflict to quarantine with deterministic capacity enforcement (FIFO eviction of oldest).
+     */
+    quarantineEncryptedConflict(conflict: PendingEncryptedConflict): void {
+        const isNewConflict = !this.pendingEncryptedConflicts.has(conflict.fileId);
+        if (isNewConflict && this.pendingEncryptedConflicts.size >= MAX_QUARANTINED_CONFLICTS) {
+            let oldestKey: string | null = null;
+            let oldestTime = Infinity;
+
+            for (const [key, item] of this.pendingEncryptedConflicts.entries()) {
+                const rawDate = item.detectedAt;
+                const time = rawDate instanceof Date ? rawDate.getTime() : new Date(rawDate).getTime();
+                if (time < oldestTime) {
+                    oldestTime = time;
+                    oldestKey = key;
+                }
+            }
+
+            if (oldestKey) {
+                console.warn(`[SyncManager] Quarantine at capacity (${MAX_QUARANTINED_CONFLICTS}), evicting oldest: ${oldestKey}`);
+                this.pendingEncryptedConflicts.delete(oldestKey);
+            }
+        }
+        this.pendingEncryptedConflicts.set(conflict.fileId, conflict);
+        this.notifyEncryptedConflictLocked(conflict);
+    }
+
+    /**
+     * Get diagnostics and backpressure metrics for quarantined encrypted conflicts.
+     */
+    getQuarantineDiagnostics(): QuarantineDiagnostics {
+        const conflicts = Array.from(this.pendingEncryptedConflicts.values());
+        const totalQuarantined = conflicts.length;
+
+        if (totalQuarantined === 0) {
+            return {
+                totalQuarantined: 0,
+                staleCount: 0,
+                oldestQuarantinedAt: null,
+                newestQuarantinedAt: null,
+                isAtCapacity: false,
+            };
+        }
+
+        const now = Date.now();
+        const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+        let staleCount = 0;
+        let oldest = Infinity;
+        let newest = -Infinity;
+
+        for (const conflict of conflicts) {
+            const rawDate = conflict.detectedAt;
+            const time = rawDate instanceof Date ? rawDate.getTime() : new Date(rawDate).getTime();
+            if (!Number.isNaN(time)) {
+                if (now - time > TWENTY_FOUR_HOURS_MS) {
+                    staleCount++;
+                }
+                if (time < oldest) oldest = time;
+                if (time > newest) newest = time;
+            }
+        }
+
+        return {
+            totalQuarantined,
+            staleCount,
+            oldestQuarantinedAt: Number.isFinite(oldest) ? oldest : null,
+            newestQuarantinedAt: Number.isFinite(newest) ? newest : null,
+            isAtCapacity: totalQuarantined >= MAX_QUARANTINED_CONFLICTS,
+        };
+    }
+
+    /**
+     * Safely discard an isolated encrypted conflict, cleaning up memory, rollback checkpoints,
+     * and marking associated operations in IndexedDB as discarded under concurrency lock.
+     */
+    async discardPendingEncryptedConflict(fileId: string): Promise<void> {
+        return concurrencyManager.withLock(fileId, async () => {
+            // 1. Remove conflict from RAM map
+            this.pendingEncryptedConflicts.delete(fileId);
+
+            // 2. Clean up associated checkpoints
+            const checkpoints = this.rollback.getFileCheckpoints(fileId);
+            for (const cp of checkpoints) {
+                this.rollback.removeCheckpoint(cp.id);
+            }
+
+            // 3. Clean up associated operations in IndexedDB
+            // Note: updateOperationStatus requires operationId, not fileId
+            try {
+                const operations = await this.idb.getOperations(fileId);
+                for (const op of operations) {
+                    const opId = op.operationId || op.id;
+                    if (op.status === 'conflict' || op.status === 'queued' || (op.status as string) === 'pending') {
+                        await this.idb.updateOperationStatus(opId, 'discarded');
+                    }
+                }
+            } catch (idbError) {
+                // Non-blocking: RAM cleanup succeeded, IDB cleanup is best-effort
+                console.warn(`[SyncManager] IDB cleanup failed for discarded conflict ${fileId}:`, idbError);
+            }
+        });
     }
 
     /**
@@ -1474,8 +1593,7 @@ class SyncManager {
                     detectedAt: new Date(),
                 };
 
-                this.pendingEncryptedConflicts.set(localFile.id, pendingConflict);
-                this.notifyEncryptedConflictLocked(pendingConflict);
+                this.quarantineEncryptedConflict(pendingConflict);
 
                 return { fileId: serverFile.id, success: false, action: 'conflict' as const, error: 'CONFLICT_LOCKED' };
             }

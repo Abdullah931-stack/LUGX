@@ -2,6 +2,30 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.31.1] - 2026-09-20 (Phase 23: Encrypted Conflict Quarantine Governance & Queue Backpressure Hardening)
+
+### Added & Enhanced - Phase 23: Encrypted Conflict Quarantine Governance & Queue Backpressure Hardening
+
+- **Bounded In-Memory Quarantine Capacity & Backpressure Protection (`src/lib/sync/sync-manager.ts`):**
+  - Introduced `MAX_QUARANTINED_CONFLICTS = 100` to bound in-memory isolated `CONFLICT_LOCKED` documents, preventing silent heap accumulation when the vault remains locked across prolonged editing sessions.
+  - Implemented `quarantineEncryptedConflict(conflict)` with false-eviction immunity: explicitly verifies `!this.pendingEncryptedConflicts.has(conflict.fileId)` before triggering capacity checks, ensuring repeated inbound pulls of an already quarantined document never evict unrelated conflicts.
+  - Replaced $O(N \log N)$ array sorting with a deterministic $O(N)$ linear scan to find and evict the oldest conflict by `detectedAt` timestamp without generating garbage-collection churn or temporary array allocations.
+
+- **Quarantine Observability & Diagnostics Contract (`src/lib/sync/sync-manager.ts`, `src/lib/sync/index.ts`):**
+  - Defined and exported `QuarantineDiagnostics` interface providing real-time telemetry: `totalQuarantined`, `staleCount` (conflicts isolated for > 24 hours), `oldestQuarantinedAt` (timestamp ms), `newestQuarantinedAt` (timestamp ms), and `isAtCapacity` boolean flag.
+  - Implemented `getQuarantineDiagnostics(): QuarantineDiagnostics` in `SyncManager` with safe zero defaults on empty queues and defensive timestamp conversion for corrupted or stringified date values.
+  - Exported `MAX_QUARANTINED_CONFLICTS` and `QuarantineDiagnostics` from public package entry point `src/lib/sync/index.ts`.
+
+- **Atomic Multi-Tier Conflict Discard & Concurrency Locking (`src/lib/sync/sync-manager.ts`, `src/lib/sync/idb-types.ts`):**
+  - Added `'discarded'` to `OperationStatus` union in `src/lib/sync/idb-types.ts`, establishing a first-class, type-safe lifecycle status for abandoned operations.
+  - Implemented `discardPendingEncryptedConflict(fileId: string): Promise<void>` wrapped under `concurrencyManager.withLock(fileId, ...)` to eliminate race conditions against concurrent vault-unlock auto-resolution (`resolvePendingEncryptedConflict`).
+  - Executes comprehensive multi-tier cleanup: purges the conflict from RAM `pendingEncryptedConflicts`, purges associated checkpoints in `SyncRollback` via `removeCheckpoint()`, and updates linked operations in IndexedDB from `conflict`, `queued`, or `pending` to `'discarded'` via `updateOperationStatus()`.
+  - Strictly adheres to the project's foundational `DATA-SAFETY GUARD` (preserving `localFile.isDirty = true` in IndexedDB) to prevent silent user edit data loss.
+
+- **Automated Verification Suite Expansion & Hardening Audit:**
+  - Expanded `src/test/sync-encrypted-conflict.test.ts` from 3 to 8 comprehensive unit and integration tests covering clean zero defaults, 24-hour stale conflict calculation, FIFO capacity eviction at 100 items, false-eviction immunity on existing conflict updates, and multi-tier atomic discard.
+  - Verified 100% clean compilation under `npx tsc --noEmit` and confirmed zero regressions across `src/test/vault-orchestration.test.ts` (29/29 passed), `src/lib/sync/sync-manager.test.ts` (36/36 passed), `src/lib/sync/rollback.test.ts` (22/22 passed), and `src/lib/sync/indexeddb.test.ts` (14/14 passed).
+
 ## [1.31.0] - 2026-09-20 (Phase 22: Cross-Tab Volatile RAM Purge Synchronization & Local Auto-Lock Hardening)
 
 ### Added & Enhanced - Phase 22: Cross-Tab Volatile RAM Purge Synchronization

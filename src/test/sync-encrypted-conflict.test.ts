@@ -10,7 +10,10 @@ import {
     encryptEnvelope, sessionKeyStore, wipeBuffer,
     arrayBufferToBase64, validateMarkdownSyntaxIntegrity,
     conflictResolver, generateEncryptedETagSync,
+    MAX_QUARANTINED_CONFLICTS,
+    SyncRollback, IndexedDBManager,
     type EncryptedEnvelope,
+    type QuarantineDiagnostics,
 } from '../lib/sync';
 import { SyncManager } from '../lib/sync/sync-manager';
 const ITER = 5000;
@@ -126,4 +129,245 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
         expect(validateMarkdownSyntaxIntegrity(corruptedLocal).isValid).toBe(false);
         wipeBuffer(key);
     });
+
+    describe('Phase 23: Encrypted Conflict Quarantine Governance & Backpressure', () => {
+        it('returns zero defaults when quarantine is empty', () => {
+            const diag = mgr.getQuarantineDiagnostics();
+            expect(diag).toEqual({
+                totalQuarantined: 0,
+                staleCount: 0,
+                oldestQuarantinedAt: null,
+                newestQuarantinedAt: null,
+                isAtCapacity: false,
+            });
+        });
+
+        it('accurately calculates total, staleCount (> 24h), and timestamps', () => {
+            const now = Date.now();
+            const staleTime1 = new Date(now - 30 * 60 * 60 * 1000); // 30h ago (oldest)
+            const staleTime2 = new Date(now - 25 * 60 * 60 * 1000); // 25h ago
+            const freshTime = new Date(now - 2 * 60 * 60 * 1000);   // 2h ago (newest)
+
+            const dummyEnvelope: EncryptedEnvelope = {
+                version: 1,
+                algorithm: 'AES-GCM-256',
+                keyId: 'master-v1',
+                iv: 'iv',
+                salt: 'salt',
+                ciphertext: 'ciphertext',
+                kdfIterations: 600000,
+            };
+
+            mgr.quarantineEncryptedConflict({
+                fileId: 'file-stale-1',
+                remoteEnvelope: dummyEnvelope,
+                baseEnvelope: dummyEnvelope,
+                localEnvelope: dummyEnvelope,
+                remoteEtag: 'etag-1',
+                detectedAt: staleTime1,
+            });
+            mgr.quarantineEncryptedConflict({
+                fileId: 'file-stale-2',
+                remoteEnvelope: dummyEnvelope,
+                baseEnvelope: dummyEnvelope,
+                localEnvelope: dummyEnvelope,
+                remoteEtag: 'etag-2',
+                detectedAt: staleTime2,
+            });
+            mgr.quarantineEncryptedConflict({
+                fileId: 'file-fresh-1',
+                remoteEnvelope: dummyEnvelope,
+                baseEnvelope: dummyEnvelope,
+                localEnvelope: dummyEnvelope,
+                remoteEtag: 'etag-3',
+                detectedAt: freshTime,
+            });
+
+            const diag: QuarantineDiagnostics = mgr.getQuarantineDiagnostics();
+            expect(diag.totalQuarantined).toBe(3);
+            expect(diag.staleCount).toBe(2);
+            expect(diag.oldestQuarantinedAt).toBe(staleTime1.getTime());
+            expect(diag.newestQuarantinedAt).toBe(freshTime.getTime());
+            expect(diag.isAtCapacity).toBe(false);
+        });
+
+        it('enforces MAX_QUARANTINED_CONFLICTS capacity by evicting oldest entry', () => {
+            const baseTime = Date.now() - 200000;
+            const dummyEnvelope: EncryptedEnvelope = {
+                version: 1,
+                algorithm: 'AES-GCM-256',
+                keyId: 'master-v1',
+                iv: 'iv',
+                salt: 'salt',
+                ciphertext: 'ct',
+                kdfIterations: 600000,
+            };
+
+            // Fill quarantine up to MAX_QUARANTINED_CONFLICTS (100)
+            for (let i = 0; i < MAX_QUARANTINED_CONFLICTS; i++) {
+                mgr.quarantineEncryptedConflict({
+                    fileId: `file-quarantine-${i}`,
+                    remoteEnvelope: dummyEnvelope,
+                    baseEnvelope: dummyEnvelope,
+                    localEnvelope: dummyEnvelope,
+                    remoteEtag: `etag-${i}`,
+                    detectedAt: new Date(baseTime + i * 1000), // file-quarantine-0 is oldest
+                });
+            }
+
+            const diagBefore = mgr.getQuarantineDiagnostics();
+            expect(diagBefore.totalQuarantined).toBe(MAX_QUARANTINED_CONFLICTS);
+            expect(diagBefore.isAtCapacity).toBe(true);
+            expect(mgr.isEncryptedConflictLocked('file-quarantine-0')).toBe(true);
+
+            // Adding 101st conflict triggers capacity eviction
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mgr.quarantineEncryptedConflict({
+                fileId: 'file-quarantine-newest',
+                remoteEnvelope: dummyEnvelope,
+                baseEnvelope: dummyEnvelope,
+                localEnvelope: dummyEnvelope,
+                remoteEtag: 'etag-newest',
+                detectedAt: new Date(baseTime + (MAX_QUARANTINED_CONFLICTS + 10) * 1000),
+            });
+
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining(`Quarantine at capacity (${MAX_QUARANTINED_CONFLICTS}), evicting oldest: file-quarantine-0`)
+            );
+            expect(mgr.isEncryptedConflictLocked('file-quarantine-0')).toBe(false);
+            expect(mgr.isEncryptedConflictLocked('file-quarantine-newest')).toBe(true);
+            expect(mgr.getQuarantineDiagnostics().totalQuarantined).toBe(MAX_QUARANTINED_CONFLICTS);
+            expect(mgr.getQuarantineDiagnostics().isAtCapacity).toBe(true);
+            warnSpy.mockRestore();
+        });
+
+        it('does not evict existing conflicts when an already quarantined file is updated at capacity', () => {
+            const baseTime = Date.now() - 200000;
+            const dummyEnvelope: EncryptedEnvelope = {
+                version: 1,
+                algorithm: 'AES-GCM-256',
+                keyId: 'master-v1',
+                iv: 'iv',
+                salt: 'salt',
+                ciphertext: 'ct',
+                kdfIterations: 600000,
+            };
+
+            for (let i = 0; i < MAX_QUARANTINED_CONFLICTS; i++) {
+                mgr.quarantineEncryptedConflict({
+                    fileId: `file-cap-${i}`,
+                    remoteEnvelope: dummyEnvelope,
+                    baseEnvelope: dummyEnvelope,
+                    localEnvelope: dummyEnvelope,
+                    remoteEtag: `etag-${i}`,
+                    detectedAt: new Date(baseTime + i * 1000),
+                });
+            }
+
+            expect(mgr.getQuarantineDiagnostics().totalQuarantined).toBe(MAX_QUARANTINED_CONFLICTS);
+            expect(mgr.isEncryptedConflictLocked('file-cap-0')).toBe(true);
+
+            // Re-quarantine file-cap-50 (already present)
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mgr.quarantineEncryptedConflict({
+                fileId: 'file-cap-50',
+                remoteEnvelope: dummyEnvelope,
+                baseEnvelope: dummyEnvelope,
+                localEnvelope: dummyEnvelope,
+                remoteEtag: 'etag-updated',
+                detectedAt: new Date(),
+            });
+
+            // file-cap-0 should NOT have been evicted
+            expect(warnSpy).not.toHaveBeenCalled();
+            expect(mgr.isEncryptedConflictLocked('file-cap-0')).toBe(true);
+            expect(mgr.isEncryptedConflictLocked('file-cap-50')).toBe(true);
+            expect(mgr.getQuarantineDiagnostics().totalQuarantined).toBe(MAX_QUARANTINED_CONFLICTS);
+            warnSpy.mockRestore();
+        });
+
+        it('discards conflict safely by purging memory, rollback checkpoints, and marking IDB operations discarded', async () => {
+            const discardFileId = 'file-discard-test-1';
+            const dummyEnvelope: EncryptedEnvelope = {
+                version: 1,
+                algorithm: 'AES-GCM-256',
+                keyId: 'master-v1',
+                iv: 'iv',
+                salt: 'salt',
+                ciphertext: 'ct',
+                kdfIterations: 600000,
+            };
+
+            const idb = (mgr as unknown as { idb: IndexedDBManager }).idb;
+            const rollback = (mgr as unknown as { rollback: SyncRollback }).rollback;
+
+            // 1. Setup file and checkpoint
+            await idb.saveFile({
+                id: discardFileId,
+                title: 'discard test file',
+                parentFolderId: null,
+                isFolder: false,
+                content: 'original content',
+                etag: 'etag-orig',
+                version: 1,
+                isDirty: true,
+                isEncrypted: true,
+                lastModified: Date.now(),
+                lastSyncedAt: 0,
+            });
+            await rollback.createCheckpoint(discardFileId, 'pre_sync');
+            expect(rollback.getFileCheckpoints(discardFileId).length).toBeGreaterThan(0);
+
+            // 2. Setup IDB operations for this file
+            await idb.addOperation({
+                id: 'op-discard-conflict',
+                operationId: 'op-discard-conflict',
+                fileId: discardFileId,
+                status: 'conflict',
+                operationType: 'update',
+                position: 0,
+                content: 'conflict edit',
+                timestamp: Date.now(),
+                synced: false,
+            });
+            await idb.addOperation({
+                id: 'op-discard-queued',
+                operationId: 'op-discard-queued',
+                fileId: discardFileId,
+                status: 'queued',
+                operationType: 'update',
+                position: 0,
+                content: 'queued edit',
+                timestamp: Date.now(),
+                synced: false,
+            });
+
+            // 3. Add to quarantine
+            mgr.quarantineEncryptedConflict({
+                fileId: discardFileId,
+                remoteEnvelope: dummyEnvelope,
+                baseEnvelope: dummyEnvelope,
+                localEnvelope: dummyEnvelope,
+                remoteEtag: 'etag-remote-disc',
+                detectedAt: new Date(),
+            });
+            expect(mgr.isEncryptedConflictLocked(discardFileId)).toBe(true);
+
+            // 4. Discard conflict
+            await mgr.discardPendingEncryptedConflict(discardFileId);
+
+            // 5. Verify multi-tier cleanup
+            expect(mgr.isEncryptedConflictLocked(discardFileId)).toBe(false);
+            expect(rollback.getFileCheckpoints(discardFileId).length).toBe(0);
+
+            const opConflict = await idb.getOperation('op-discard-conflict');
+            const opQueued = await idb.getOperation('op-discard-queued');
+            expect(opConflict?.status).toBe('discarded');
+            expect(opQueued?.status).toBe('discarded');
+
+            // 6. Graceful handling of non-existent conflict discard
+            await expect(mgr.discardPendingEncryptedConflict('file-never-existed')).resolves.toBeUndefined();
+        });
+    });
 });
+

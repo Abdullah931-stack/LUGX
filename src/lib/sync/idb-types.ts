@@ -77,7 +77,8 @@ export type OperationStatus =
     | 'failed'
     | 'conflict'
     | 'rollback_failed'
-    | 'dead_letter';
+    | 'dead_letter'
+    | 'discarded';
 
 /**
  * Represents a single edit operation for Operation Log

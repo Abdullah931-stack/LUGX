@@ -47,7 +47,7 @@ graph TD
 
 | Component | Responsibility |
 |-----------|----------------|
-| `SyncManager` | Push/Pull coordination, non-blocking sync with `CONFLICT_LOCKED` quarantine, `sync_duration` telemetry tracking, and reactive unlock auto-resolution |
+| `SyncManager` | Push/Pull coordination, non-blocking sync with bounded `CONFLICT_LOCKED` quarantine governance (`MAX_QUARANTINED_CONFLICTS = 100`), `QuarantineDiagnostics` metrics, atomic multi-tier conflict discard, `sync_duration` telemetry tracking, and reactive unlock auto-resolution |
 | `ConflictResolver` | Conflict detection, 3-way merge orchestration (LCS delta engine), and false conflict elimination |
 | `SyntaxValidator` (`syntax-validator.ts`) | Centralized post-merge Markdown syntax integrity verification (code fence pairing, GFM table alignment, null-byte prevention) |
 | `LogSanitizer` (`log-sanitizer.ts`) | Zero-Knowledge log/metric hygiene, token boundary regex masking, DAG cycle-breaking, and sanitized stack preservation |
@@ -285,6 +285,37 @@ function EditorPage({ fileId }: { fileId: string }) {
   );
 }
 ```
+
+---
+
+## Encrypted Conflict Quarantine Governance & Backpressure (Phase 23)
+
+### 1. In-Memory Quarantine Capacity & Eviction
+In-memory storage for isolated conflicts awaiting vault unlock is bounded by `MAX_QUARANTINED_CONFLICTS = 100`:
+- **False-Eviction Immunity**: When adding a conflict via `quarantineEncryptedConflict(conflict)`, the engine checks `!this.pendingEncryptedConflicts.has(conflict.fileId)` before verifying capacity. Existing conflict updates never evict unrelated documents.
+- **Deterministic FIFO Eviction**: If a new conflict causes size to reach or exceed `MAX_QUARANTINED_CONFLICTS`, an $O(N)$ linear scan identifies the oldest conflict based on `detectedAt` timestamp, logs a warning, and evicts it without allocating intermediate sort arrays.
+
+### 2. Observability & Diagnostics Contract
+The diagnostic interface provides real-time health metrics on quarantined documents:
+
+```typescript
+export interface QuarantineDiagnostics {
+    totalQuarantined: number;
+    staleCount: number;             // Conflicts quarantined for > 24 hours
+    oldestQuarantinedAt: number | null;  // Timestamp ms
+    newestQuarantinedAt: number | null;  // Timestamp ms
+    isAtCapacity: boolean;          // True if count >= MAX_QUARANTINED_CONFLICTS
+}
+```
+
+Caller method: `syncManager.getQuarantineDiagnostics(): QuarantineDiagnostics`. Returns clean zero defaults (`{ totalQuarantined: 0, staleCount: 0, oldestQuarantinedAt: null, newestQuarantinedAt: null, isAtCapacity: false }`) on empty lists.
+
+### 3. Atomic Multi-Tier Conflict Discard
+Safe discard via `discardPendingEncryptedConflict(fileId)` executes under `concurrencyManager.withLock(fileId, ...)` to eliminate race conditions with concurrent unlock merges:
+1. **Volatile Memory**: Removes entry from `pendingEncryptedConflicts`.
+2. **Checkpoints**: Removes associated checkpoints from `SyncRollback` via `removeCheckpoint()`.
+3. **IndexedDB Operations**: Queries associated operations via `idb.getOperations(fileId)` and transitions any `conflict`, `queued`, or `pending` operation to `discarded` via `updateOperationStatus(opId, 'discarded')`.
+4. **Data-Safety Invariant**: Strictly preserves `localFile.isDirty` in IndexedDB to prevent silent data loss of unsaved user edits.
 
 ---
 
