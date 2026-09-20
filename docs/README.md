@@ -1,151 +1,237 @@
-# LUGX Documentation — Master Index
+# LUGX Documentation — Master Structural Index
 
 This index maps every document under `docs/`. It is a **structural map only**:
 operational documentation rules live outside this file — see
-[DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) for the
-repository-visible standards (enforced locally via `.agents/rules/`). Source
-code and tests remain the single source of truth for all technical claims.
+[DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) for repository-visible
+authoring standards (enforced locally via `.agents/rules/`). Source code and
+automated tests remain the single source of truth for all technical claims.
 
 ---
 
-## 1. Directory Map
+## 1. Directory Tree Map
 
 ```
 docs/
-├── README.md                    ← you are here (structural master index)
-├── DOCUMENTATION_GUIDELINES.md  ← repository-visible authoring standards
-├── CHANGELOG.md                 ← release history
-├── TECHNICAL_DEBT_REGISTER.md   ← living debt & decision register
-├── Plans/                       ← code-derived roadmap & technical execution plans
-├── architecture/                ← subsystem designs, protocols, state machines
-├── reference/                   ← API references & implementation specs
-│   └── phase-16/                ← Phase 16: Hybrid Encryption & Zero-Knowledge Vault closure records
-├── specs/                       ← design blueprints & requirements
-├── guides/                      ← how-to guides & feature walkthroughs
-├── records/                     ← dated engineering records (immutable history)
-└── foundation/                  ← founding pre-implementation design record (immutable)
+├── README.md                          ← you are here (structural master index)
+├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
+├── CHANGELOG.md                       ← release history (v1.0.0 through v1.31.2)
+├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-12)
+│
+├── architecture/                      ← subsystem designs, protocols, state machines
+│   ├── sync/                          ← offline-first sync engine, concurrency & storage
+│   ├── ai/                            ← Gemini LLM streaming, atomic commit & quota lifecycle
+│   └── security/                      ← rate limiting, edge proxy, crypto workers & ZK log masking
+│
+├── reference/                         ← living API contracts, hooks & testing runner specifications
+│   ├── sync-api.md                    ← REST contracts for /api/files/sync & client hook contracts
+│   ├── ui-streaming-readiness.md      ← G1–G11 readiness-gate compliance matrix
+│   └── test-database-isolation.md     ← isolated Neon test runner & fail-closed guard specification
+│
+├── guides/                            ← operational how-to guides & feature walkthroughs
+│   ├── billing/                       ← Stripe products, webhooks & checkout lifecycle
+│   ├── editor/                        ← CodeMirror 6 UI enhancements, search/replace & export guide
+│   └── ai/                            ← decoupled Gemini model configuration via models.config.json
+│
+├── specs/                             ← living technical specifications & design blueprints
+│   ├── ai-key-rotation-and-resilience.md
+│   ├── offline-sync-blueprint.md      ← foundational blueprint for IndexedDB offline synchronization
+│   └── ui-streaming-requirements.md
+│
+├── Plans/                             ← official tracked technical execution plans (English)
+│   ├── TECHNICAL_EXECUTION_PLAN.md    ← code-based execution plan (Phases 1–20 closed)
+│   ├── HYBRID_ENCRYPTION_AND_VAULT_PLAN.md ← zero-knowledge vault execution plan (closed)
+│   ├── MARKDOWN_EDITOR_MIGRATION_PLAN.md   ← CodeMirror 6 migration plan (closed)
+│   └── PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md ← production hardening plan (M6 closed)
+│
+├── records/                           ← engineering records, incidents, audits & closures
+│   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md)
+│   ├── audits/                        ← verification audit records (W10-Final-Closure-Round.md)
+│   ├── closures/                      ← official milestone & phase closure dossiers (Phases 1–20)
+│   │   ├── phase-01-to-06-markdown-editor/
+│   │   ├── phase-11-to-15-core-infrastructure/
+│   │   ├── phase-16-vault-encryption/
+│   │   ├── phase-17-to-20-production-readiness/
+│   │   └── extensions/                ← pdf worker extraction & vault import closure
+│   └── archive/                       ← legacy development logs & superseded delivery snapshots
+│
+├── foundation/                        ← founding pre-implementation baseline record (strictly immutable)
+│   ├── DESIGN_VS_REALITY.md           ← living divergence tracker measuring design vs reality
+│   ├── Project_Structure.md
+│   ├── System Architecture Design.md
+│   ├── Product Requirements Document (PRD).md
+│   ├── LUGX platform subscription plans.md
+│   ├── UI_UX Guidelines.md
+│   ├── Implementation_Master_Plan.md
+│   └── Using AI/                      ← original prompt specs (AI Key Document, correct, improve...)
+│
+└── .Plans/                            ← internal candidate planning incubator (Arabic, untracked via .gitignore)
 ```
 
 ---
 
 ## 2. Document Index
 
-### Plans (`Plans/`) — verified roadmap & technical execution plans
+### 2.1. Central Registers (`docs/`)
+
+| Document | Scope & Purpose |
+| :--- | :--- |
+| [README.md](./README.md) | Structural master index mapping every document in the repository |
+| [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.31.2 |
+| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-12) |
+
+---
+
+### 2.2. Architecture (`architecture/`) — Living Subsystem Documentation
+
+#### Sync & Storage Engine (`architecture/sync/`)
 
 | Document | Scope |
 | :--- | :--- |
-| [TECHNICAL_EXECUTION_PLAN.md](./Plans/TECHNICAL_EXECUTION_PLAN.md) | Code-based technical execution plan covering all 20 phases (all 20 phases closed, technical plan fully completed) |
-| [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](./Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan (Milestones M1–M5 closed) |
-| [MARKDOWN_EDITOR_MIGRATION_PLAN.md](./Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6 closed) |
+| [sync-lifecycle-architecture.md](./architecture/sync/sync-lifecycle-architecture.md) | Offline sync lifecycle, user-scoped partitioning, explicit `SyncStatus` state machine, cryptographic gateway (`SyncCryptoGateway`) |
+| [queue-gc-rollback-architecture.md](./architecture/sync/queue-gc-rollback-architecture.md) | Operations queue, exponential backoff/dead-letter, state-safe GC, rollback isolation |
+| [three-way-conflict-resolution.md](./architecture/sync/three-way-conflict-resolution.md) | 3-way merge engine, base snapshots, false-conflict elimination, encrypted inbound gateway, conflict dialog, and centralized syntax validation |
+| [editor-sync-orchestration.md](./architecture/sync/editor-sync-orchestration.md) | Unified editor write controller: autosave gates, reconciliation, AI transaction guard, inbound remote decryption |
+| [file-ownership-and-versioning.md](./architecture/sync/file-ownership-and-versioning.md) | Server-side ownership enforcement, hierarchy safety, optimistic locking (412/428) |
+| [sync-architecture-overview.md](./architecture/sync/sync-architecture-overview.md) | Layered sync system overview with Mermaid architecture & sequence flows, actual `useSync` hook contract, Phase 23 quarantine backpressure & diagnostics governance |
 
-### Architecture (`architecture/`) — living subsystem documentation
-
-| Document | Scope |
-| :--- | :--- |
-| [sync-lifecycle-architecture.md](./architecture/sync-lifecycle-architecture.md) | Offline sync lifecycle, user-scoped partitioning, explicit `SyncStatus` state machine, cryptographic gateway (`SyncCryptoGateway`) |
-| [queue-gc-rollback-architecture.md](./architecture/queue-gc-rollback-architecture.md) | Operations queue, exponential backoff/dead-letter, state-safe GC, rollback isolation |
-| [three-way-conflict-resolution.md](./architecture/three-way-conflict-resolution.md) | 3-way merge engine, base snapshots, false-conflict elimination, encrypted inbound gateway (`SyncCryptoGateway`), conflict dialog, and centralized syntax validation (`syntax-validator.ts`) |
-| [file-ownership-and-versioning.md](./architecture/file-ownership-and-versioning.md) | Server-side ownership enforcement, hierarchy safety, optimistic locking (412/428) |
-| [ai-quota-reservation-lifecycle.md](./architecture/ai-quota-reservation-lifecycle.md) | AI quota reservations, deduplication, 24h key rotation, settlement matrix (§4-D) |
-| [ai-atomic-commit-architecture.md](./architecture/ai-atomic-commit-architecture.md) | Transactional AI commit binding file update + quota settlement + version guard |
-| [editor-sync-orchestration.md](./architecture/editor-sync-orchestration.md) | Unified editor write controller: autosave gates, reconciliation, AI transaction guard, inbound remote decryption |
-| [ai-streaming-protocol.md](./architecture/ai-streaming-protocol.md) | NDJSON wire protocol, session FSM, adversarial hardening |
-| [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, WebAuthn PRF Hardware Biometrics & 6-digit PIN Trusted Device KEK, AAD integrity, defensive RAM sanitization, device trust revocation via migration 0009, AI opt-in via migration 0010, Zero-Knowledge log hygiene & volatile caller RAM zeroing), cron purge |
-
-### Reference (`reference/`)
+#### AI LLM Subsystem (`architecture/ai/`)
 
 | Document | Scope |
 | :--- | :--- |
-| [SYNC_API.md](./reference/SYNC_API.md) | REST contract for `/api/files/sync` and `/api/files/:id`, client-side sync events, cryptographic interfaces, `LogSanitizer`, `SyncErrorHandler` & `SyncPerformanceMonitor` contracts |
-| [SYNC_ARCHITECTURE.md](./reference/SYNC_ARCHITECTURE.md) | Layered sync system overview with Mermaid architecture & sequence flows, actual `useSync` hook contract, Phase 23 quarantine backpressure & diagnostics governance, `SyncCryptoGateway`, `LogSanitizer`, and volatile caller buffer wiping |
-| [SYNC_SYSTEM.md](./reference/SYNC_SYSTEM.md) | Original sync delivery snapshot *(historical banner inside)* |
-| [UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md](./reference/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md) | G1–G11 readiness-gate compliance matrix, dual atomicity model, feature flags |
+| [ai-streaming-protocol.md](./architecture/ai/ai-streaming-protocol.md) | NDJSON wire protocol, session FSM, adversarial hardening |
+| [ai-quota-reservation-lifecycle.md](./architecture/ai/ai-quota-reservation-lifecycle.md) | AI quota reservations, deduplication, 24h key rotation, settlement matrix (§4-D) |
+| [ai-atomic-commit-architecture.md](./architecture/ai/ai-atomic-commit-architecture.md) | Transactional AI commit binding file update + quota settlement + version guard |
+
+#### Security & Rate Limiting (`architecture/security/`)
+
+| Document | Scope |
+| :--- | :--- |
+| [security-and-rate-limiting.md](./architecture/security/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, WebAuthn PRF Hardware Biometrics & 6-digit PIN, AAD integrity, RAM sanitization, device trust revocation via migration 0009, AI opt-in via migration 0010, Zero-Knowledge log hygiene & volatile RAM zeroing), cron purge |
+
+---
+
+### 2.3. Reference (`reference/`) — Living Technical Contracts
+
+| Document | Scope |
+| :--- | :--- |
+| [sync-api.md](./reference/sync-api.md) | REST contract for `/api/files/sync` and `/api/files/:id`, client-side sync events, cryptographic interfaces, `LogSanitizer`, `SyncErrorHandler` & `SyncPerformanceMonitor` contracts |
+| [ui-streaming-readiness.md](./reference/ui-streaming-readiness.md) | G1–G11 readiness-gate compliance matrix, dual atomicity model, feature flags |
 | [test-database-isolation.md](./reference/test-database-isolation.md) | Phase 10: isolated Neon test branch — fail-closed guard, `test` vs `test:live` split, CI multi-stage pipeline, closure evidence |
-| [phase-11-editor-orchestration-closure.md](./reference/phase-11-editor-orchestration-closure.md) | Phase 11 closure: hydration lifecycle, cold-start reconciliation matrix, offline-first contract, reload recovery |
-| [phase-12-auth-ownership-closure.md](./reference/phase-12-auth-ownership-closure.md) | Phase 12 closure: Open Redirect elimination, OAuth callback hardening, 404 anti-enumeration error mapping, atomic user sync |
-| [phase-13-stripe-webhooks-subscriptions-closure.md](./reference/phase-13-stripe-webhooks-subscriptions-closure.md) | Phase 13 & 21 closure: Multi-tiered distributed idempotency, Upstash Redis in-flight lock, durable ledger (`subscription_events`), atomic ACID transitions, terminal state protection, accurate period calculation |
-| [phase-14-supabase-storage-removal-closure.md](./reference/phase-14-supabase-storage-removal-closure.md) | Phase 14 closure: Dead-code elimination of unused Supabase Storage, database schema drop of `storage_path`, test fixtures clean-up |
-| [phase-15-sanitization-import-export-closure.md](./reference/phase-15-sanitization-import-export-closure.md) | Phase 15 closure: Magic bytes disguised binary detection (`file-validator.ts`), directory traversal sanitization (`import-file.ts`), and 100% high-fidelity round-trip verification |
-| [pdf-worker-extraction-and-vault-import-closure.md](./reference/pdf-worker-extraction-and-vault-import-closure.md) | Client-Side Web Worker PDF extraction, 2D spatial table reconstruction, Arabic Unicode normalizer, bilingual OCR engine, PUA font corruption detection, and direct Zero-Knowledge vault import |
-| [vault-phase-1-crypto-core-closure.md](./reference/phase-16/vault-phase-1-crypto-core-closure.md) | Vault Phase 1 closure: Isolated Crypto Worker, 600K PBKDF2 iterations, AES-GCM-256 with mandatory AAD binding, BIP-39 12-word seed, SessionKeyStore auto-lock, defensive RAM sanitization |
-| [vault-phase-2-schema-and-storage-closure.md](./reference/phase-16/vault-phase-2-schema-and-storage-closure.md) | Vault Phase 2 closure: PostgreSQL Cloud Schema, Transparent Encrypted IndexedDB, Zero Plaintext At-Rest, AAD binding, adversarial hardening & anti-overengineering decisions |
-| [vault-phase-3-ui-and-conversion-closure.md](./reference/phase-16/vault-phase-3-ui-and-conversion-closure.md) | Vault Phase 3 closure: Interactive Dark-Themed Vault Modals, Editor Orchestrator Gating (`vault_locked`), Web Worker Pre-Save Encryption, Offline-First Dynamic File Conversion Engine, Client-Side Re-Encrypted Copy, WebAuthn PRF Hardware Biometrics & 6-Digit PIN, PostgreSQL Migration 0009 & Comprehensive 160-Test Suite |
-| [vault-phase-4-ai-gates-sync-closure.md](./reference/phase-16/vault-phase-4-ai-gates-sync-closure.md) | Vault Phase 4 closure: Dual-Layer Zero-Knowledge AI Safety Gatekeepers (UI badge + HTTP 403 route + commit re-encryption), Non-Blocking Sync with Encrypted Conflict Isolation (`CONFLICT_LOCKED`), Strong Deterministic Encrypted ETag Generator, Markdown Syntax Integrity Validator (`syntax-validator.ts`), PostgreSQL Migration 0010 & 28-Test Suite |
-| [vault-phase-5-closure-test-matrix.md](./reference/phase-16/vault-phase-5-closure-test-matrix.md) | Vault Phase 5 closure: 10-Point Closure Test Matrix verification, Zero-Knowledge Log Sanitizer, Word-Boundary isolation, Volatile RAM Hygiene in modals, SessionKeyStore lock-in, and Official Plan Closure |
-| [phase-17-monitoring-rate-limiting-errors-closure.md](./reference/phase-17-monitoring-rate-limiting-errors-closure.md) | Phase 17 closure: Dual-mode rate limiting, distributed correlation ID tracking, automated quota reservation expiration cron (TD-02), and adversarial error handling hardening |
-| [phase-18-multi-system-integration-closure.md](./reference/phase-18-multi-system-integration-closure.md) | Phase 18 closure: Multi-system integration testing across sync, AI streaming, vault encryption, Stripe billing, document pipeline, and tenant isolation on isolated Neon branch |
-| [phase-19-browser-e2e-testing-closure.md](./reference/phase-19-browser-e2e-testing-closure.md) | Phase 19 closure: Browser-driven E2E testing (Playwright), 15 automated user journeys, zero flakiness verification, and resolution of TD-07 |
-| [phase-20-production-readiness-dossier.md](./reference/phase-20-production-readiness-dossier.md) | Phase 20 closure: Final verification dossier, 11-point gate verification matrix, applied migration audit, and 100% technical plan completion |
-| [phase-1-standalone-markdown-editor-closure.md](./reference/phase-1-standalone-markdown-editor-closure.md) | Phase 1 closure: Standalone CodeMirror 6 Markdown Editor, EditorAdapter, Bidi Line Plugin, 3 Direction Modes, Arabic/RTL safe decorations, live preview/source modes |
-| [phase-2-editor-replacement-tooling-closure.md](./reference/phase-2-editor-replacement-tooling-closure.md) | Phase 2 closure: TipTap replacement on editor page, EditorAdapter tooling integration, Multi-Range Search & Replace |
-| [phase-3-content-model-import-closure.md](./reference/phase-3-content-model-import-closure.md) | Phase 3 closure: Universal Markdown normalization (`normalizeMarkdownSource`), pure-MD import pipeline, ETag determinism |
-| [phase-4-sync-diff3-conflict-closure.md](./reference/phase-4-sync-diff3-conflict-closure.md) | Phase 4 closure: Markdown-native Diff3 3-way conflict resolution engine, syntax boundary protection |
-| [phase-5-ai-streaming-export-closure.md](./reference/phase-5-ai-streaming-export-closure.md) | Phase 5 closure: Markdown AI streaming, unified inline interactive preview widget (`CMStreamingGhostWidget`), pure exporters, lock self-healing |
-| [phase-6-tiptap-removal-final-verification-closure.md](./reference/phase-6-tiptap-removal-final-verification-closure.md) | Phase 6 closure: Complete TipTap dependency purge, standalone CodeMirror 6 plugins, comprehensive E2E verification |
 
-### Specifications (`specs/`)
+---
+
+### 2.4. Guides (`guides/`) — Operational How-To Guides
+
+#### Billing & Monetization (`guides/billing/`)
 
 | Document | Scope |
 | :--- | :--- |
-| [Plan for an improved synchronization system.md](./specs/Plan%20for%20an%20improved%20synchronization%20system.md) | Original offline-first blueprint: storage engine, background sync, roadmap M1–M8 |
-| [AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md](./specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md) | Circuit breaker states, key lifecycle, streaming watchdogs & terminality contract |
-| [UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md](./specs/UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md) | Requirements/invariants for ephemeral ghost preview & atomic undo |
+| [stripe-setup.md](./guides/billing/stripe-setup.md) | Stripe products, webhooks, env vars, test cards, go-live checklist |
+| [stripe-integration.md](./guides/billing/stripe-integration.md) | Payment flow, library functions, API routes, troubleshooting |
 
-### Guides (`guides/`)
+#### Markdown Editor & Ingestion (`guides/editor/`)
 
 | Document | Scope |
 | :--- | :--- |
-| [STRIPE_SETUP.md](./guides/STRIPE_SETUP.md) | Stripe products, webhooks, env vars, test cards, go-live checklist |
-| [STRIPE_INTEGRATION.md](./guides/STRIPE_INTEGRATION.md) | Payment flow, library functions, API routes, troubleshooting |
-| [AI_MODELS_CONFIG.md](./guides/AI_MODELS_CONFIG.md) | Decoupled Gemini model/hyperparameter configuration via `models.config.json` |
-| [Search_Replace_Feature.md](./guides/Search_Replace_Feature.md) | Editor search/replace behavior, debounce logic, shortcuts |
-| [Editor_UI_Enhancements.md](./guides/Editor_UI_Enhancements.md) | UI restructuring, copy/move file ops, dynamic statistics, text direction management menu, code block LTR locking, unified typography |
+| [editor-ui-enhancements.md](./guides/editor/editor-ui-enhancements.md) | UI restructuring, copy/move file ops, dynamic statistics, text direction management menu, code block LTR locking, unified typography |
+| [search-replace-feature.md](./guides/editor/search-replace-feature.md) | Editor search/replace behavior, debounce logic, shortcuts |
+| [data-export-guide.md](./guides/editor/data-export-guide.md) | Data export module architecture, Markdown & Plain Text strategies, factory patterns, and validation rules |
 
-### Records (`records/`) — immutable dated history
+#### AI Configuration (`guides/ai/`)
 
-| Document | Date / State |
+| Document | Scope |
 | :--- | :--- |
-| [test-database-safety.md](./records/test-database-safety.md) | Incident record & cleanup architecture — closed 2026-08-23 |
-| [Technical Fix Documentation — Security & Architecture Hardening.md](./records/Technical%20Fix%20Documentation%20%E2%80%94%20Security%20&%20Architecture%20Hardening.md) | W1–W8 hardening record — 2026-08-16 |
-| [Production Readiness Roadmap — M0-M5 Execution Record.md](./records/Production%20Readiness%20Roadmap%20%E2%80%94%20M0-M5%20Execution%20Record.md) | M0–M5 milestone record — 2026-08-16 |
-| [W10-Final-Closure-Round.md](./records/W10-Final-Closure-Round.md) | Concurrency-window closure F1–F3 — 2026-08-16 |
-| [SYNC_UNIT_TESTS_FIXES.md](./records/SYNC_UNIT_TESTS_FIXES.md) | Sync test-fix round — February 2026 |
+| [ai-models-config.md](./guides/ai/ai-models-config.md) | Decoupled Gemini model/hyperparameter configuration via `models.config.json` |
 
-### Foundation (`foundation/`) — founding pre-implementation design record
+---
+
+### 2.5. Specifications (`specs/`)
+
+| Document | Scope |
+| :--- | :--- |
+| [offline-sync-blueprint.md](./specs/offline-sync-blueprint.md) | Original offline-first blueprint: storage engine, background sync, roadmap M1–M8 |
+| [ai-key-rotation-and-resilience.md](./specs/ai-key-rotation-and-resilience.md) | Circuit breaker states, key lifecycle, streaming watchdogs & terminality contract |
+| [ui-streaming-requirements.md](./specs/ui-streaming-requirements.md) | Requirements/invariants for ephemeral ghost preview & atomic undo |
+
+---
+
+### 2.6. Plans (`Plans/`) — Official Tracked Execution Plans (English)
+
+| Document | Scope | Status |
+| :--- | :--- | :--- |
+| [TECHNICAL_EXECUTION_PLAN.md](./Plans/TECHNICAL_EXECUTION_PLAN.md) | Code-based technical execution plan covering all 20 phases | ✅ Closed |
+| [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](./Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan | ✅ Closed |
+| [MARKDOWN_EDITOR_MIGRATION_PLAN.md](./Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6) | ✅ Closed |
+| [PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md](./Plans/PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md) | Concurrency hardening, distributed webhook locks, RAM purge & conflict quarantine | ✅ Closed |
+
+> **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
+
+---
+
+### 2.7. Records (`records/`) — Engineering Records, Audits & Milestone Closures
+
+#### Incidents (`records/incidents/`)
+
+| Document | Scope / Date |
+| :--- | :--- |
+| [test-database-safety.md](./records/incidents/test-database-safety.md) | Unscoped test delete incident record, root cause, placeholder UUID architecture & cleanup guards — closed 2026-08-23 |
+
+#### Audits (`records/audits/`)
+
+| Document | Scope / Date |
+| :--- | :--- |
+| [W10-Final-Closure-Round.md](./records/audits/W10-Final-Closure-Round.md) | Concurrency-window closure F1 (SQL optimistic locking on `PUT /api/files/:id`) & Vitest `singleFork` serialization — 2026-08-16 |
+
+#### Milestone Closures (`records/closures/`)
+
+| Directory | Scope |
+| :--- | :--- |
+| [phase-01-to-06-markdown-editor/](./records/closures/phase-01-to-06-markdown-editor/) | Phase 1 to Phase 6 closure dossiers: standalone CodeMirror 6 editor, adapter, Diff3 merge, streaming export, and TipTap purge |
+| [phase-11-to-15-core-infrastructure/](./records/closures/phase-11-to-15-core-infrastructure/) | Phase 11 to Phase 15 closure dossiers: editor orchestration, auth ownership, Stripe webhooks, Supabase storage purge, and file sanitization |
+| [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
+| [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
+| [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report |
+
+#### Archive (`records/archive/`)
+
+| Document | Scope |
+| :--- | :--- |
+| [production-readiness-roadmap-m0-m5.md](./records/archive/production-readiness-roadmap-m0-m5.md) | Early milestone M0–M5 execution record (branch `production-readiness`, 2026-08-16) |
+| [technical-fix-documentation-security-hardening.md](./records/archive/technical-fix-documentation-security-hardening.md) | Early W1–W8 hardening record (branch `merge`, 2026-08-16) |
+| [sync-unit-tests-fixes.md](./records/archive/sync-unit-tests-fixes.md) | Early sync unit test fixes snapshot (February 2026) |
+| [sync-system-legacy-snapshot.md](./records/archive/sync-system-legacy-snapshot.md) | Legacy initial sync delivery snapshot with historical deprecation banner |
+
+---
+
+### 2.8. Foundation (`foundation/`) — Founding Baseline Record
 
 > **Immutable historical methodology record** — authored before any code was
-> written. Preserved verbatim (Arabic originals retained alongside English
-> translations where translated); it documents how the project's pillars were
+> written. Preserved verbatim; it documents how the project's pillars were
 > established, **not** the current system behavior. For divergences between this
 > founding design and the implemented reality, see
 > [`foundation/DESIGN_VS_REALITY.md`](./foundation/DESIGN_VS_REALITY.md).
 
 | Document | Scope |
 | :--- | :--- |
-| [Product Requirements Document (PRD).md](./foundation/Product%20Requirements%20Document%20%28PRD%29.md) | Product requirements: portals, subscriptions, editor tools, localization *(translated to English)* |
-| [System Architecture Design.md](./foundation/System%20Architecture%20Design.md) | Original architecture: IAM, data layer, key rotation system, tech stack, risk analysis *(translated to English)* |
+| [DESIGN_VS_REALITY.md](./foundation/DESIGN_VS_REALITY.md) | **Living Divergence Tracker:** Documents every architectural divergence between founding design and implemented reality |
+| [Product Requirements Document (PRD).md](./foundation/Product%20Requirements%20Document%20%28PRD%29.md) | Founding product requirements |
+| [System Architecture Design.md](./foundation/System%20Architecture%20Design.md) | Original architecture: IAM, data layer, key rotation, risk analysis |
 | [Project_Structure.md](./foundation/Project_Structure.md) | Planned directory tree and component responsibilities |
-| [Implementation_Master_Plan.md](./foundation/Implementation_Master_Plan.md) | Master implementation plan and build order |
+| [Implementation_Master_Plan.md](./foundation/Implementation_Master_Plan.md) | Founding master implementation plan |
 | [LUGX platform subscription plans.md](./foundation/LUGX%20platform%20subscription%20plans.md) | Tier definitions, quotas, pricing |
-| [UI_UX Guidelines.md](./foundation/UI_UX%20Guidelines.md) | Visual direction, design system, components, constraints *(translated to English)* |
-| [Using AI/AI Key Document.md](./foundation/Using%20AI/AI%20Key%20Document.md) | AI model matrix & generation parameters per operation *(translated to English)* |
+| [UI_UX Guidelines.md](./foundation/UI_UX%20Guidelines.md) | Visual direction, design system, components |
+| [Using AI/AI Key Document.md](./foundation/Using%20AI/AI%20Key%20Document.md) | AI model matrix & generation parameters per operation |
 | [Using AI/correct.md](./foundation/Using%20AI/correct.md) · `improve` · `summarize` · `toPrompt` · `translate` | Original system prompts (source material for `src/lib/ai/prompts.ts`) |
-
-### Root registers
-
-| Document | Scope |
-| :--- | :--- |
-| [CHANGELOG.md](./CHANGELOG.md) | Notable changes per release (append-only) |
-| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Known debt, accepted risks, decisions (TD-01 … TD-12) |
 
 ---
 
 ## 3. Suggested Reading Paths
 
-- **Onboarding:** repo-root `README.md` → this index → [SYNC_ARCHITECTURE.md](./reference/SYNC_ARCHITECTURE.md) → [STRIPE_SETUP.md](./guides/STRIPE_SETUP.md)
-- **Sync deep-dive:** `sync-lifecycle-architecture` → `queue-gc-rollback-architecture` → `three-way-conflict-resolution` → [SYNC_API.md](./reference/SYNC_API.md) → `editor-sync-orchestration`
-- **AI deep-dive:** `ai-streaming-protocol` → `ai-quota-reservation-lifecycle` → `ai-atomic-commit-architecture` → [AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md](./specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md)
-- **Security review:** [security-and-rate-limiting.md](./architecture/security-and-rate-limiting.md) → `file-ownership-and-versioning` → [test-database-safety.md](./records/test-database-safety.md)
+- **Onboarding:** repo-root `README.md` → this index → [sync-architecture-overview.md](./architecture/sync/sync-architecture-overview.md) → [stripe-setup.md](./guides/billing/stripe-setup.md)
+- **Sync deep-dive:** `sync-lifecycle-architecture` → `queue-gc-rollback-architecture` → `three-way-conflict-resolution` → [sync-api.md](./reference/sync-api.md) → `editor-sync-orchestration`
+- **AI deep-dive:** `ai-streaming-protocol` → `ai-quota-reservation-lifecycle` → `ai-atomic-commit-architecture` → [ai-key-rotation-and-resilience.md](./specs/ai-key-rotation-and-resilience.md)
+- **Security review:** [security-and-rate-limiting.md](./architecture/security/security-and-rate-limiting.md) → `file-ownership-and-versioning` → [test-database-safety.md](./records/incidents/test-database-safety.md)
 
 ---
 
@@ -164,7 +250,5 @@ act push --pull=false   # local containerized execution of the 7-stage CI workfl
 node scripts/verify-migrations.mjs     # test database migration & schema verification
 ```
 
-
 When citing results anywhere under `docs/`, follow the Evidence Discipline rules
 in [DOCUMENTATION_GUIDELINES.md §4](./DOCUMENTATION_GUIDELINES.md#4-evidence-discipline-mandatory).
-
