@@ -35,6 +35,7 @@ import {
 import type { TierName } from '@/config/tiers.config';
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
+import { redis } from '@/lib/redis';
 
 import {
     isEventProcessedInMemory,
@@ -50,6 +51,27 @@ export const dynamic = 'force-dynamic';
  * rejected even with a valid signature.
  */
 const MAX_TIMESTAMP_AGE_SECONDS = 300; // 5 minutes
+
+/**
+ * Maximum duration (in milliseconds) before a Redis REST call is aborted.
+ * Guarantees fast fail-open behavior so transient Redis latency never stalls
+ * the webhook handler beyond Stripe's delivery tolerance window.
+ */
+const REDIS_TIMEOUT_MS = 1500;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs = REDIS_TIMEOUT_MS): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+            const timer = setTimeout(() => {
+                reject(new Error(`Redis operation timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+            if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+                (timer as { unref: () => void }).unref();
+            }
+        }),
+    ]);
+}
 
 /**
  * Extracts and normalizes billing period dates for subscriptions.
@@ -492,6 +514,8 @@ async function handleInvoicePaymentFailed(
  * Main webhook handler (POST /api/stripe/webhook)
  */
 export async function POST(request: NextRequest) {
+    let lockKey = '';
+    let lockAcquired = false;
     try {
         // 1. Get raw body as text
         const body = await request.text();
@@ -537,16 +561,55 @@ export async function POST(request: NextRequest) {
 
         const eventId = event.id;
 
-        // 4. Idempotency Gate (Fast-path memory check + Authoritative DB check)
+        // 4. Idempotency Gate (Layered: L1 Memory -> L1.5 Redis Dedup -> L1.5 Redis Lock -> L2 Postgres DB)
+
+        // L1 — In-Memory Fast-Path Check
         if (isEventProcessedInMemory(eventId)) {
             console.log(`[WEBHOOK] Duplicate event ignored (in-memory): ${eventId}`);
             return NextResponse.json({ received: true, duplicate: true });
         }
 
+        // L1.5 — Durable Redis Deduplication Fast-Path Check (Checked BEFORE DB to shield Postgres)
+        try {
+            const dedupResult = await withTimeout(redis.get(`stripe:dedup:${eventId}`));
+            if (dedupResult === 'processed') {
+                console.log(`[WEBHOOK] Duplicate event ignored (Redis dedup cache): ${eventId}`);
+                markEventProcessedInMemory(eventId);
+                return NextResponse.json({ received: true, duplicate: true });
+            }
+        } catch (error) {
+            // Fail-Open: skip Redis dedup check on timeout/error
+            console.warn('[WEBHOOK] Redis dedup check error (failing open):', error);
+        }
+
+        // L1.5 — In-Flight Distributed Lock (Upstash Redis REST API with 1500ms timeout)
+        lockKey = `stripe:lock:${eventId}`;
+        try {
+            const lockResult = await withTimeout(redis.set(lockKey, '1', { nx: true, ex: 30 }));
+            if (lockResult === null) {
+                // Another worker is processing this exact event right now
+                console.log(`[WEBHOOK] Deduplicated by Redis lock: ${eventId}`);
+                return NextResponse.json({ received: true, deduplicated: true });
+            }
+            lockAcquired = true;
+        } catch (redisError) {
+            // Fail-Open: Redis unreachable/timed out → fall through to Postgres ACID guard
+            console.warn('[WEBHOOK] Redis lock unavailable, falling back to DB idempotency:', redisError);
+        }
+
+        // L2 — Durable PostgreSQL Ledger Check (Authoritative fallback)
         const isProcessedInDb = await isSubscriptionEventProcessed(eventId);
         if (isProcessedInDb) {
             console.log(`[WEBHOOK] Duplicate event ignored (durable DB ledger): ${eventId}`);
             markEventProcessedInMemory(eventId);
+            if (lockAcquired && lockKey) {
+                try {
+                    await withTimeout(redis.set(`stripe:dedup:${eventId}`, 'processed', { ex: 86400 }));
+                    await withTimeout(redis.del(lockKey));
+                } catch {
+                    /* non-critical: DB is authoritative */
+                }
+            }
             return NextResponse.json({ received: true, duplicate: true });
         }
 
@@ -593,17 +656,32 @@ export async function POST(request: NextRequest) {
                     eventType: event.type,
                     status: 'unhandled',
                 });
-                markEventProcessedInMemory(eventId);
-                return NextResponse.json({ received: true, event: eventId });
+                mutationMeta = { success: true };
+                break;
         }
 
         if (mutationMeta.success) {
             markEventProcessedInMemory(eventId);
+            if (lockAcquired && lockKey) {
+                try {
+                    await withTimeout(redis.set(`stripe:dedup:${eventId}`, 'processed', { ex: 86400 }));
+                    await withTimeout(redis.del(lockKey));
+                } catch {
+                    /* non-critical: DB is authoritative */
+                }
+            }
+        } else {
+            if (lockAcquired && lockKey) {
+                await withTimeout(redis.del(lockKey)).catch(() => {});
+            }
         }
 
         return NextResponse.json({ received: true, event: eventId });
     } catch (error) {
         console.error('Error in webhook handler:', error);
+        if (lockAcquired && lockKey) {
+            await withTimeout(redis.del(lockKey)).catch(() => {});
+        }
         return NextResponse.json(
             { error: 'Webhook handler failed' },
             { status: 500 }

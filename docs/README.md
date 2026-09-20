@@ -63,7 +63,7 @@ docs/
 | [test-database-isolation.md](./reference/test-database-isolation.md) | Phase 10: isolated Neon test branch — fail-closed guard, `test` vs `test:live` split, CI multi-stage pipeline, closure evidence |
 | [phase-11-editor-orchestration-closure.md](./reference/phase-11-editor-orchestration-closure.md) | Phase 11 closure: hydration lifecycle, cold-start reconciliation matrix, offline-first contract, reload recovery |
 | [phase-12-auth-ownership-closure.md](./reference/phase-12-auth-ownership-closure.md) | Phase 12 closure: Open Redirect elimination, OAuth callback hardening, 404 anti-enumeration error mapping, atomic user sync |
-| [phase-13-stripe-webhooks-subscriptions-closure.md](./reference/phase-13-stripe-webhooks-subscriptions-closure.md) | Phase 13 closure: Durable idempotency ledger (`subscription_events`), atomic ACID transitions, terminal state protection, accurate period calculation |
+| [phase-13-stripe-webhooks-subscriptions-closure.md](./reference/phase-13-stripe-webhooks-subscriptions-closure.md) | Phase 13 & 21 closure: Multi-tiered distributed idempotency, Upstash Redis in-flight lock, durable ledger (`subscription_events`), atomic ACID transitions, terminal state protection, accurate period calculation |
 | [phase-14-supabase-storage-removal-closure.md](./reference/phase-14-supabase-storage-removal-closure.md) | Phase 14 closure: Dead-code elimination of unused Supabase Storage, database schema drop of `storage_path`, test fixtures clean-up |
 | [phase-15-sanitization-import-export-closure.md](./reference/phase-15-sanitization-import-export-closure.md) | Phase 15 closure: Magic bytes disguised binary detection (`file-validator.ts`), directory traversal sanitization (`import-file.ts`), and 100% high-fidelity round-trip verification |
 | [pdf-worker-extraction-and-vault-import-closure.md](./reference/pdf-worker-extraction-and-vault-import-closure.md) | Client-Side Web Worker PDF extraction, 2D spatial table reconstruction, Arabic Unicode normalizer, bilingual OCR engine, PUA font corruption detection, and direct Zero-Knowledge vault import |
@@ -155,7 +155,7 @@ docs/
 npm run lint            # static analysis & ESLint 9 code quality gate
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (67 files, 799 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (67 files, 805 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (19 files, 89 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)

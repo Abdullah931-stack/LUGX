@@ -22,7 +22,7 @@ Phase 20 represents the final engineering milestone of the LUGX platform, valida
 | **G2** | Sync Lifecycle & Durable IndexedDB Queue (Leak-free GC, atomic rollback) | `src/lib/sync/sync-manager.ts`<br>`src/lib/sync/rollback.ts` | Complete lifecycle teardown via `destroy()`, memory wiping, active controller abort, and atomic checkpoint restoration. | **VERIFIED** ✅ |
 | **G3** | Native CodeMirror 6, RTL BiDi & AST Integrity | `src/components/editor/markdown/`<br>`src/lib/sync/conflict-resolver.ts`<br>`src/lib/sync/syntax-validator.ts` | Native `bidiLinePlugin` isolating Arabic text and locking code blocks to LTR, 3-way `diff3Merge` engine, and syntax AST validator. | **VERIFIED** ✅ |
 | **G4** | AI Governance & Quota Policy (§4-D) | `src/hooks/use-ai-stream.ts`<br>`src/app/api/ai/stream/route.ts`<br>`src/app/api/cron/expire-reservations/route.ts` | User stop (`stopStream`) or preview reject (`rejectPreview`) settles quota as committed (No Refund); automated refund strictly reserved for server failures; TD-02 sweeper cron active. | **VERIFIED** ✅ |
-| **G5** | Durable Stripe Event Ledger (`subscription_events`) | `src/app/api/stripe/webhook/route.ts`<br>`src/lib/db/schema.ts` | Strict HMAC validation with 300s timestamp tolerance, atomic ACID event ledger insertion, and canceled subscription terminality protection. | **VERIFIED** ✅ |
+| **G5** | Multi-Tier Stripe Deduplication & In-Flight Lock (`subscription_events` + Upstash Redis) | `src/app/api/stripe/webhook/route.ts`<br>`src/lib/db/schema.ts` | Strict HMAC validation with 300s timestamp tolerance, Upstash Redis distributed lock (`SET NX EX 30`), L1.5 deduplication cache (`stripe:dedup:*`), 1500ms fail-open timeout, and PostgreSQL ACID event ledger. | **VERIFIED** ✅ |
 | **G6** | Zero-Knowledge Encrypted Vault & Deterministic AAD | `src/lib/sync/sync-crypto-gateway.ts`<br>`src/lib/workers/crypto.worker.ts`<br>`src/app/api/ai/stream/route.ts` | Client-side AES-GCM-256 with 600,000 PBKDF2 iterations, deterministic AAD `vault:file:${userId}:${fileId}`, and HTTP 403 AI route blocking. | **VERIFIED** ✅ |
 | **G7** | Zero Binary Cloud Storage & Ingestion Security | `src/lib/parsers/file-validator.ts`<br>`src/lib/workers/pdf.worker.ts`<br>`src/lib/db/migrations/0007_drop_storage_path.sql` | Disguised binary detection (PE/ELF/Mach-O/ZIP/RAR/7z), client-side Web Worker PDF extraction, and permanent absence of `storage_path`. | **VERIFIED** ✅ |
 | **G8** | Multi-Tenant Isolation & 404 Anti-Enumeration | `src/app/api/files/[id]/route.ts`<br>`src/server/actions/file-ops.ts` | All DB mutations and queries bounded by `userId`; foreign tenant access attempts return HTTP 404 (File not found) instead of 403. | **VERIFIED** ✅ |
@@ -44,7 +44,7 @@ graph TD
 
     subgraph SecurityAndAI["2. Security & AI Governance Layer"]
         G4["G4: AI Quota Settlement (§4-D) & Cron TD-02"]
-        G5["G5: Stripe Ledger (subscription_events)"]
+        G5["G5: Stripe Ledger & Redis In-Flight Lock"]
         G6["G6: Zero-Knowledge Vault & AAD"]
         G7["G7: Zero Binary Cloud Storage"]
         G8["G8: Multi-Tenant 404 Anti-Enumeration"]

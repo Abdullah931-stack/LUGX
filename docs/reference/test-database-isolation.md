@@ -132,7 +132,7 @@ to a live URL; push failures surface immediately).
 - **Guard unit tests (`src/test/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Live run (`npm run test:live`):** 16 registered suites executed against isolated PostgreSQL container / Neon branch.
 - **Phase 18 Comprehensive Verification & Post-Closure Hardening (2026-09-19):**
-  - **Unit & Contract Suite (`npm run test`):** **67 files / 799 tests — all passed (100% pass rate)**, zero LIVE files included.
+  - **Unit & Contract Suite (`npm run test`):** **67 files / 805 tests — all passed (100% pass rate)**, zero LIVE files included.
   - **Live Multi-System Suite (`npm run test:live`):** **19 registered suites / 89 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - Mandatory identity line printed at the start of every live run:
   `[test-db] Isolated test branch identity — endpointId: 'ep-soft-glade-b1hdcbwm-pooler' host: 'ep-soft-glade-b1hdcbwm-pooler.c-5.eu-central-1.aws.neon.tech'`

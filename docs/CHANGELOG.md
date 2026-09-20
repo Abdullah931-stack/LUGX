@@ -2,6 +2,35 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.30.0] - 2026-09-20 (Phase 21: Distributed Webhook Lock, Upstash Redis Fast-Path Deduplication & Node.js 22 CI Hardening)
+
+### Added & Enhanced - Phase 21: Distributed Concurrency Lock & Multi-Tiered Idempotency
+
+- **Distributed In-Flight Webhook Concurrency Lock (`src/app/api/stripe/webhook/route.ts`):**
+  - Integrated `@upstash/redis` distributed locking (`stripe:lock:${eventId}`) with 30-second TTL (`SET ... 1 NX EX 30`).
+  - Concurrent duplicate webhook delivery attempts arriving within milliseconds are immediately intercepted and acknowledged with `200 OK { received: true, deduplicated: true }` before acquiring PostgreSQL database connections.
+- **Least-Cost Cache Inversion & Fast-Path Deduplication (`src/app/api/stripe/webhook/route.ts`):**
+  - Reordered the idempotency pipeline to query Redis deduplication cache (`stripe:dedup:${eventId}`) *before* issuing PostgreSQL `SELECT` queries (`isSubscriptionEventProcessed`).
+  - Successfully processed events populate the Redis deduplication cache with a 24-hour TTL (86,400s), completely shielding PostgreSQL from repeat read queries on duplicate delivery attempts across serverless restarts and distributed containers.
+  - Events identified in PostgreSQL durable ledger automatically backfill the Redis deduplication cache and cleanly release in-flight locks.
+- **Fast Fail-Open Resilience with Abort Timeout (`withTimeout`):**
+  - Encapsulated all Upstash Redis REST operations (`get`, `set`, `del`) within a 1500ms abort watchdog (`timer.unref()`).
+  - Guarantees immediate fallback to PostgreSQL ACID transaction guarantees (`Fail-Open`) if Upstash REST experiences latency, network timeouts, or unreachability, preventing webhook processing delays beyond Stripe's delivery window.
+- **Deterministic Fail-Release Semantics & Clean Code (DRY):**
+  - Guaranteed automatic deletion of `stripe:lock:${eventId}` upon transaction rollbacks or unhandled exceptions to allow legitimate Stripe retries without lockouts.
+  - Refactored the `switch (event.type)` `default:` branch to eliminate duplicated lock release and cache population logic, unifying post-switch mutation and lock cleanup paths.
+- **Automated Test Suite Expansion & Live Test Key Sanitization:**
+  - Expanded `src/app/api/stripe/webhook/route.test.ts` from 9 to 15 unit tests, asserting lock acquisition, concurrency contention rejection, Redis cache hit with DB query bypass, fail-open on Redis timeout, and fail-release.
+  - Added deterministic Redis key cleanup (`cleanupRedisTestKeys()`) in `beforeAll` and `afterAll` within `src/app/api/stripe/webhook/route.live.test.ts`, ensuring live integration suites on isolated Neon branches execute cleanly without lingering cache interference.
+  - Expanded project-wide unit test baseline to **805 tests across 67 test files** (100% green, 0 regressions).
+
+### Standardized - Node.js 22 LTS Runtime Contract
+
+- **Repository-Wide Node.js 22 LTS Contract:**
+  - Standardized `.nvmrc` to Node.js `22`.
+  - Configured `"engines": { "node": ">=22.0.0", "npm": ">=10.0.0" }` in `package.json`.
+  - Aligned GitHub Actions CI workflow in `.github/workflows/ci.yml` across all build, test, and verification stages.
+
 ## [1.29.2] - 2026-09-19 (TD-05 Resolution: Stop-Action Settlement Latency & Autonomous Server Disconnect Inversion)
 
 ### Fixed & Resolved - TD-05 Resolution & Zero-Latency Stop Action

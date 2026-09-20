@@ -30,6 +30,7 @@ vi.mock("next/headers", () => ({
 
 import Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
+import { redis } from "@/lib/redis";
 
 // Mock external Stripe network calls while keeping local HMAC verification and DB transitions real
 vi.spyOn(stripe.subscriptions, "retrieve").mockImplementation(async (subId: string) => ({
@@ -93,8 +94,22 @@ async function seedUser(id: string) {
         .onConflictDoNothing();
 }
 
+async function cleanupRedisTestKeys() {
+    try {
+        await Promise.all(
+            TEST_EVENTS.flatMap((id) => [
+                redis.del(`stripe:dedup:${id}`),
+                redis.del(`stripe:lock:${id}`),
+            ])
+        );
+    } catch {
+        // best effort
+    }
+}
+
 beforeAll(async () => {
     await runMigrations();
+    await cleanupRedisTestKeys();
     try {
         await testDb
             .delete(schema.subscriptionEvents)
@@ -106,6 +121,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+    await cleanupRedisTestKeys();
     try {
         await testDb
             .delete(schema.subscriptionEvents)

@@ -64,11 +64,20 @@ vi.mock("@/server/actions/subscription-actions", () => ({
     executeSubscriptionTransition: vi.fn(async (op: any) => op({})),
 }));
 
+vi.mock("@/lib/redis", () => ({
+    redis: {
+        set: vi.fn(async () => "OK"),
+        get: vi.fn(async () => null),
+        del: vi.fn(async () => 1),
+    },
+}));
+
 import { POST } from "./route";
 import { __resetProcessedEventIds } from "@/lib/stripe/webhook-dedupe";
 import Stripe from "stripe";
 import * as stripeLib from "@/lib/stripe";
 import * as subActions from "@/server/actions/subscription-actions";
+import { redis } from "@/lib/redis";
 
 type AnyFn = ReturnType<typeof vi.fn>;
 const mockConstruct = vi.mocked(stripeLib.stripe.webhooks.constructEvent) as AnyFn;
@@ -127,6 +136,9 @@ beforeEach(() => {
     } as never);
     mockIsProcessed.mockResolvedValue(false as never);
     mockRecordEvent.mockResolvedValue({ success: true } as never);
+    vi.mocked(redis.set).mockResolvedValue("OK" as never);
+    vi.mocked(redis.get).mockResolvedValue(null as never);
+    vi.mocked(redis.del).mockResolvedValue(1 as never);
 });
 
 function stubEvent(event: Stripe.Event) {
@@ -434,6 +446,159 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
             eventId: "evt_unknown_999",
             eventType: "charge.refunded",
             status: "unhandled",
+        });
+    });
+
+    describe("Phase 21: Distributed lock & atomic deduplication", () => {
+        it("Redis lock acquired → processes event, writes durable dedup, and releases lock", async () => {
+            stubEvent(
+                makeEvent(
+                    "customer.subscription.deleted",
+                    {
+                        id: "sub_lock_test",
+                        metadata: { userId: "user-lock-1" },
+                        status: "canceled",
+                        cancel_at_period_end: false,
+                        start_date: 1700000000,
+                    },
+                    "evt_lock_acquired"
+                )
+            );
+
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(200);
+
+            // Verify in-flight lock acquired with 30s TTL
+            expect(redis.set).toHaveBeenCalledWith(
+                "stripe:lock:evt_lock_acquired",
+                "1",
+                { nx: true, ex: 30 }
+            );
+
+            // Verify durable dedup recorded with 24h TTL
+            expect(redis.set).toHaveBeenCalledWith(
+                "stripe:dedup:evt_lock_acquired",
+                "processed",
+                { ex: 86400 }
+            );
+
+            // Verify in-flight lock deleted on completion
+            expect(redis.del).toHaveBeenCalledWith("stripe:lock:evt_lock_acquired");
+        });
+
+        it("Redis lock contended (null returned) → drops concurrent request with { deduplicated: true }", async () => {
+            vi.mocked(redis.set).mockResolvedValueOnce(null as never);
+
+            stubEvent(
+                makeEvent(
+                    "checkout.session.completed",
+                    {
+                        id: "cs_contended",
+                        metadata: { userId: "user-contended", tier: "pro" },
+                        payment_status: "paid",
+                        subscription: "sub_contended",
+                        created: 1700000000,
+                    },
+                    "evt_lock_contended"
+                )
+            );
+
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(200);
+            const data = await resp.json();
+            expect(data).toMatchObject({ received: true, deduplicated: true });
+
+            // Ensure DB transaction was NOT invoked
+            expect(mockUpdateTier).not.toHaveBeenCalled();
+            expect(mockUpsert).not.toHaveBeenCalled();
+        });
+
+        it("Redis dedup cache hit → returns 200 { duplicate: true } without acquiring lock", async () => {
+            vi.mocked(redis.get).mockResolvedValueOnce("processed" as never);
+
+            stubEvent(
+                makeEvent(
+                    "customer.subscription.deleted",
+                    {
+                        id: "sub_cache_hit",
+                        metadata: { userId: "user-cache" },
+                        status: "canceled",
+                    },
+                    "evt_dedup_cache_hit"
+                )
+            );
+
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(200);
+            const data = await resp.json();
+            expect(data).toMatchObject({ received: true, duplicate: true });
+
+            // Ensure lock acquisition and PostgreSQL DB query were bypassed
+            expect(redis.set).not.toHaveBeenCalledWith(
+                "stripe:lock:evt_dedup_cache_hit",
+                expect.anything(),
+                expect.anything()
+            );
+            expect(mockIsProcessed).not.toHaveBeenCalled();
+            expect(mockUpdateTier).not.toHaveBeenCalled();
+        });
+
+        it("Redis unavailable (fail-open) → falls through to DB idempotency guard safely", async () => {
+            vi.mocked(redis.get).mockRejectedValueOnce(new Error("Redis unreachable"));
+            vi.mocked(redis.set).mockRejectedValueOnce(new Error("Redis connection timeout"));
+
+            stubEvent(
+                makeEvent(
+                    "customer.subscription.deleted",
+                    {
+                        id: "sub_fail_open",
+                        metadata: { userId: "user-fail-open" },
+                        status: "canceled",
+                        cancel_at_period_end: false,
+                        start_date: 1700000000,
+                    },
+                    "evt_fail_open"
+                )
+            );
+
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(200);
+
+            // DB mutation succeeded despite Redis outage
+            expect(mockUpdateTier).toHaveBeenCalledWith("user-fail-open", "free", expect.anything());
+        });
+
+        it("Lock released on transaction failure (fail-release) when handler errors", async () => {
+            mockRecordEvent.mockRejectedValueOnce(new Error("Database write failure"));
+
+            stubEvent(
+                makeEvent(
+                    "customer.subscription.deleted",
+                    {
+                        id: "sub_fail_tx",
+                        metadata: {},
+                    },
+                    "evt_fail_tx"
+                )
+            );
+
+            // Cause mutationMeta to have success: false
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(200);
+
+            // Lock was cleaned up in else branch so retries are not blocked
+            expect(redis.del).toHaveBeenCalledWith("stripe:lock:evt_fail_tx");
+        });
+
+        it("Lock released on unhandled error in catch block (status 500)", async () => {
+            stubEvent(makeEvent("unhandled.event.type", {}, "evt_unhandled_err"));
+            mockRecordEvent.mockRejectedValueOnce(new Error("Catastrophic DB crash"));
+
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(500);
+
+            // Lock was cleaned up in POST's outer catch block
+            expect(redis.del).toHaveBeenCalledWith("stripe:lock:evt_unhandled_err");
         });
     });
 });

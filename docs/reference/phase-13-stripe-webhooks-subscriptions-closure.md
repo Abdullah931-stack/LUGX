@@ -13,19 +13,17 @@ The objective was to transform Stripe webhook ingestion and subscription lifecyc
 ```mermaid
 flowchart TD
     A["Incoming Stripe Webhook POST"] --> B["Signature & Timestamp Tolerance<br/>(Fail-Closed: 300s window)"]
-    B --> C["Idempotency Gate:<br/>1. Fast-path in-memory Set<br/>2. Durable subscription_events"]
-    C -->|If already recorded| D["Return 200<br/>{ received: true, duplicate: true }"]
-    C -->|If new event| E["Atomic ACID Transaction (tx)<br/>• Terminal State Guard Check<br/>• Period Extraction (end > start)<br/>• Local DB Subscription Sync<br/>• User Tier & Sub Upsert<br/>• Record subscription_events"]
-    E --> F["Update In-Memory Fast-Path<br/>(Zero-Allocation Set Eviction)"]
-    F --> G["Return 200 { received: true }"]
-
-    style A fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
-    style B fill:#FFF3E0,stroke:#E65100,stroke-width:1.5px
-    style C fill:#EDE7F6,stroke:#512DA8,stroke-width:1.5px
-    style D fill:#ECEFF1,stroke:#455A64,stroke-width:1.5px
-    style E fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
-    style F fill:#F1F8E9,stroke:#558B2F,stroke-width:1.5px
-    style G fill:#E8F5E9,stroke:#2E7D32,stroke-width:1.5px
+    B --> C["L1: Fast-path in-memory Set"]
+    C -->|If in memory| D["Return 200<br/>{ received: true, duplicate: true }"]
+    C -->|If not in memory| E["L1.5: Redis Dedup Cache (withTimeout: 1500ms)"]
+    E -->|If in Redis dedup| D
+    E -->|If not in Redis| F["L1.5: Acquire In-Flight Lock (stripe:lock:eventId)"]
+    F -->|Contended| G["Return 200<br/>{ received: true, deduplicated: true }"]
+    F -->|Acquired or Redis Timeout| H["L2: Durable Postgres subscription_events"]
+    H -->|If in DB| D
+    H -->|New Event| I["Atomic ACID Transaction (tx)<br/>• Terminal State Guard Check<br/>• Period Extraction (end > start)<br/>• Local DB Subscription Sync<br/>• User Tier & Sub Upsert<br/>• Record subscription_events"]
+    I --> J["Populate Redis Dedup (24h TTL)<br/>& Delete In-Flight Lock"]
+    J --> K["Return 200 { received: true, event: eventId }"]
 ```
 
 ### 2.1 Durable Idempotency Ledger (`subscription_events`)
@@ -54,6 +52,13 @@ flowchart TD
 ### 2.5 Local DB Subscription Reconciliation for Invoices
 
 - `handleInvoicePaymentFailed` queries local database state by `userId` directly rather than making external network calls to Stripe, eliminating network latency and rate limit risks.
+
+### 2.6 Distributed In-Flight Lock & Multi-Tiered Deduplication (Phase 21 Hardening)
+
+- **In-Flight Distributed Concurrency Lock (L1.5):** Uses `@upstash/redis` to set an exclusive lock `stripe:lock:${eventId}` with a 30s TTL (`NX EX 30`). Concurrent duplicates arriving within milliseconds are dropped with `200 OK { deduplicated: true }` before opening any database connections.
+- **Durable Redis Dedup Fast-Path Cache (L1.5):** Evaluated *before* PostgreSQL querying. Successful transactions set `stripe:dedup:${eventId}` with a 24h TTL (86,400s), shielding the primary database from read pressure during webhook replay storms.
+- **Fast Fail-Open Resilience (`withTimeout: 1500ms`):** All Upstash Redis REST calls are wrapped with an unref'd 1500ms abort watchdog, guaranteeing that Redis timeouts immediately fall open to PostgreSQL ACID guarantees.
+- **Fail-Release Guarantee:** Locks are deterministically released on transaction rollbacks or unhandled exceptions to allow legitimate Stripe retries.
 
 ---
 
@@ -88,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_subscription_events_created_at
 ### 4.1 Unit / Contract Test Suite (`npx vitest run src/app/api/stripe/webhook/route.test.ts`)
 
 ```
-✓ src/app/api/stripe/webhook/route.test.ts (9 tests)
+✓ src/app/api/stripe/webhook/route.test.ts (15 tests)
   ✓ unmapped subscription status is fail-closed: throws, updates nothing
   ✓ checkout.session.completed with unpaid payment grants no tier (fail-closed)
   ✓ invoice.payment_failed downgrades to free and reconciles from local DB
@@ -98,6 +103,13 @@ CREATE INDEX IF NOT EXISTS idx_subscription_events_created_at
   ✓ calculates distinct period boundaries for checkout.session.completed (end > start)
   ✓ calculates distinct period boundaries for customer.subscription.updated (end > start)
   ✓ unknown event type logs fail-closed, persists event, and returns success
+  Phase 21: Distributed lock & atomic deduplication
+    ✓ Redis lock acquired → processes event, writes durable dedup, and releases lock
+    ✓ Redis lock contended (null returned) → drops concurrent request with { deduplicated: true }
+    ✓ Redis dedup cache hit → returns 200 { duplicate: true } without acquiring lock
+    ✓ Redis unavailable (fail-open) → falls through to DB idempotency guard safely
+    ✓ Lock released on transaction failure (fail-release) when handler errors
+    ✓ Lock released on unhandled error in catch block (status 500)
 ```
 
 ### 4.2 Isolated Neon Branch Live Integration Suite (`npx vitest run --config vitest.live.config.ts src/app/api/stripe/webhook/route.live.test.ts`)

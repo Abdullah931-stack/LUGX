@@ -1,6 +1,6 @@
 {
   "name": "lugx",
-  "version": "1.29.2",
+  "version": "1.30.0",
   "private": true,
   "engines": {
     "node": ">=22.0.0",

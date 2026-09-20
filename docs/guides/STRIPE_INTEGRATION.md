@@ -15,6 +15,7 @@ sequenceDiagram
     participant CreateCheckoutAPI as /api/stripe/create-checkout
     participant StripeCheckout as Stripe Checkout
     participant StripeWebhook as /api/stripe/webhook
+    participant Redis as Upstash Redis
     participant DB as PostgreSQL (Neon)
 
     User->>UpgradeButton: Click "Upgrade to [Tier]"
@@ -28,12 +29,18 @@ sequenceDiagram
     StripeCheckout->>StripeCheckout: Process payment
     StripeCheckout->>StripeWebhook: POST webhook event (HMAC Signed)
     StripeWebhook->>StripeWebhook: Verify signature & 300s timestamp tolerance
-    StripeWebhook->>DB: Check durable idempotency (subscription_events)
-    alt New Event
+    StripeWebhook->>StripeWebhook: L1: In-memory fast-path check
+    StripeWebhook->>Redis: L1.5: Check dedup cache (stripe:dedup:eventId)
+    StripeWebhook->>Redis: L1.5: Acquire in-flight lock (stripe:lock:eventId NX EX 30)
+    alt Lock Contended
+        Redis-->>StripeWebhook: null
+        StripeWebhook-->>StripeCheckout: Return 200 { received: true, deduplicated: true }
+    else Lock Acquired / Fail-Open
+        StripeWebhook->>DB: L2: Check durable idempotency (subscription_events)
         StripeWebhook->>DB: Atomic Transaction: Update User Tier + Upsert Sub + Record Event
         DB-->>StripeWebhook: Commit OK
-    else Duplicate Event
-        StripeWebhook-->>StripeCheckout: Return 200 { received: true, duplicate: true }
+        StripeWebhook->>Redis: SET stripe:dedup:eventId EX 86400 & DEL stripe:lock:eventId
+        StripeWebhook-->>StripeCheckout: Return 200 { received: true, event: eventId }
     end
     StripeCheckout-->>User: Redirect to dashboard
 ```
@@ -117,7 +124,11 @@ Authoritative webhook ingestion endpoint with alias re-export at `/api/webhooks/
 
 **Security & Invariants:**
 - **HMAC Signature Verification:** Verified against `STRIPE_WEBHOOK_SECRET` with `MAX_TIMESTAMP_AGE_SECONDS = 300` before JSON parsing or DB operations.
-- **Two-Tiered Idempotency:** In-memory Set fast-path + Authoritative `subscription_events` database ledger.
+- **Multi-Tiered Idempotency & Distributed Lock (Phase 21):**
+  - **L1 (Memory):** In-memory Set fast-path check.
+  - **L1.5 (Redis Dedup):** `stripe:dedup:${eventId}` cache check with 24h TTL (shields PostgreSQL).
+  - **L1.5 (Redis Lock):** In-flight distributed concurrency lock via `stripe:lock:${eventId}` (`NX EX 30`) drops concurrent executions with 200 `{ deduplicated: true }` and fails open to PostgreSQL ACID transactions upon Redis outage or 1500ms timeout.
+  - **L2 (DB Ledger):** Authoritative `subscription_events` database query & atomic ACID insertion.
 - **Atomic ACID Transitions:** Encapsulated in `executeSubscriptionTransition(tx)`.
 - **Terminal State Protection:** A subscription in `canceled` state rejects stale `customer.subscription.updated` events attempting to set it back to `active`.
 - **Accurate Period Derivation:** Derives periods from `SubscriptionItem` or `Invoice.lines`, guaranteeing `currentPeriodEnd > currentPeriodStart`.
@@ -180,6 +191,6 @@ npx vitest run --config vitest.live.config.ts src/app/api/stripe/webhook/route.l
 
 ---
 
-**Last Updated:** 2026-08-26  
-**Version:** 1.9.0  
-**Status:** ✅ Phase 13 Hardened & Closed
+**Last Updated:** 2026-09-20  
+**Version:** 1.29.2  
+**Status:** ✅ Phase 21 Hardened & Closed
