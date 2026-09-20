@@ -34,11 +34,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 22 (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: "npm"
+
+      - name: Verify Active Node.js Runtime
+        run: |
+          echo "=== Active Runtime Verification ==="
+          node -v
+          npm -v
 
       - name: Install dependencies
         run: npm ci
@@ -65,10 +71,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 22 (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: "npm"
 
       - name: Install dependencies
@@ -105,10 +111,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 22 (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: "npm"
 
       - name: Install dependencies
@@ -164,10 +170,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 22 (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: "npm"
 
       - name: Install dependencies
@@ -206,10 +212,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 22 (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: "npm"
 
       - name: Install dependencies
@@ -245,10 +251,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 22 (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: "npm"
 
       - name: Install dependencies
@@ -302,10 +308,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 22 (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: "npm"
 
       - name: Install dependencies

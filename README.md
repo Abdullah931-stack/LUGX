@@ -207,7 +207,7 @@ lugx/
 
 ### 1. Prerequisites
 
-- **Node.js**: `v22.x LTS` (or `v20.x+`)
+- **Node.js**: `v22.x LTS` (enforced via `.nvmrc` and `package.json` engines)
 - **Package Manager**: `npm` (or `pnpm` / `yarn`)
 - **Database**: PostgreSQL 14+ instance (Neon Cloud, local Docker, or Supabase)
 
