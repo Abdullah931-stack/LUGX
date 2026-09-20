@@ -39,13 +39,16 @@ stateDiagram-v2
 | `conflict` | Precondition failed (HTTP 412/409); awaiting user or algorithmic resolution. | **YES** | Held until explicit resolution callback commits. |
 | `rollback_failed` | Rollback encountered an exception; frozen for forensic inspection. | **YES** | Frozen permanently; never deleted by GC. |
 | `dead_letter` | Maximum retry threshold (default: 5) exhausted. | No (after `maxAge`) | Terminal failure; held for retention duration. |
+| `discarded` | Operation discarded following conflict abandonment or superseding resolution. | No (after `maxAge`) | Terminal state; never retried. |
 
 ---
 
 ## 3. Schema & Data Structures (`src/lib/sync/idb-types.ts`)
 
-### 3.1. `OperationStatus`
+### 3.1. `OperationStatus` & `OperationType`
 ```typescript
+export type OperationType = 'insert' | 'delete' | 'update' | 'create' | 'rename' | 'move';
+
 export type OperationStatus =
     | 'queued'
     | 'syncing'
@@ -53,7 +56,8 @@ export type OperationStatus =
     | 'failed'
     | 'conflict'
     | 'rollback_failed'
-    | 'dead_letter';
+    | 'dead_letter'
+    | 'discarded';
 ```
 
 ### 3.2. Extended `IDBOperation` Interface
@@ -68,13 +72,15 @@ export interface IDBOperation {
     attempts?: number;
     nextRetryAt?: number;
     lastError?: string;
-    operationType: 'insert' | 'delete' | 'replace' | 'update';
+    operationType: OperationType;
     position: number;
-    content: string;
+    content: MarkdownSource;
     timestamp: number;
     synced: boolean;
+    previousContent?: MarkdownSource;
+    isEncrypted?: boolean;
     snapshot?: {
-        content: string;
+        content: MarkdownSource;
         etag?: string;
         version?: number;
     };

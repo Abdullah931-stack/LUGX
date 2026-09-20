@@ -14,7 +14,7 @@ automated tests remain the single source of truth for all technical claims.
 docs/
 ├── README.md                          ← you are here (structural master index)
 ├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
-├── CHANGELOG.md                       ← release history (v1.0.0 through v1.31.2)
+├── CHANGELOG.md                       ← release history (v1.0.0 through v1.32.1)
 ├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-12)
 │
 ├── architecture/                      ← subsystem designs, protocols, state machines
@@ -77,7 +77,7 @@ docs/
 | :--- | :--- |
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
-| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.31.2 |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.32.1 |
 | [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-12) |
 
 ---
@@ -241,7 +241,7 @@ docs/
 npm run lint            # static analysis & ESLint 9 code quality gate
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (67 files, 817 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (67 files, 820 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (19 files, 89 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)

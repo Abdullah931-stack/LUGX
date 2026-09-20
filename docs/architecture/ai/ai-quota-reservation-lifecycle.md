@@ -63,9 +63,16 @@ flowchart TD
     $$\text{minRemainingTTL} = \min_{i}(\text{TTL}_i)$$
   - The system throws an `AllKeysExhaustedError` reporting the exact cooldown time remaining until the earliest key unlocks.
 
-### D. Distributed Model Circuit Breaker
+### D. Distributed Model Circuit Breaker & 4-Tier Model Cascade
 - If a model encounters consecutive 503 (Service Unavailable) or high-demand errors, the distributed Circuit Breaker trips to `OPEN` in Redis for 10 minutes (`DEFAULT_CIRCUIT_TTL_SECONDS = 600`).
-- Subsequent requests take the Redis Fast-Path to immediately route to the configured fallback model without waiting for primary model timeouts.
+- Subsequent requests take the Redis Fast-Path to immediately bypass failing models and step through the configured **4-Tier Model Cascade** (`src/config/models.config.json` resolved via `src/lib/ai/client.ts`):
+
+| Cascade Level | Configuration Key | Model Identifier | Role & Failover Trigger |
+| :--- | :--- | :--- | :--- |
+| **Tier 1 (Primary)** | `[tier]` | `gemini-3.7-flash` | Authoritative default for all user prompts; highest reasoning quality. |
+| **Tier 2 (Fallback)** | `fallback` | `gemini-3.6-flash` | Automated primary failover upon 503, high load, or primary circuit trip. |
+| **Tier 3 (Secondary)** | `secondaryFallback` | `gemini-3.5-flash-lite` | Ultra-fast lightweight model ensuring generation under upstream provider saturation. |
+| **Tier 4 (Tertiary)** | `tertiaryFallback` | `gemini-3.1-flash-lite` | Terminal resilience fallback guaranteeing continuity before absolute exhaustion. |
 
 ### E. Rotatable vs Non-Rotatable Errors (Fail-Fast)
 - **Rotatable Technical Errors:** 401 (Auth), 403 (Quota), 429 (Rate Limit), 500, 502, 503, 504, Transient Connection Resets.

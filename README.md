@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-67%20Suites%20·%20817%2F817%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 817 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-67%20Suites%20·%20820%2F820%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 820 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-19%20Suites%20·%2089%2F89%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 89 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -118,7 +118,7 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 >
 > LUGX is designed, architected, and directed entirely by Abdullah through deliberate AI orchestration — every technical decision (data model, concurrency strategy, security posture, and trade-off analyses such as the Yjs evaluation in the [Architectural Statement](#architectural-statement-custom-ground-up-synchronization-engine)) originates from human judgment, domain expertise, and rigorous feasibility studies.
 >
-> Code implementation itself is delegated to and coordinated across advanced AI models under structured, specification-driven direction, with correctness enforced through systematic review gates (type-checking, linting, and a 799-test verification suite) backed by targeted manual review of critical logic paths — rather than manual line-by-line authorship. This is a conscious engineering methodology choice: the discipline demonstrated throughout [`docs/`](./docs) — the phased execution protocol, the living technical debt register, and the design-vs-reality divergence log — reflects the same rigor a hands-on implementation requires, combined with the proven capability to orchestrate, audit, and systematically steer LLMs to produce robust, rigorously tested software.
+> Code implementation itself is delegated to and coordinated across advanced AI models under structured, specification-driven direction, with correctness enforced through systematic review gates (type-checking, linting, and an 820-test verification suite) backed by targeted manual review of critical logic paths — rather than manual line-by-line authorship. This is a conscious engineering methodology choice: the discipline demonstrated throughout [`docs/`](./docs) — the phased execution protocol, the living technical debt register, and the design-vs-reality divergence log — reflects the same rigor a hands-on implementation requires, combined with the proven capability to orchestrate, audit, and systematically steer LLMs to produce robust, rigorously tested software.
 
 ---
 
@@ -137,7 +137,7 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 | **Client-Side Cryptography**| Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                  |
 | **Payment & Billing**       | Stripe SDK · Webhook Signature Verification                  | 8-state fail-closed state machine, partial unique constraint idempotency                          |
 | **Rate Limiting & Telemetry**| Upstash Redis · Sliding Window · Distributed Tracing        | Dual-mode rate limiting (Fail-Open sync, Fail-Closed AI), X-Correlation-ID tracking, ZK log masking|
-| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | 67 unit, contract, and cryptographic test suites (817 tests) + 15 live database test suites        |
+| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | 67 unit, contract, and cryptographic test suites (820 tests) + 19 live database test suites (89 tests)|
 
 ---
 
@@ -151,7 +151,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.31.2)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.32.1)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Code-derived roadmap & technical execution plans (English)
@@ -302,7 +302,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (67 test files, 817 tests)
+# Execute unit/contract test suites (67 test files, 820 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (19 test files, 89 tests)
@@ -410,7 +410,7 @@ flowchart TD
   - Real-time action controls: `Stop Generation` during active streaming, followed by explicit decision buttons (`Accept`, `Reject`, `Retry`) upon stream completion.
 - **Distributed Circuit Breaker & Key Pool (`src/lib/ai/key-rotation.ts`):**
   - 3-state circuit breaker (`CLOSED`, `OPEN`, `HALF-OPEN`) tracking failures in Upstash Redis.
-  - Multi-key rotation pool with automated failover from `gemini-3.7-flash` (primary) to `gemini-3.6-flash` (fallback).
+  - Multi-key rotation pool with automated 4-tier model cascade: `gemini-3.7-flash` (primary) → `gemini-3.6-flash` (fallback) → `gemini-3.5-flash-lite` (secondary) → `gemini-3.1-flash-lite` (tertiary).
 - **Dual-Layer Quota Guard & Information Shielding (`src/lib/rate-limit.ts` & `src/app/api/ai/stream/route.ts`):**
   - Strict 30 requests / 60 seconds rate limiting via `aiStreamRateLimiter` failing closed upon Redis outages with `Retry-After >= 1`.
   - Information disclosure protection: Unhandled upstream model errors are shielded behind safe, standardized HTTP 500 envelopes containing the request's tracking `correlationId`, preventing internal provider stack leakage.

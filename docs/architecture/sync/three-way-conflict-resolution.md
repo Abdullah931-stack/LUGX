@@ -124,13 +124,32 @@ sequenceDiagram
 
 ### 3.1 Merge Result Contract
 ```typescript
+export type MergeStatus =
+    | 'merged_clean'
+    | 'conflict_overlaps'
+    | 'manual_resolution_required'
+    | 'delete_conflict';
+
 export interface MergeResult {
+    /** Whether merge was successful without any conflicts */
     success: boolean;
-    status: 'clean_local' | 'clean_remote' | 'merged_clean' | 'merged_with_conflicts' | 'manual_resolution_required' | 'conflict_overlaps';
-    content: string | null;
-    title: string | null;
+    /** Detailed status of the merge operation */
+    status: MergeStatus;
+    /** Merged content (if success or contains inline conflict markers) */
+    content?: string;
+    /** Merged title */
+    title?: string;
+    /** Merged parent folder id */
+    parentFolderId?: string | null;
+    /** Whether there are overlapping changes requiring manual resolution */
     hasOverlaps: boolean;
+    /** Diff operations for visualization */
     diffs?: DiffOp[];
+    /** Explicit conflict markers if overlaps were present */
+    conflictMarkers?: string;
+    /** Specific delete conflict classification */
+    deleteAction?: 'remote_deleted_local_modified' | 'local_deleted_remote_modified' | 'both_deleted';
+    /** Human-readable explanation */
     reason?: string;
 }
 ```

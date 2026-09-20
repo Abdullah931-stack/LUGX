@@ -35,8 +35,8 @@ stateDiagram-v2
     [*] --> stopped : No userId / Destroyed
     stopped --> idle : init(userId) [Online]
     stopped --> offline : init(userId) [Offline]
-    idle --> queuing : queueSync(fileId)
-    queuing --> idle
+    idle --> queued : queueSync(fileId)
+    queued --> idle
     idle --> syncing : sync()
     syncing --> idle : Success
     syncing --> conflict : HTTP 412 Precondition Failed

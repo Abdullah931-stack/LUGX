@@ -81,6 +81,10 @@ The platform deliberately decouples service availability and key protection thro
    - **Rationale:** Prevents catastrophic quota exhaustion, silent billing spikes, or rogue requests against Gemini provider keys when distributed rate limiting state cannot be verified.
 3. **Database-Enforced ACID User Quotas:**
    - User consumption limits (words, daily summarize, ToPrompt) are tracked and enforced in PostgreSQL via `schema.usage` and `schema.aiReservations` with atomic SQL condition guards (`reserveAndUpdateUsage`).
+4. **Hybrid Fail-Open Distributed Lock (Stripe Webhook Concurrency / Phase 21):**
+   - Implemented in `src/app/api/stripe/webhook/route.ts` via in-flight Redis lock `stripe:lock:${eventId}` (`nx: true, ex: 30`) bounded by a 1500ms watchdog (`withTimeout`).
+   - If Redis is unreachable or times out, the lock fails open to PostgreSQL ACID transactions (`executeSubscriptionTransition`) and database-level idempotency (`subscription_events`).
+   - Authoritative specification: [`docs/guides/billing/stripe-integration.md`](../../guides/billing/stripe-integration.md).
 
 Response contract:
 
@@ -208,7 +212,7 @@ Permanent purge of soft-delete tombstones past retention:
 
 The application itself never hard-deletes user content outside this route — all
 user-facing deletions are tombstones
-([`records/test-database-safety.md`](../../records/incidents/test-database-safety.md)).
+([`records/incidents/test-database-safety.md`](../../records/incidents/test-database-safety.md)).
 
 ### 5.2 Stale Quota Reservation Expiration (`src/app/api/cron/expire-reservations/route.ts` / TD-02)
 
