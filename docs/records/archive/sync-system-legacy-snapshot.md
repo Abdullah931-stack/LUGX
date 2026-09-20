@@ -8,8 +8,8 @@
 > system as originally delivered. Later phases added modules not listed in its
 > structure tree (`parallel.ts`, `reconciliation.ts`, `cross-tab-sync.ts`) and
 > changed test counts. For the current architecture see
-> [`../architecture/sync-lifecycle-architecture.md`](../architecture/sync-lifecycle-architecture.md)
-> and [`SYNC_API.md`](./SYNC_API.md).
+> [`../../architecture/sync/sync-lifecycle-architecture.md`](../../architecture/sync/sync-lifecycle-architecture.md)
+> and [`SYNC_API.md`](../../reference/sync-api.md).
 
 ## Overview
 
@@ -123,9 +123,9 @@ formatETagHeader(etag)
 
 | File | Description |
 |------|-------------|
-| [SYNC_ARCHITECTURE.md](./SYNC_ARCHITECTURE.md) | Detailed architecture |
-| [SYNC_API.md](./SYNC_API.md) | API documentation |
-| [../records/SYNC_UNIT_TESTS_FIXES.md](../records/SYNC_UNIT_TESTS_FIXES.md) | Test fixes (historical) |
+| [SYNC_ARCHITECTURE.md](../../architecture/sync/sync-architecture-overview.md) | Detailed architecture |
+| [SYNC_API.md](../../reference/sync-api.md) | API documentation |
+| [./sync-unit-tests-fixes.md](./sync-unit-tests-fixes.md) | Test fixes (historical) |
 
 ---
 

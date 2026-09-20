@@ -40,7 +40,7 @@ To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 response
 
 Defense-in-depth note: proxy gating complements — never replaces — the
 per-route `getUser()` checks performed inside every API route and server action
-(see [`file-ownership-and-versioning.md`](./file-ownership-and-versioning.md) and [`../reference/phase-12-auth-ownership-closure.md`](../reference/phase-12-auth-ownership-closure.md)).
+(see [`file-ownership-and-versioning.md`](../sync/file-ownership-and-versioning.md) and [`../../records/closures/phase-11-to-15-core-infrastructure/phase-12-auth-ownership-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-12-auth-ownership-closure.md)).
 
 ---
 
@@ -76,7 +76,7 @@ The platform deliberately decouples service availability and key protection thro
    - If Upstash Redis is unreachable or returns an error, the limiter logs a warning and returns `{ success: true }`.
    - **Rationale:** Protects offline-first architecture; temporary infrastructure issues on Redis never lock legitimate users out of reading, editing, or synchronizing local documents.
 2. **Fail-Closed (AI Key Rotation & Circuit Breakers):**
-   - Implemented in [`src/lib/ai/key-rotation.ts`](file:///d:/Projects/LUGX/src/lib/ai/key-rotation.ts) via `RedisUnavailableError`.
+   - Implemented in [`src/lib/ai/key-rotation.ts`](../../../src/lib/ai/key-rotation.ts) via `RedisUnavailableError`.
    - If Redis connection fails during multi-key pool inspection or health probes, the AI provider subsystem fails closed.
    - **Rationale:** Prevents catastrophic quota exhaustion, silent billing spikes, or rogue requests against Gemini provider keys when distributed rate limiting state cannot be verified.
 3. **Database-Enforced ACID User Quotas:**
@@ -89,7 +89,7 @@ Response contract:
 - Exhaustion returns **429** from `rateLimitExceededResponse()` with a
   `Retry-After` header and body `{ error, message, retryAfter }`.
 
-Endpoint-level details: [`../reference/SYNC_API.md`](../reference/SYNC_API.md).
+Endpoint-level details: [`../../reference/sync-api.md`](../../reference/sync-api.md).
 
 ---
 
@@ -208,7 +208,7 @@ Permanent purge of soft-delete tombstones past retention:
 
 The application itself never hard-deletes user content outside this route — all
 user-facing deletions are tombstones
-([`records/test-database-safety.md`](../records/test-database-safety.md)).
+([`records/test-database-safety.md`](../../records/incidents/test-database-safety.md)).
 
 ### 5.2 Stale Quota Reservation Expiration (`src/app/api/cron/expire-reservations/route.ts` / TD-02)
 

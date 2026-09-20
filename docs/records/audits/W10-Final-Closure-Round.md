@@ -77,8 +77,8 @@ When running multiple test files concurrently against a shared PostgreSQL databa
 | Item | Action Taken |
 |---|---|
 | `README.md` | Rewritten into a comprehensive technical specification: system overview, tech stack, quickstart, deep-dives into four core subsystems, security matrix, documentation directory index, and deployment blueprints. |
-| `docs/records/W10-Final-Closure-Round.md` | Comprehensive engineering record of the final closure round (F1–F3). |
-| `docs/specs/Plan for an improved synchronization system.md` | Comprehensive architectural blueprint for offline-first IndexedDB sync, conflict resolution, and Background Sync API. |
+| `docs/records/audits/W10-Final-Closure-Round.md` | Comprehensive engineering record of the final closure round (F1–F3). |
+| `docs/specs/offline-sync-blueprint.md` | Comprehensive architectural blueprint for offline-first IndexedDB sync, conflict resolution, and Background Sync API. |
 | `.env.example` | Fully documented template for `CRON_SECRET`, `DATABASE_URL`, `SUPABASE_*`, `GEMINI_*`, and `STRIPE_*` with generation commands. |
 | `.gitignore` | Strictly configured to exclude local environment secrets while tracking `.env.example` and `.env.test`. |
 | `vitest.config.ts` | Documented rationale for `singleFork` runner configuration. |

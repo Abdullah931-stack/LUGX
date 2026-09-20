@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary & Objective
 
-Vault Phase 4 establishes strict dual-layer Zero-Knowledge AI safety barriers, non-blocking encrypted conflict isolation, and deterministic post-merge syntax integrity validation within the LUGX Hybrid Encryption architecture ([HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](../../Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md)).
+Vault Phase 4 establishes strict dual-layer Zero-Knowledge AI safety barriers, non-blocking encrypted conflict isolation, and deterministic post-merge syntax integrity validation within the LUGX Hybrid Encryption architecture ([HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](../../../Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md)).
 
 Key achievements:
 - **Zero-Knowledge AI Safety Gatekeepers**:

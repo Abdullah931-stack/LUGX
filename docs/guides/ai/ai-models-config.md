@@ -6,8 +6,8 @@ This document specifies the decoupled JSON configuration architecture for Gemini
 
 ## 1. Central Configuration File
 
-* **File Location:** [`src/config/models.config.json`](../../src/config/models.config.json)
-* **Imported by:** [`src/lib/ai/client.ts`](../../src/lib/ai/client.ts) and test suites.
+* **File Location:** [`src/config/models.config.json`](../../../src/config/models.config.json)
+* **Imported by:** [`src/lib/ai/client.ts`](../../../src/lib/ai/client.ts) and test suites.
 
 ---
 
@@ -63,6 +63,6 @@ This document specifies the decoupled JSON configuration architecture for Gemini
 ## 4. How to Update Models
 
 To change any model or adjust generation parameters (temperature, penalties, topP, thinkingLevel):
-1. Edit [`src/config/models.config.json`](../../src/config/models.config.json).
+1. Edit [`src/config/models.config.json`](../../../src/config/models.config.json).
 2. Save the file.
 3. The AI engine (`client.ts`) and Circuit Breaker automatically read the updated definitions at runtime without requiring code refactoring.

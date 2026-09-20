@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary & Objective
 
-Vault Phase 5 represents the culminating validation and security-hardening milestone of the LUGX Hybrid Encryption and Zero-Knowledge Vault architecture ([HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](../../Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md)).
+Vault Phase 5 represents the culminating validation and security-hardening milestone of the LUGX Hybrid Encryption and Zero-Knowledge Vault architecture ([HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](../../../Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md)).
 
 This phase establishes deterministic closure proofs across the **10-point Closure Test Matrix**, enforces adversarial runtime hygiene across volatile memory and error telemetry, resolves critical findings from the adversarial re-audit, and guarantees that Zero-Knowledge guarantees hold under real-world concurrency, race conditions, and hostile environments.
 
@@ -80,7 +80,7 @@ flowchart LR
 
 ## 3. Closure Test Matrix Verification (Items #1 to #10)
 
-The 10 verification scenarios defined in [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](../../Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) have been verified with 100% test pass rates:
+The 10 verification scenarios defined in [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](../../../Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) have been verified with 100% test pass rates:
 
 | # | Test Scenario | Verified Behavior | Test Suite & Code Evidence | Verdict |
 | :--- | :--- | :--- | :--- | :--- |

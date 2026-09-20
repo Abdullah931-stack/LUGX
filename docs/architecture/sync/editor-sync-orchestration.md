@@ -86,7 +86,7 @@ const canAutoSave = useCallback((): boolean => {
 
 When the user types or modifies text while an AI stream or generation is active:
 1. **Instant Abort:** The orchestrator detects manual changes via `handleEditorChange` and immediately aborts the active stream via `aiStream.stopStream()`.
-2. **Quota Settlement (Explicit Settlement Policy):** Stopping an active generation is a *user decision*, so the reservation is settled as consumed via `commitAIReservation` (`stopStream` settles before aborting) — it is NOT refunded. See [`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D.
+2. **Quota Settlement (Explicit Settlement Policy):** Stopping an active generation is a *user decision*, so the reservation is settled as consumed via `commitAIReservation` (`stopStream` settles before aborting) — it is NOT refunded. See [`ai-quota-reservation-lifecycle.md`](../ai/ai-quota-reservation-lifecycle.md) §4-D.
 3. **Editor Generation Advance:** `editorGenerationRef` increments immediately, preventing any stale in-flight AI chunks or delayed commit responses from applying to the altered document.
 4. **Debounced AutoSave:** The user's manual modification proceeds cleanly without silent corrupt merges.
 
@@ -258,7 +258,7 @@ Invariants:
    and ownership-filtered): completed previews consume quota idempotently, lost
    generations refund as `reload_recovery`; the abandoned preview is NEVER applied to
    the document nor treated as committed. See
-   [`reference/phase-11-editor-orchestration-closure.md`](../reference/phase-11-editor-orchestration-closure.md).
+   [`reference/phase-11-editor-orchestration-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-11-editor-orchestration-closure.md).
 6. **UI layer integration (`page.tsx`).** During `hydrating` on an empty document, an animated
    backdrop overlay (`Loader2`) informs the user of active synchronization. When `fatal`,
    a dedicated error recovery card is presented with a direct action to return to `/workspace`.

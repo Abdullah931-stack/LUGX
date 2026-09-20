@@ -3,7 +3,7 @@
 Status: ✅ Implemented · Roadmap: Phase 10 of
 [`docs/Plans/TECHNICAL_EXECUTION_PLAN.md`](../Plans/TECHNICAL_EXECUTION_PLAN.md) ·
 Background incident:
-[`records/test-database-safety.md`](../records/test-database-safety.md)
+[`records/test-database-safety.md`](../records/incidents/test-database-safety.md)
 
 ---
 

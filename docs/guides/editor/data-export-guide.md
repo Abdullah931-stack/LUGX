@@ -290,8 +290,8 @@ Expected: Proper UTF-8 encoding in both formats
 
 ### ✅ Test Case 5: Complex Markdown
 ```
-Input: "[Link](url) `code` ~~strike~~"
-Expected MD: "[Link](url) `code` ~~strike~~"
+Input: "\[Link\](url) `code` ~~strike~~"
+Expected MD: "\[Link\](url) `code` ~~strike~~"
 Expected TXT: "Link code strike"
 ```
 

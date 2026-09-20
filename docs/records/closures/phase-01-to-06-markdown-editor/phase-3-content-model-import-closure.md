@@ -7,7 +7,7 @@
 
 > [!NOTE]
 > **Historical Supersession Notice (Client-Side PDF & Vault Ingestion):**  
-> While this document accurately records the Phase 3 closure as of 2026-08-26, the file import mechanism described in Section 2.2 (Base64 payload decoding and server-side PDF extraction) was permanently superseded. Ingestion now executes 100% in the client browser via Web Worker (`pdf.worker.ts`), utilizing 2D spatial clustering for Markdown tables (`pdf-table-extractor.ts`), Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR, and dispatching pure UTF-8 strings (`textContent: string`) or client-encrypted AES-GCM ciphertext to `importFile`. See [PDF Worker Extraction & Vault Import Closure Report](./pdf-worker-extraction-and-vault-import-closure.md).
+> While this document accurately records the Phase 3 closure as of 2026-08-26, the file import mechanism described in Section 2.2 (Base64 payload decoding and server-side PDF extraction) was permanently superseded. Ingestion now executes 100% in the client browser via Web Worker (`pdf.worker.ts`), utilizing 2D spatial clustering for Markdown tables (`pdf-table-extractor.ts`), Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR, and dispatching pure UTF-8 strings (`textContent: string`) or client-encrypted AES-GCM ciphertext to `importFile`. See [PDF Worker Extraction & Vault Import Closure Report](../extensions/pdf-worker-extraction-and-vault-import-closure.md).
 
 ---
 

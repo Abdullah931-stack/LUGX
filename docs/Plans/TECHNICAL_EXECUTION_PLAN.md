@@ -315,7 +315,7 @@ Verify that all document mutations pass through a single serialized write path u
 ## [Phase 12: Authentication, OAuth & Operation Ownership] — Status: ✅ CLOSED
 
 ### Current State
-Completed. Full resolution of Open Redirect and Host Header Injection vulnerabilities, verified atomic user synchronization, and strict 404 error mapping preventing resource enumeration. Documented in `docs/reference/phase-12-auth-ownership-closure.md`.
+Completed. Full resolution of Open Redirect and Host Header Injection vulnerabilities, verified atomic user synchronization, and strict 404 error mapping preventing resource enumeration. Documented in `docs/records/closures/phase-11-to-15-core-infrastructure/phase-12-auth-ownership-closure.md`.
 
 ### Derivation Constraint
 Phases 9, 10, and 11.
@@ -344,7 +344,7 @@ Prevent open redirects and cross-user resource access across all server routes, 
 ## [Phase 13: Stripe Webhooks & Subscriptions] — Status: ✅ CLOSED
 
 ### Current State
-Completed. Dedicated `subscription_events` table deployed, durable deduplication verified, period intervals derived from Stripe invoices, and ASCII diagrams upgraded to Mermaid. Documented in `docs/reference/phase-13-stripe-webhooks-subscriptions-closure.md`.
+Completed. Dedicated `subscription_events` table deployed, durable deduplication verified, period intervals derived from Stripe invoices, and ASCII diagrams upgraded to Mermaid. Documented in `docs/records/closures/phase-11-to-15-core-infrastructure/phase-13-stripe-webhooks-subscriptions-closure.md`.
 
 ### Derivation Constraint
 Phases 9, 10, and 12.
@@ -374,7 +374,7 @@ Establish durable, idempotent Stripe webhook handling with accurate subscription
 ## [Phase 14: Unused Supabase Storage Removal] — Status: ✅ CLOSED
 
 ### Current State
-Completed. Deprecated storage utilities and `storage_path` database columns purged; documents persist as text in Neon. Documented in `docs/reference/phase-14-supabase-storage-removal-closure.md`.
+Completed. Deprecated storage utilities and `storage_path` database columns purged; documents persist as text in Neon. Documented in `docs/records/closures/phase-11-to-15-core-infrastructure/phase-14-supabase-storage-removal-closure.md`.
 
 ### Derivation Constraint
 Authentication and file ownership closure.
@@ -398,9 +398,9 @@ Decommission unused Supabase Storage wrappers, removing dead code while preservi
 ## [Phase 15: Sanitization, Import & Export] — Status: ✅ CLOSED
 
 ### Current State
-Completed. Server-side 10MB text payload ceiling and PostgreSQL null-byte scrubbing (`\0`) enforced in `importFile`, disguised binary headers (PE/ELF/Mach-O/ZIP) rejected via `isDisguisedBinary` in `file-validator.ts`, filename path traversal sanitized via `sanitizeFilename`, and end-to-end round-trip fidelity verified across complex Arabic RTL, spatial GFM tables, code blocks, and adversarial payloads (`export-import-roundtrip.integration.test.ts`). Fully documented in [`phase-15-sanitization-import-export-closure.md`](../reference/phase-15-sanitization-import-export-closure.md).
+Completed. Server-side 10MB text payload ceiling and PostgreSQL null-byte scrubbing (`\0`) enforced in `importFile`, disguised binary headers (PE/ELF/Mach-O/ZIP) rejected via `isDisguisedBinary` in `file-validator.ts`, filename path traversal sanitized via `sanitizeFilename`, and end-to-end round-trip fidelity verified across complex Arabic RTL, spatial GFM tables, code blocks, and adversarial payloads (`export-import-roundtrip.integration.test.ts`). Fully documented in [`phase-15-sanitization-import-export-closure.md`](../records/closures/phase-11-to-15-core-infrastructure/phase-15-sanitization-import-export-closure.md).
 
-> **Architectural Note:** The client-side Web Worker PDF extraction, 2D spatial clustering table generation (`pdf-table-extractor.ts`), pure TypeScript Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR engine (`pdf-ocr-engine.ts`), PUA font corruption detection (`pdf-corruption-detector.ts`), and direct Zero-Knowledge vault import were completed and closed as an independent milestone documented in [`pdf-worker-extraction-and-vault-import-closure.md`](../reference/pdf-worker-extraction-and-vault-import-closure.md).
+> **Architectural Note:** The client-side Web Worker PDF extraction, 2D spatial clustering table generation (`pdf-table-extractor.ts`), pure TypeScript Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR engine (`pdf-ocr-engine.ts`), PUA font corruption detection (`pdf-corruption-detector.ts`), and direct Zero-Knowledge vault import were completed and closed as an independent milestone documented in [`pdf-worker-extraction-and-vault-import-closure.md`](../records/closures/extensions/pdf-worker-extraction-and-vault-import-closure.md).
 
 ### Derivation Constraint
 Phases 9 through 14.
@@ -433,7 +433,7 @@ Harden single secure content pipeline across import, normalization, editor previ
 ## [Phase 16: Zero-Knowledge Hybrid Encryption & Vault] — Status: ✅ CLOSED
 
 ### Current State
-Completed. Dual-tier hybrid encryption active: transparent local at-rest encryption in IndexedDB, 600K PBKDF2 Web Worker offloading, 12-word BIP-39 recovery seed, non-blocking conflict queue (`CONFLICT_LOCKED`), post-merge syntax integrity check, direct encrypted import pipeline in `sidebar.tsx`, and AI gatekeeper. Detailed in `HYBRID_ENCRYPTION_AND_VAULT_PLAN.md` and [Phase 16 Reference](../reference/phase-16/).
+Completed. Dual-tier hybrid encryption active: transparent local at-rest encryption in IndexedDB, 600K PBKDF2 Web Worker offloading, 12-word BIP-39 recovery seed, non-blocking conflict queue (`CONFLICT_LOCKED`), post-merge syntax integrity check, direct encrypted import pipeline in `sidebar.tsx`, and AI gatekeeper. Detailed in `HYBRID_ENCRYPTION_AND_VAULT_PLAN.md` and [Phase 16 Reference](../records/closures/phase-16-vault-encryption/).
 
 ### Derivation Constraint
 Phases 1 through 15 closure.
@@ -471,7 +471,7 @@ Phases 1 through 16.
 Deploy structured operational telemetry, standardize correlation IDs across routes, and register automated cron sweepers for expired reservations.
 
 ### Direct Implementation Steps
-- **Step 1:** Document dual-mode rate limiting: fail-open for file/sync/auth endpoints, fail-closed for AI quotas in `ai-ops` (`docs/architecture/security-and-rate-limiting.md`).
+- **Step 1:** Document dual-mode rate limiting: fail-open for file/sync/auth endpoints, fail-closed for AI quotas in `ai-ops` (`docs/architecture/security/security-and-rate-limiting.md`).
 - **Step 2:** Add server-side AI telemetry: reservation latency, TTFT, stream duration, provider failure, refund failure, and commit conflict via zero-allocation structured logging.
 - **Step 3:** Inject `correlationId` and `operationId` into structured error payloads, API response headers (`X-Correlation-ID`), and NDJSON stream frames.
 - **Step 4:** Deploy cron route `/api/cron/expire-reservations` protected by `CRON_SECRET` and register in GitHub Actions (resolving TD-02).
@@ -575,7 +575,7 @@ Phase 20 is 100% closed and verified on 2026-09-19. All 11 critical verification
 - Browser-driven E2E suite (`npx playwright test`): 14 suites, 15 user journeys passed (100%) in Chromium with `retries: 0`.
 - CI Pipeline Integration: Playwright E2E browser testing officially integrated as Stage 6 of `.github/workflows/ci.yml` with failure artifact uploads.
 - Production build compilation (`npm run build`): 17 static and dynamic routes compiled successfully in 53s.
-The official Final Verification Dossier is published in [`docs/reference/phase-20-production-readiness-dossier.md`](../reference/phase-20-production-readiness-dossier.md).
+The official Final Verification Dossier is published in [`docs/reference/phase-20-production-readiness-dossier.md`](../records/closures/phase-17-to-20-production-readiness/phase-20-production-readiness-dossier.md).
 
 ### Derivation Constraint
 - Official `CLOSED` state recorded for Phase 18 (Multi-System Integration Testing). (Verified ✅)

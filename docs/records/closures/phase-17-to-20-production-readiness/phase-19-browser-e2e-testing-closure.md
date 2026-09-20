@@ -6,7 +6,7 @@
 **Test Engine:** Playwright v1.63.0 / Chromium Headless  
 **Web Server Harness:** `npx next dev --port 3001` (Isolated port & environment)  
 **Active Test Database:** `TEST_DATABASE_URL` against dedicated Neon branch (`ep-dry-rain-b1kfmpgk-pooler.c-5.eu-central-1.aws.neon.tech:5432`)  
-**Resolution of Technical Debt:** [TD-07 in TECHNICAL_DEBT_REGISTER.md](../TECHNICAL_DEBT_REGISTER.md) is officially **RESOLVED**.
+**Resolution of Technical Debt:** [TD-07 in TECHNICAL_DEBT_REGISTER.md](../../../TECHNICAL_DEBT_REGISTER.md) is officially **RESOLVED**.
 
 ---
 

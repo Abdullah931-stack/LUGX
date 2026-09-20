@@ -20,7 +20,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   guarded `cleanupTestUsers()`, and per-suite id ownership remain as defense-in-depth.
 - Full architecture, guard rules and closure evidence:
   [`reference/test-database-isolation.md`](reference/test-database-isolation.md).
-  Background incident: [`records/test-database-safety.md`](records/test-database-safety.md).
+  Background incident: [`records/incidents/test-database-safety.md`](records/incidents/test-database-safety.md).
 
 ## TD-02 — Quota TTL sweeper is not wired to any scheduler — ✅ RESOLVED (Phase 17)
 

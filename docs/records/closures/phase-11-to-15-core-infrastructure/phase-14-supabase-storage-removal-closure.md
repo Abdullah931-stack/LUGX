@@ -35,8 +35,8 @@ In the original founding specifications, Supabase Storage (`user-files` bucket) 
 
 ### D. Documentation & Environment Sync
 - **`.env.example`**: Updated header `# Supabase (Auth & Storage)` to `# Supabase (Authentication)`.
-- **`docs/architecture/security-and-rate-limiting.md`**: Removed reference to `storage.ts`.
-- **`docs/architecture/file-ownership-and-versioning.md`**: Updated description of cross-user ownership test coverage.
+- **`docs/architecture/security/security-and-rate-limiting.md`**: Removed reference to `storage.ts`.
+- **`docs/architecture/sync/file-ownership-and-versioning.md`**: Updated description of cross-user ownership test coverage.
 - **`docs/README.md`**: Added Phase 14 closure record to the reference table.
 - **`docs/CHANGELOG.md`**: Documented release 1.10.0 changes.
 - **`docs/Plans/TECHNICAL_EXECUTION_PLAN.md`**: Marked Phase 14 as `CLOSED` and opened transition gate to Phase 15.

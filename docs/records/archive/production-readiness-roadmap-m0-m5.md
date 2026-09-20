@@ -3,7 +3,7 @@
 > **Point-in-time engineering record (branch `production-readiness`, 2026-08-16).**
 > The companion file `EXECUTION_STATE.md` referenced below **no longer exists in
 > the repository**; its deferred-work content has been consolidated into the
-> living [`TECHNICAL_DEBT_REGISTER.md`](../TECHNICAL_DEBT_REGISTER.md).
+> living [`TECHNICAL_DEBT_REGISTER.md`](../../TECHNICAL_DEBT_REGISTER.md).
 
 **Branch:** `production-readiness` (based on `merge` @ `188c443`)
 **Date:** 2026-08-16

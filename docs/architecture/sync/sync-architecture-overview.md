@@ -250,7 +250,7 @@ if (document.visibilityState === "visible" && pendingLocalSyncRef.current) {
 
 ## React Integration
 
-Actual hook contract from [`src/hooks/use-sync.ts`](../../src/hooks/use-sync.ts):
+Actual hook contract from [`src/hooks/use-sync.ts`](../../../src/hooks/use-sync.ts):
 
 ```tsx
 import { useSync } from '@/hooks/use-sync';
@@ -273,7 +273,7 @@ function EditorPage({ fileId }: { fileId: string }) {
     autoSyncInterval: 30000,
     // Conflicts are NOT returned by the hook; they surface either through the
     // optional `onConflict` callback option or through the editor orchestrator
-    // (see docs/architecture/editor-sync-orchestration.md).
+    // (see docs/architecture/sync/editor-sync-orchestration.md).
     onConflict: async (conflict) => 'merge',
   });
 
