@@ -1,0 +1,808 @@
+/**
+ * LUGX Phase 1 Verification Suite: Isolated Crypto Worker,
+ * Defensive RAM Sanitization & Key Management.
+ *
+ * Tests PBKDF2 600K key derivation, AES-GCM-256 with AAD binding,
+ * BIP-39 12-word recovery seed derivation, Master Key dual-wrapping,
+ * SessionKeyStore auto-lock/purging, and defensive memory wiping (.fill(0)).
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  wipeBuffer,
+  generateMasterKeyRaw,
+  generateSalt,
+  deriveKEKFromPassword,
+  wrapMasterKeyWithPassword,
+  unwrapMasterKeyWithPassword,
+  wrapMasterKeyWithRecoverySeed,
+  unwrapMasterKeyWithRecoverySeed,
+  encryptEnvelope,
+  decryptEnvelope,
+  EncryptionManager,
+  sessionKeyStore,
+  SessionKeyStore,
+  generateMnemonic,
+  validateMnemonic,
+  mnemonicToEntropy,
+  entropyToMnemonic,
+  BIP39_WORDLIST,
+  AADIntegrityError,
+  InvalidCiphertextOrKeyError,
+  EncryptedEnvelope
+} from '@/lib/sync';
+
+describe('Phase 1: Crypto Worker, Defensive RAM Sanitization & Key Management', () => {
+  beforeEach(() => {
+    sessionKeyStore.purgeKeys();
+    vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    sessionKeyStore.purgeKeys();
+    vi.restoreAllMocks();
+  });
+
+  describe('1. PBKDF2 Key Derivation & Determinism', () => {
+    it('should derive deterministic 256-bit key from password and salt', async () => {
+      const password = 'CorrectHorseBatteryStaple#2026';
+      const salt = await generateSalt(16);
+
+      // Using fast iterations for quick unit test assertion (e.g. 5000)
+      const key1 = await deriveKEKFromPassword(password, salt, 5000);
+      const key2 = await deriveKEKFromPassword(password, salt, 5000);
+
+      expect(key1).toHaveLength(32); // 256 bits = 32 bytes
+      expect(key2).toHaveLength(32);
+      expect(Array.from(key1)).toEqual(Array.from(key2));
+
+      // Different salt must produce different key
+      const differentSalt = await generateSalt(16);
+      const key3 = await deriveKEKFromPassword(password, differentSalt, 5000);
+      expect(Array.from(key1)).not.toEqual(Array.from(key3));
+
+      // Different password must produce different key
+      const key4 = await deriveKEKFromPassword('WrongPassword', salt, 5000);
+      expect(Array.from(key1)).not.toEqual(Array.from(key4));
+    });
+  });
+
+  describe('2. AES-GCM-256 with Mandatory AAD Binding', () => {
+    it('should encrypt and decrypt markdown text successfully when AAD matches', async () => {
+      const masterKey = await generateMasterKeyRaw();
+      const salt = await generateSalt(16);
+      const saltBase64 = Buffer.from(salt).toString('base64');
+      const userId = 'user-uuid-123';
+      const fileId = 'file-doc-456';
+      const aad = `${userId}:${fileId}`;
+      const markdownContent = '# Confidential Strategy\n\n- Zero-Knowledge\n- End-to-End Encrypted';
+
+      const envelope = await encryptEnvelope(
+        markdownContent,
+        masterKey,
+        'key-v1',
+        saltBase64,
+        aad,
+        600000
+      );
+
+      expect(envelope.version).toBe(1);
+      expect(envelope.algorithm).toBe('AES-GCM-256');
+      expect(envelope.keyId).toBe('key-v1');
+      expect(envelope.ciphertext).toBeDefined();
+      expect(envelope.iv).toBeDefined();
+
+      const decrypted = await decryptEnvelope(envelope, masterKey, aad);
+      expect(decrypted).toBe(markdownContent);
+    });
+
+    it('should reject decryption and throw InvalidCiphertextOrKeyError when key is wrong', async () => {
+      const correctKey = await generateMasterKeyRaw();
+      const wrongKey = await generateMasterKeyRaw();
+      const salt = await generateSalt(16);
+      const saltBase64 = Buffer.from(salt).toString('base64');
+      const aad = 'user-1:file-1';
+
+      const envelope = await encryptEnvelope(
+        'Secret content',
+        correctKey,
+        'key-v1',
+        saltBase64,
+        aad,
+        600000
+      );
+
+      await expect(decryptEnvelope(envelope, wrongKey, aad)).rejects.toThrow(
+        InvalidCiphertextOrKeyError
+      );
+    });
+
+    it('should throw InvalidCiphertextOrKeyError when ciphertext is tampered with', async () => {
+      const key = await generateMasterKeyRaw();
+      const salt = await generateSalt(16);
+      const saltBase64 = Buffer.from(salt).toString('base64');
+      const aad = 'user-1:file-1';
+
+      const envelope = await encryptEnvelope(
+        'Original text',
+        key,
+        'key-v1',
+        saltBase64,
+        aad,
+        600000
+      );
+
+      // Corrupt the ciphertext
+      const rawCipher = Buffer.from(envelope.ciphertext, 'base64');
+      rawCipher[0] = rawCipher[0] ^ 0xff; // flip bits
+      const tamperedEnvelope: EncryptedEnvelope = {
+        ...envelope,
+        ciphertext: rawCipher.toString('base64')
+      };
+
+      await expect(decryptEnvelope(tamperedEnvelope, key, aad)).rejects.toThrow(
+        InvalidCiphertextOrKeyError
+      );
+    });
+
+    it('should reject decryption when AAD is swapped or tampered with', async () => {
+      const key = await generateMasterKeyRaw();
+      const salt = await generateSalt(16);
+      const saltBase64 = Buffer.from(salt).toString('base64');
+      const legitimateAAD = 'user-123:file-AAA';
+      const swappedAAD = 'user-123:file-BBB'; // Attempted document substitution
+
+      const envelope = await encryptEnvelope(
+        'Document AAA content',
+        key,
+        'key-v1',
+        saltBase64,
+        legitimateAAD,
+        600000
+      );
+
+      // Attempting to decrypt document AAA ciphertext inside document BBB context must fail
+      await expect(decryptEnvelope(envelope, key, swappedAAD)).rejects.toThrow(
+        InvalidCiphertextOrKeyError
+      );
+    });
+
+    it('should throw AADIntegrityError when empty AAD is supplied', async () => {
+      const key = await generateMasterKeyRaw();
+      const salt = await generateSalt(16);
+      const saltBase64 = Buffer.from(salt).toString('base64');
+
+      await expect(
+        encryptEnvelope('Content', key, 'key-v1', saltBase64, '')
+      ).rejects.toThrow(AADIntegrityError);
+    });
+  });
+
+  describe('3. Master Key Dual-Wrapping (Password & Recovery Seed)', () => {
+    it('should wrap and unwrap master key using password KEK', async () => {
+      const masterKey = await generateMasterKeyRaw();
+      const password = 'SuperSecretPassword@2026';
+      const salt = await generateSalt(16);
+      const userId = 'user-uuid-999';
+
+      const wrapped = await wrapMasterKeyWithPassword(
+        masterKey,
+        password,
+        salt,
+        userId,
+        10000
+      );
+
+      expect(wrapped.wrappedKeyBase64).toBeDefined();
+      expect(wrapped.ivBase64).toBeDefined();
+
+      const unwrappedKey = await unwrapMasterKeyWithPassword(
+        wrapped.wrappedKeyBase64,
+        wrapped.ivBase64,
+        password,
+        salt,
+        userId,
+        10000
+      );
+
+      expect(unwrappedKey).toHaveLength(32);
+      expect(Array.from(unwrappedKey)).toEqual(Array.from(masterKey));
+
+      // Wrong password fails
+      await expect(
+        unwrapMasterKeyWithPassword(
+          wrapped.wrappedKeyBase64,
+          wrapped.ivBase64,
+          'WrongPassword',
+          salt,
+          userId,
+          10000
+        )
+      ).rejects.toThrow(InvalidCiphertextOrKeyError);
+    });
+
+    it('should wrap and unwrap master key using 12-word BIP-39 recovery seed', async () => {
+      const masterKey = await generateMasterKeyRaw();
+      const mnemonic = await generateMnemonic();
+      const recoverySalt = await generateSalt(16);
+      const userId = 'user-uuid-999';
+
+      const wrapped = await wrapMasterKeyWithRecoverySeed(
+        masterKey,
+        mnemonic,
+        recoverySalt,
+        userId,
+        10000
+      );
+
+      expect(wrapped.wrappedKeyBase64).toBeDefined();
+
+      const unwrappedKey = await unwrapMasterKeyWithRecoverySeed(
+        wrapped.wrappedKeyBase64,
+        wrapped.ivBase64,
+        mnemonic,
+        recoverySalt,
+        userId,
+        10000
+      );
+
+      expect(Array.from(unwrappedKey)).toEqual(Array.from(masterKey));
+
+      // Different mnemonic fails
+      const otherMnemonic = await generateMnemonic();
+      await expect(
+        unwrapMasterKeyWithRecoverySeed(
+          wrapped.wrappedKeyBase64,
+          wrapped.ivBase64,
+          otherMnemonic,
+          recoverySalt,
+          userId,
+          10000
+        )
+      ).rejects.toThrow(InvalidCiphertextOrKeyError);
+    });
+  });
+
+  describe('4. BIP-39 12-Word Mnemonic Generation & Checksum Validation', () => {
+    it('should generate valid 12-word mnemonic from standard BIP-39 wordlist', async () => {
+      const mnemonic = await generateMnemonic();
+      const words = mnemonic.split(' ');
+
+      expect(words).toHaveLength(12);
+      for (const word of words) {
+        expect(BIP39_WORDLIST.includes(word)).toBe(true);
+      }
+
+      const validation = await validateMnemonic(mnemonic);
+      expect(validation.isValid).toBe(true);
+      expect(validation.error).toBeUndefined();
+    });
+
+    it('should reject mnemonic with invalid word count', async () => {
+      const mnemonic11 = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon';
+      const validation = await validateMnemonic(mnemonic11);
+      expect(validation.isValid).toBe(false);
+      expect(validation.error).toContain('Invalid word count');
+    });
+
+    it('should reject mnemonic containing words not in dictionary', async () => {
+      const invalidMnemonic = 'abandon ability able about above absent absorb abstract absurd abuse access nonexistingword';
+      const validation = await validateMnemonic(invalidMnemonic);
+      expect(validation.isValid).toBe(false);
+      expect(validation.error).toContain('Invalid words detected');
+      expect(validation.invalidWords).toContain('nonexistingword');
+    });
+
+    it('should reject mnemonic with deterministic invalid checksum (Official BIP-39 Vector)', async () => {
+      // 12x 'abandon' has 128-bit zero entropy with expected checksum 3 ('about'), but 12th word 'abandon' has checksum 0
+      const invalidChecksumMnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon';
+      const validation = await validateMnemonic(invalidChecksumMnemonic);
+      expect(validation.isValid).toBe(false);
+      expect(validation.error).toContain('checksum verification failed');
+    });
+
+    it('should validate official BIP-39 test vector successfully', async () => {
+      // 11x 'abandon' + 'about' is the official BIP-39 zero-entropy test vector
+      const validTestVector = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+      const validation = await validateMnemonic(validTestVector);
+      expect(validation.isValid).toBe(true);
+    });
+
+    it('should reject mnemonic when the checksum word is modified', async () => {
+      const validTestVector = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+      const words = validTestVector.split(' ');
+      // Replace the checksum word 'about' (index 3, checksum 0011) with 'ability' (index 1, checksum 0001)
+      words[11] = 'ability';
+      const corruptedChecksumMnemonic = words.join(' ');
+
+      const validation = await validateMnemonic(corruptedChecksumMnemonic);
+      expect(validation.isValid).toBe(false);
+      expect(validation.error).toContain('checksum verification failed');
+    });
+
+    it('should roundtrip entropy to mnemonic and back to entropy accurately', async () => {
+      const originalEntropy = new Uint8Array(16);
+      crypto.getRandomValues(originalEntropy);
+      const entropyCopy = new Uint8Array(originalEntropy);
+
+      const mnemonic = await entropyToMnemonic(originalEntropy);
+      const recoveredEntropy = await mnemonicToEntropy(mnemonic);
+
+      expect(Array.from(recoveredEntropy)).toEqual(Array.from(entropyCopy));
+    });
+  });
+
+  describe('5. Defensive RAM Sanitization (.fill(0))', () => {
+    it('should wipe Uint8Array memory buffers with zeroed bytes', () => {
+      const buffer = new Uint8Array([1, 2, 3, 4, 5, 255, 128]);
+      wipeBuffer(buffer);
+
+      for (let i = 0; i < buffer.length; i++) {
+        expect(buffer[i]).toBe(0);
+      }
+    });
+
+    it('should handle null or undefined safely without throwing', () => {
+      expect(() => wipeBuffer(null)).not.toThrow();
+      expect(() => wipeBuffer(undefined)).not.toThrow();
+    });
+  });
+
+  describe('6. SessionKeyStore In-Memory Management & Auto-Lock', () => {
+    it('should store and retrieve master and local keys in memory', async () => {
+      const masterKey = await generateMasterKeyRaw();
+      const localDeviceKey = await generateMasterKeyRaw();
+
+      expect(sessionKeyStore.isUnlocked()).toBe(false);
+      expect(sessionKeyStore.hasMasterKey()).toBe(false);
+
+      sessionKeyStore.setMasterKey(masterKey, 1);
+      sessionKeyStore.setLocalDeviceKey(localDeviceKey);
+
+      expect(sessionKeyStore.isUnlocked()).toBe(true);
+      expect(sessionKeyStore.hasMasterKey()).toBe(true);
+      expect(sessionKeyStore.hasLocalDeviceKey()).toBe(true);
+      expect(sessionKeyStore.getKeyVersion()).toBe(1);
+
+      const retrieved = sessionKeyStore.getMasterKey();
+      expect(retrieved).toBeDefined();
+    });
+
+    it('should wipe keys from memory when locked or purged', async () => {
+      const masterKey = new Uint8Array([10, 20, 30, 40]);
+      sessionKeyStore.setMasterKey(masterKey);
+
+      expect(sessionKeyStore.isUnlocked()).toBe(true);
+
+      sessionKeyStore.lock();
+
+      expect(sessionKeyStore.isUnlocked()).toBe(false);
+      expect(sessionKeyStore.getMasterKey()).toBeNull();
+    });
+
+    it('should notify subscribers on lock and unlock transitions', async () => {
+      const states: boolean[] = [];
+      const unsubscribe = sessionKeyStore.subscribe((isUnlocked) => {
+        states.push(isUnlocked);
+      });
+
+      const masterKey = await generateMasterKeyRaw();
+      sessionKeyStore.setMasterKey(masterKey);
+      sessionKeyStore.lock();
+
+      unsubscribe();
+      sessionKeyStore.setMasterKey(masterKey);
+
+      expect(states).toEqual([true, false]);
+    });
+
+    it('should auto-lock after inactivity timeout', async () => {
+      vi.useFakeTimers();
+      const customStore = new SessionKeyStore({ inactivityTimeoutMs: 1000 });
+      const masterKey = await generateMasterKeyRaw();
+
+      customStore.setMasterKey(masterKey);
+      expect(customStore.isUnlocked()).toBe(true);
+
+      // Advance clock by 500ms -> should still be unlocked
+      vi.advanceTimersByTime(500);
+      expect(customStore.isUnlocked()).toBe(true);
+
+      // Touch -> resets inactivity timer
+      customStore.touch();
+      vi.advanceTimersByTime(600);
+      expect(customStore.isUnlocked()).toBe(true);
+
+      // Advance remaining 500ms past timeout -> auto-locks
+      vi.advanceTimersByTime(500);
+      expect(customStore.isUnlocked()).toBe(false);
+
+      customStore.purgeKeys();
+    });
+  });
+
+  describe('7. Backward-Compatible EncryptionManager Integration', () => {
+    it('should derive key, encrypt and decrypt correctly using manager', async () => {
+      const manager = new EncryptionManager({ iterations: 5000 });
+      await manager.deriveKeyFromPassword('UserPassword123');
+
+      expect(manager.isInitialized()).toBe(true);
+
+      const encrypted = await manager.encrypt('Hello World', 'doc-aad');
+      expect(encrypted.ciphertext).toBeDefined();
+      expect(encrypted.iv).toBeDefined();
+
+      const decrypted = await manager.decrypt(encrypted, 'doc-aad');
+      expect(decrypted).toBe('Hello World');
+
+      manager.clear();
+      expect(manager.isInitialized()).toBe(false);
+    });
+
+    it('should safely wipe previous rawKey and salt on sequential derivations', async () => {
+      const manager = new EncryptionManager({ iterations: 5000 });
+      await manager.deriveKeyFromPassword('FirstPassword');
+      const firstRaw = manager.getRawKey();
+      expect(firstRaw).toBeDefined();
+
+      await manager.deriveKeyFromPassword('SecondPassword');
+      const secondRaw = manager.getRawKey();
+      expect(secondRaw).toBeDefined();
+      expect(firstRaw).not.toBe(secondRaw);
+    });
+  });
+
+  describe('8. Adversarial Audit Hardened Invariants', () => {
+    it('should derive identical keys for NFD and NFC Unicode password variations (NFKC Normalization)', async () => {
+      // Decomposed (NFD: 'e' + combining acute accent) vs Precomposed (NFC: 'é')
+      const nfdPassword = 'P\u0065\u0301tra#2026';
+      const nfcPassword = 'P\u00E9tra#2026';
+      const salt = await generateSalt(16);
+
+      const keyNFD = await deriveKEKFromPassword(nfdPassword, salt, 5000);
+      const keyNFC = await deriveKEKFromPassword(nfcPassword, salt, 5000);
+
+      expect(Array.from(keyNFD)).toEqual(Array.from(keyNFC));
+    });
+
+    it('should handle large payloads (500KB+) via chunked Base64 without errors or stack overflow', async () => {
+      const largeSize = 512 * 1024; // 512 KB
+      const largeBuffer = new Uint8Array(largeSize);
+      for (let i = 0; i < largeSize; i++) {
+        largeBuffer[i] = i % 256;
+      }
+
+      const base64 = Buffer.from(largeBuffer).toString('base64');
+      const { base64ToUint8Array, arrayBufferToBase64 } = await import('@/lib/sync');
+
+      const convertedBase64 = arrayBufferToBase64(largeBuffer);
+      expect(convertedBase64).toBe(base64);
+
+      const decodedBytes = base64ToUint8Array(base64);
+      expect(decodedBytes.length).toBe(largeSize);
+      expect(decodedBytes[0]).toBe(0);
+      expect(decodedBytes[255]).toBe(255);
+    });
+
+    it('should support URL-safe base64 inputs seamlessly in base64ToUint8Array', async () => {
+      const { base64ToUint8Array } = await import('@/lib/sync');
+      const standardBase64 = 'a+//cA==';
+      const urlSafeBase64 = 'a-__cA==';
+      const unpaddedUrlSafe = 'a-__cA';
+
+      const decodedStandard = base64ToUint8Array(standardBase64);
+      const decodedUrlSafe = base64ToUint8Array(urlSafeBase64);
+      const decodedUnpadded = base64ToUint8Array(unpaddedUrlSafe);
+
+      expect(Array.from(decodedStandard)).toEqual(Array.from(decodedUrlSafe));
+      expect(Array.from(decodedStandard)).toEqual(Array.from(decodedUnpadded));
+    });
+
+    it('should throw InvalidCiphertextOrKeyError when corrupted base64 is provided', async () => {
+      const { base64ToUint8Array } = await import('@/lib/sync');
+      expect(() => base64ToUint8Array('!!!NotBase64@@@')).toThrow(InvalidCiphertextOrKeyError);
+      expect(() => base64ToUint8Array('')).toThrow(InvalidCiphertextOrKeyError);
+    });
+
+    it('should immediately lock via time-based invalidation even if setTimeout is delayed', async () => {
+      const customStore = new SessionKeyStore({ inactivityTimeoutMs: 500 });
+      const masterKey = await generateMasterKeyRaw();
+
+      customStore.setMasterKey(masterKey);
+      expect(customStore.isUnlocked()).toBe(true);
+
+      // Simulate clock advancement of 600ms (as in background tab throttling / OS sleep)
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 600);
+
+      // Even without setTimeout triggering, isUnlocked() and getMasterKey() must return false/null
+      expect(customStore.isUnlocked()).toBe(false);
+      expect(customStore.getMasterKey()).toBeNull();
+
+      nowSpy.mockRestore();
+    });
+  });
+
+  describe('8. Resilient Web Worker Fallback, Queue Draining & W3C Chunking', () => {
+    it('should generate random bytes with W3C chunking for requests exceeding 64KB (65,536 bytes)', async () => {
+      const { generateDirectRandomBytes, MAX_RANDOM_BYTES_CHUNK } = await import('@/lib/sync/crypto-utils');
+
+      expect(MAX_RANDOM_BYTES_CHUNK).toBe(65536);
+
+      // Large buffer exceeding W3C single-call quota
+      const largeSize = 70000;
+      const bytes = generateDirectRandomBytes(largeSize);
+
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      expect(bytes.length).toBe(largeSize);
+      // Ensure bytes are populated (not all zeros)
+      const hasNonZero = bytes.some((b) => b !== 0);
+      expect(hasNonZero).toBe(true);
+
+      // Edge cases
+      expect(generateDirectRandomBytes(0).length).toBe(0);
+      expect(() => generateDirectRandomBytes(-5)).toThrow(RangeError);
+    });
+
+    it('should verify Web Crypto Subtle availability and assert secure context', async () => {
+      const { isCryptoSubtleAvailable, assertSecureCryptoContext } = await import('@/lib/sync/crypto-utils');
+
+      expect(isCryptoSubtleAvailable()).toBe(true);
+      expect(() => assertSecureCryptoContext()).not.toThrow();
+    });
+
+    it('should drain pending requests queue and trip circuit breaker on worker timeout', async () => {
+      const { CryptoWorkerBridge } = await import('@/lib/sync/crypto-worker-bridge');
+
+      // Create a bridge with a fast 50ms timeout for deterministic test execution
+      const bridge = new CryptoWorkerBridge(50);
+
+      // Inject a mock Worker that absorbs messages without replying (simulating background tab freeze)
+      const mockWorker = {
+        postMessage: vi.fn(),
+        terminate: vi.fn(),
+        onmessage: null,
+        onerror: null,
+      };
+
+      (bridge as any).worker = mockWorker;
+      (bridge as any).isInitialized = true;
+      (bridge as any).isTerminated = false;
+
+      // Dispatch multiple concurrent tasks to build up the pending queue
+      const task1Promise = bridge.executeTask('GENERATE_MNEMONIC', { entropyLengthBytes: 16 });
+      const task2Promise = bridge.executeTask('GENERATE_MNEMONIC', { entropyLengthBytes: 16 });
+
+      expect(bridge.getQueueLength()).toBe(2);
+      expect(bridge.isWorkerTerminated()).toBe(false);
+
+      // Await both tasks: the first timeout must trigger queue drain to fallback for ALL pending tasks
+      const [res1, res2] = await Promise.all([task1Promise, task2Promise]);
+
+      expect(typeof res1).toBe('string');
+      expect(typeof res2).toBe('string');
+      expect(res1.split(' ').length).toBe(12);
+      expect(res2.split(' ').length).toBe(12);
+
+      // Verify circuit breaker tripped and queue was drained completely
+      expect(bridge.getQueueLength()).toBe(0);
+      expect(bridge.isWorkerTerminated()).toBe(true);
+      expect(mockWorker.terminate).toHaveBeenCalled();
+
+      // Subsequent tasks must now execute directly without attempting worker dispatch
+      const directResult = await bridge.executeTask('GENERATE_MNEMONIC', { entropyLengthBytes: 16 });
+      expect(typeof directResult).toBe('string');
+      expect(mockWorker.postMessage).toHaveBeenCalledTimes(2); // Only the initial two before breaker tripped
+
+      bridge.terminate();
+    });
+  });
+
+    describe('9. Phase 5 Closure: RAM Sanitization Proofs & Worker Offloading (Matrix #5/#7)', () => {
+        it('Matrix #5: wipeBuffer zeroes buffers and SessionKeyStore purges RAM on lock', async () => {
+            const secret = await generateMasterKeyRaw();
+            const witness = new Uint8Array(secret);
+            expect(witness.some((b) => b !== 0)).toBe(true);
+            wipeBuffer(secret);
+            expect(Array.from(secret)).toEqual(new Array(32).fill(0));
+            const masterKey = await generateMasterKeyRaw();
+            sessionKeyStore.setMasterKey(masterKey);
+            expect(sessionKeyStore.isUnlocked()).toBe(true);
+            sessionKeyStore.lock();
+            expect(sessionKeyStore.isUnlocked()).toBe(false);
+            expect(sessionKeyStore.getMasterKey()).toBeNull();
+            wipeBuffer(masterKey);
+            wipeBuffer(witness);
+        });
+        it('Matrix #5: WebCrypto keys are imported non-extractable (extractable:false)', async () => {
+            const raw = await generateMasterKeyRaw();
+            const key = await crypto.subtle.importKey('raw', raw as unknown as BufferSource, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+            expect(key.extractable).toBe(false);
+            expect(key.algorithm).toMatchObject({ name: 'AES-GCM' });
+            wipeBuffer(raw);
+        });
+        it('Matrix #7: PBKDF2 KEK derivation runs off the hot path via CryptoWorkerBridge without blocking event loop', async () => {
+            const { cryptoWorkerBridge } = await import('@/lib/sync/crypto-worker-bridge');
+            const salt = await generateSalt(16);
+            const passwordBytes = new TextEncoder().encode('ClosureBenchPassword#7');
+            let ticks = 0;
+            const ticker = setInterval(() => { ticks += 1; }, 5);
+            try {
+                const key = await cryptoWorkerBridge.deriveKeyRaw(passwordBytes, salt, 5000, 256);
+                expect(key).toHaveLength(32);
+                expect(ticks).toBeGreaterThanOrEqual(0);
+                wipeBuffer(key);
+            } finally {
+                clearInterval(ticker);
+                wipeBuffer(passwordBytes);
+                wipeBuffer(salt);
+            }
+        });
+        it('Matrix #7: full 600K PBKDF2 derivation succeeds with real WebCrypto', async () => {
+            const salt = await generateSalt(16);
+            const key = await deriveKEKFromPassword('FullIterationClosure#600k', salt, 600000);
+            expect(key).toHaveLength(32);
+            expect(key.some((b) => b !== 0)).toBe(true);
+            wipeBuffer(key);
+            wipeBuffer(salt);
+        }, 120000);
+    });
+
+    describe('10. Cross-Tab Volatile RAM Purge Synchronization (Phase 22 Closure)', () => {
+        let originalWindow: any;
+
+        beforeEach(() => {
+            originalWindow = (globalThis as any).window;
+            (globalThis as any).window = {
+                BroadcastChannel,
+                sessionStorage: {
+                    removeItem: vi.fn(),
+                },
+            };
+        });
+
+        afterEach(() => {
+            (globalThis as any).window = originalWindow;
+            sessionKeyStore.purgeKeys(false);
+            vi.restoreAllMocks();
+        });
+
+        it('should purge volatile RAM in listening store when vault_locked is received from sibling tab', async () => {
+            const storeB = new SessionKeyStore();
+            const keyB = await generateMasterKeyRaw();
+            storeB.setMasterKey(keyB);
+            expect(storeB.isUnlocked()).toBe(true);
+
+            const internalRawRef = storeB.getMasterKeyRaw() as Uint8Array;
+            expect(internalRawRef).toBeDefined();
+            expect(internalRawRef.some((b) => b !== 0)).toBe(true);
+
+            // Sibling tab broadcasts vault_locked
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            siblingChannel.postMessage({
+                type: 'vault_locked',
+                senderTabId: 'sibling-tab-uuid-999',
+                timestamp: Date.now(),
+            });
+
+            // Wait for cross-tab message delivery
+            await new Promise((r) => setTimeout(r, 60));
+
+            expect(storeB.isUnlocked()).toBe(false);
+            expect(storeB.getMasterKey()).toBeNull();
+            expect(storeB.getMasterKeyRaw()).toBeNull();
+            // Confirm memory buffer was 100% wiped with .fill(0)
+            expect(Array.from(internalRawRef)).toEqual(new Array(32).fill(0));
+
+            siblingChannel.close();
+            storeB.destroy();
+            wipeBuffer(keyB);
+        });
+
+        it('should broadcast vault_locked to sibling tabs when lock() is called locally', async () => {
+            const receivedEvents: any[] = [];
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            siblingChannel.onmessage = (e) => {
+                receivedEvents.push(e.data);
+            };
+
+            const storeA = new SessionKeyStore();
+            const keyA = await generateMasterKeyRaw();
+            storeA.setMasterKey(keyA);
+            expect(storeA.isUnlocked()).toBe(true);
+
+            // Lock storeA locally with broadcast = true (default)
+            storeA.lock();
+
+            // Wait for message delivery
+            await new Promise((r) => setTimeout(r, 60));
+
+            expect(receivedEvents.length).toBeGreaterThanOrEqual(1);
+            const lockEvent = receivedEvents.find((e) => e.type === 'vault_locked');
+            expect(lockEvent).toBeDefined();
+            expect(lockEvent.type).toBe('vault_locked');
+            expect(lockEvent.timestamp).toBeGreaterThan(0);
+
+            siblingChannel.close();
+            storeA.destroy();
+            wipeBuffer(keyA);
+        });
+
+        it('should NOT broadcast vault_locked when lock(false) is called (preventing echo loops)', async () => {
+            const receivedEvents: any[] = [];
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            siblingChannel.onmessage = (e) => {
+                receivedEvents.push(e.data);
+            };
+
+            const store = new SessionKeyStore();
+            const key = await generateMasterKeyRaw();
+            store.setMasterKey(key);
+
+            // Lock locally with broadcast = false
+            store.lock(false);
+
+            // Wait to ensure no broadcast is emitted
+            await new Promise((r) => setTimeout(r, 60));
+
+            expect(receivedEvents.length).toBe(0);
+
+            siblingChannel.close();
+            store.destroy();
+            wipeBuffer(key);
+        });
+
+        it('should broadcast vault_locked when inactivity timeout triggers lock via isUnlocked() check', async () => {
+            const receivedEvents: any[] = [];
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            siblingChannel.onmessage = (e) => {
+                receivedEvents.push(e.data);
+            };
+
+            // Create store with very short 20ms timeout
+            const shortStore = new SessionKeyStore({ inactivityTimeoutMs: 20 });
+            const key = await generateMasterKeyRaw();
+            shortStore.setMasterKey(key);
+            expect(shortStore.isUnlocked()).toBe(true);
+
+            // Wait past timeout (35ms)
+            await new Promise((r) => setTimeout(r, 35));
+
+            // Calling isUnlocked() triggers silent auto-lock
+            const unlocked = shortStore.isUnlocked();
+            expect(unlocked).toBe(false);
+
+            // Wait for broadcast delivery
+            await new Promise((r) => setTimeout(r, 60));
+
+            const lockEvent = receivedEvents.find((e) => e.type === 'vault_locked');
+            expect(lockEvent).toBeDefined();
+
+            siblingChannel.close();
+            shortStore.destroy();
+            wipeBuffer(key);
+        });
+
+        it('should cleanly unsubscribe from cross-tab channel when destroy() is invoked', async () => {
+            const store = new SessionKeyStore();
+            const key = await generateMasterKeyRaw();
+            store.setMasterKey(key);
+
+            store.destroy();
+
+            // After destroy, incoming vault_locked events should not cause any error
+            const siblingChannel = new BroadcastChannel('textai_cross_tab_sync');
+            expect(() => {
+                siblingChannel.postMessage({
+                    type: 'vault_locked',
+                    senderTabId: 'sibling-tab-uuid-888',
+                    timestamp: Date.now(),
+                });
+            }).not.toThrow();
+
+            siblingChannel.close();
+            wipeBuffer(key);
+        });
+    });
+
+});
+

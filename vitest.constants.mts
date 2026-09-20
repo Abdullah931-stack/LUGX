@@ -11,31 +11,31 @@
  * live AI keys, Upstash Redis). They run ONLY via `npm run test:live`, never in default `npm run test`.
  */
 export const LIVE_TEST_FILES = [
-    'src/app/api/files/[id]/route.putguard.test.ts',
-    'src/server/actions/ai-ops.integrity.test.ts',
-    'src/server/actions/ai-ops.refund.test.ts',
-    'src/server/actions/file-ops.lostupdate.test.ts',
-    'src/server/actions/file-ops.ownership.test.ts',
-    'src/server/actions/file-ops.softdelete.test.ts',
-    'src/test/ai-atomic-commit.integration.test.ts',
-    'src/test/conflict-resolution.integration.test.ts',
+    'src/test/api/api-files-putguard.live.test.ts',
+    'src/test/ai/ai-ops.integrity.test.ts',
+    'src/test/ai/ai-ops.refund.test.ts',
+    'src/test/server/file-ops.lostupdate.test.ts',
+    'src/test/server/file-ops.ownership.test.ts',
+    'src/test/server/file-ops.softdelete.test.ts',
+    'src/test/ai/ai-atomic-commit.integration.test.ts',
+    'src/test/sync/conflict-resolution.integration.test.ts',
     // Live twins of previously fully-mocked suites:
-    'src/test/ai-quota-idempotency.live.test.ts',
-    'src/test/ai-server-atomic-commit.live.test.ts',
-    'src/test/editor-orchestration.live.test.ts',
-    'src/test/ai-preview-decision.live.test.ts',
-    'src/test/ai-reservation-status.live.test.ts',
-    'src/app/api/stripe/webhook/route.live.test.ts',
-    'src/test/cross-user-ownership.test.ts',
-    'src/test/cron-expire-reservations.live.test.ts',
-    'src/test/vault-sync.live.test.ts',
-    'src/test/document-pipeline.live.test.ts',
-    'src/test/multi-system-lifecycle.live.test.ts',
+    'src/test/ai/ai-quota-idempotency.live.test.ts',
+    'src/test/ai/ai-server-atomic-commit.live.test.ts',
+    'src/test/editor/editor-orchestration.live.test.ts',
+    'src/test/ai/ai-preview-decision.live.test.ts',
+    'src/test/ai/ai-reservation-status.live.test.ts',
+    'src/test/api/stripe-webhook.live.test.ts',
+    'src/test/server/cross-user-ownership.test.ts',
+    'src/test/infrastructure/cron-expire-reservations.live.test.ts',
+    'src/test/vault/vault-sync.live.test.ts',
+    'src/test/server/document-pipeline.live.test.ts',
+    'src/test/infrastructure/multi-system-lifecycle.live.test.ts',
 ];
 
 /**
  * Cloud E2E test suites gated to specific provider smoke runs.
  */
 export const CLOUD_E2E_FILES = [
-    'src/test/ai-live-e2e.test.ts',
+    'src/test/ai/ai-live-e2e.test.ts',
 ];

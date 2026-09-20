@@ -38,27 +38,27 @@ remain in place as a **second layer of defense**, not a substitute.
 
 LIVE suites registered in `vitest.constants.mts` (19 hermetic database suites):
 
-1. `src/app/api/files/[id]/route.putguard.test.ts`
-2. `src/server/actions/ai-ops.integrity.test.ts`
-3. `src/server/actions/ai-ops.refund.test.ts`
-4. `src/server/actions/file-ops.lostupdate.test.ts`
-5. `src/server/actions/file-ops.ownership.test.ts`
-6. `src/server/actions/file-ops.softdelete.test.ts`
-7. `src/test/ai-atomic-commit.integration.test.ts`
-8. `src/test/conflict-resolution.integration.test.ts`
-9. `src/test/ai-quota-idempotency.live.test.ts`
-10. `src/test/ai-server-atomic-commit.live.test.ts`
-11. `src/test/editor-orchestration.live.test.ts`
-12. `src/test/ai-preview-decision.live.test.ts`
-13. `src/test/ai-reservation-status.live.test.ts`
-14. `src/app/api/stripe/webhook/route.live.test.ts`
-15. `src/test/cross-user-ownership.test.ts`
-16. `src/test/cron-expire-reservations.live.test.ts`
-17. `src/test/vault-sync.live.test.ts`
-18. `src/test/document-pipeline.live.test.ts`
-19. `src/test/multi-system-lifecycle.live.test.ts`
+1. `src/test/api/api-files-putguard.live.test.ts`
+2. `src/test/ai/ai-ops.integrity.test.ts`
+3. `src/test/ai/ai-ops.refund.test.ts`
+4. `src/test/server/file-ops.lostupdate.test.ts`
+5. `src/test/server/file-ops.ownership.test.ts`
+6. `src/test/server/file-ops.softdelete.test.ts`
+7. `src/test/ai/ai-atomic-commit.integration.test.ts`
+8. `src/test/sync/conflict-resolution.integration.test.ts`
+9. `src/test/ai/ai-quota-idempotency.live.test.ts`
+10. `src/test/ai/ai-server-atomic-commit.live.test.ts`
+11. `src/test/editor/editor-orchestration.live.test.ts`
+12. `src/test/ai/ai-preview-decision.live.test.ts`
+13. `src/test/ai/ai-reservation-status.live.test.ts`
+14. `src/test/api/stripe-webhook.live.test.ts`
+15. `src/test/server/cross-user-ownership.test.ts`
+16. `src/test/infrastructure/cron-expire-reservations.live.test.ts`
+17. `src/test/vault/vault-sync.live.test.ts`
+18. `src/test/server/document-pipeline.live.test.ts`
+19. `src/test/infrastructure/multi-system-lifecycle.live.test.ts`
 
-*(Note: The external cloud integration suite `src/test/ai-live-e2e.test.ts` is explicitly isolated to Stage 7 `live-provider-smoke` and requires live provider API secrets).*
+*(Note: The external cloud integration suite `src/test/ai/ai-live-e2e.test.ts` is explicitly isolated to Stage 7 `live-provider-smoke` and requires live provider API secrets).*
 
 ### Formerly-mocked suites — LIVE twins now implemented (post Phase 10 follow-up)
 

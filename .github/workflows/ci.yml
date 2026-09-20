@@ -334,5 +334,5 @@ jobs:
             echo "Skipping live cloud smoke tests: TEST_DATABASE_URL or GEMINI_KEY_1 not configured in repository secrets."
           else
             echo "Running live e2e tests against isolated cloud environment..."
-            npx vitest run src/test/ai-live-e2e.test.ts --config vitest.live.config.ts
+            npx vitest run src/test/ai/ai-live-e2e.test.ts --config vitest.live.config.ts
           fi
