@@ -114,13 +114,13 @@ When recursively collecting descendant file/folder IDs for cascading deletion or
 
 ## 4. Verification & Testing Evidence
  
- - `src/test/cross-user-ownership.test.ts`: 11 integration tests verifying cross-user isolation across `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `importFile`, AI reservations, streaming, and atomic UPSERT user sync.
- - `src/server/actions/file-ops.ownership.test.ts`: Covers cross-user parent validation, cycle detection across arbitrary hierarchy depth, and precondition enforcement (428/412).
- - `src/app/api/files/[id]/route.putguard.test.ts`: Verifies lost-update mitigation and atomic ETag/version updates.
- - `src/server/actions/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments.
- - `src/server/actions/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job.
- - `src/test/file-ops-vault.unit.test.ts`: 10 unit tests covering `toggleFileEncryption` optimistic locking, folder rejection, and `copyFile` zero-knowledge encrypted overrides.
- - `src/server/actions/import-file.test.ts`: Tests text import, 10MB payload size ceiling, title deduplication, and null-byte sanitization.
- - `src/lib/parsers/pdf-settings.test.ts`: Unit tests verifying local preference toggling for spatial table extraction.
- - `src/test/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
- - Full suite execution: 60 test files, 740 tests passing (100% pass rate).
+ - `src/test/server/cross-user-ownership.test.ts`: 11 integration tests verifying cross-user isolation across `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `importFile`, AI reservations, streaming, and atomic UPSERT user sync.
+ - `src/test/server/file-ops.ownership.test.ts`: Covers cross-user parent validation, cycle detection across arbitrary hierarchy depth, and precondition enforcement (428/412).
+ - `src/test/api/api-files-putguard.live.test.ts`: Verifies lost-update mitigation and atomic ETag/version updates.
+ - `src/test/server/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments.
+ - `src/test/server/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job.
+ - `src/test/vault/file-ops-vault.unit.test.ts`: 10 unit tests covering `toggleFileEncryption` optimistic locking, folder rejection, and `copyFile` zero-knowledge encrypted overrides.
+ - `src/test/server/import-file.test.ts`: Tests text import, 10MB payload size ceiling, title deduplication, and null-byte sanitization.
+ - `src/test/parsers/parser-pdf-settings.test.ts`: Unit tests verifying local preference toggling for spatial table extraction.
+ - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
+ - Full suite execution: 67 test files, 817 tests passing (100% pass rate).

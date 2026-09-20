@@ -44,7 +44,7 @@ The following 4 `@tiptap/*` packages (and 63 transitive packages) were uninstall
 
 ### 3.1 Static & Zero-TipTap Invariant Audit
 - Repositories scanned across `src/` confirmed zero active `@tiptap` imports or calls.
-- `src/test/editor-phase2-replacement.test.ts` includes strict automated assertions verifying that `src/app/workspace/editor/[fileId]/page.tsx`, `src/components/editor/search-replace.tsx`, `src/hooks/use-editor-orchestrator.ts`, and `src/hooks/use-ai-stream.ts` have **zero** `@tiptap` imports.
+- `src/test/editor/editor-phase2-replacement.test.ts` includes strict automated assertions verifying that `src/app/workspace/editor/[fileId]/page.tsx`, `src/components/editor/search-replace.tsx`, `src/hooks/use-editor-orchestrator.ts`, and `src/hooks/use-ai-stream.ts` have **zero** `@tiptap` imports.
 
 ### 3.2 Automated Test Execution Evidence
 
@@ -55,7 +55,7 @@ The following 4 `@tiptap/*` packages (and 63 transitive packages) were uninstall
 | **TypeScript Type Checking (`npx tsc --noEmit`)** | Whole Codebase | 0 Errors | **PASSED** |
 | **Next.js Production Build (`npm run build`)** | Whole Codebase | 0 Errors | **PASSED** |
 
-### 3.3 End-to-End Test Suite (`src/test/markdown-editor-e2e.test.ts`)
+### 3.3 End-to-End Test Suite (`src/test/editor/markdown-editor-e2e.test.ts`)
 A dedicated comprehensive E2E suite was established and verified:
 1. **File Open & Markdown Hydration:** Validates raw Markdown loading, NFC normalization, LF line endings, and mixed Arabic/English Bidirectional text.
 2. **Rapid Typing & Performance:** High-frequency character insertion transactions maintain doc state and char count without dropped keystrokes.

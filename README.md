@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-67%20Suites%20·%20799%2F799%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 799 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-67%20Suites%20·%20817%2F817%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 817 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-19%20Suites%20·%2089%2F89%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 89 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -150,7 +150,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.29.2)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.31.2)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Code-derived roadmap & technical execution plans
@@ -193,7 +193,17 @@ lugx/
 │   │   ├── vault/                 # Vault schemas, key derivation, and local cache helpers
 │   │   └── workers/               # Isolated Crypto Web Worker (PBKDF2 600K & AES-GCM)
 │   ├── server/actions/            # Authenticated Next.js Server Actions (file-ops, ai-ops, ai-commit, vault-actions)
-│   ├── test/                      # Database integration test harnesses, fixtures, and unit suites
+│   ├── test/                      # Centralized test suite partitioned into 9 domain subdirectories
+│   │   ├── ai/                    # Gemini AI client, NDJSON streaming, and quota settlement tests
+│   │   ├── sync/                  # Offline-first sync, conflict resolution, and IndexedDB tests
+│   │   ├── vault/                 # Zero-Knowledge vault crypto, WebAuthn PRF, and recovery tests
+│   │   ├── parsers/               # PDF worker bridge, spatial table extractor, and Arabic normalizer tests
+│   │   ├── editor/                # Standalone CodeMirror 6 editor, toolbar, and autosave tests
+│   │   ├── server/                # Next.js Server Actions and file operations tests
+│   │   ├── auth/                  # Authentication, session guard, correlation, and proxy tests
+│   │   ├── infrastructure/        # Rate limiting, cron jobs, log sanitizer, and DB health tests
+│   │   ├── api/                   # REST route handlers and Stripe webhook live tests
+│   │   └── ...                    # Root harness (test-db.ts, test-db-guard.ts, db.setup.ts, load-test-env.ts)
 │   └── proxy.ts                   # Next.js 16 Edge proxy for session validation and deep-link routing
 ├── vitest.config.mts              # Default unit/contract test runner (isolated, fast feedback)
 ├── vitest.constants.mts           # Single source of truth for LIVE test suite registration
@@ -290,7 +300,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (67 test files, 799 tests)
+# Execute unit/contract test suites (67 test files, 817 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (19 test files, 89 tests)
@@ -565,7 +575,7 @@ To ensure platform-wide stability across complex asynchronous boundaries, LUGX d
   5. *Zero-Knowledge Encrypted Vault:* Client-side AES-GCM-256 encryption, deterministic AAD context binding `vault:file:${userId}:${fileId}`, optimistic concurrency control on ciphertext versions, and HTTP 403 AI shielding.
   6. *Document Ingestion Pipeline:* Disguised binary rejection (PE/ELF/ZIP magic bytes), PostgreSQL null-byte scrubbing, and 100% round-trip fidelity.
   7. *Tenant Isolation & Security Boundary:* 404 Anti-Enumeration masking across unauthorized files, folders, and stream operations.
-- **Consolidated 8-Stage Lifecycle Scenario (`src/test/multi-system-lifecycle.live.test.ts`):** Validates all platform subsystems combined in an end-to-end sequential scenario under live transactional conditions.
+- **Consolidated 8-Stage Lifecycle Scenario (`src/test/infrastructure/multi-system-lifecycle.live.test.ts`):** Validates all platform subsystems combined in an end-to-end sequential scenario under live transactional conditions.
 
 ### 11. Browser-Driven End-to-End (E2E) Testing with Playwright
 

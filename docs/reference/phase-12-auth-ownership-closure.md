@@ -73,7 +73,7 @@ To prevent resource enumeration (attacker guessing foreign UUIDs by probing for 
 
 ### 3.1. Test Suites Executed
 
-1. **`src/test/auth-redirect.test.ts` (21 tests, 100% passing)**
+1. **`src/test/auth/auth-redirect.test.ts` (21 tests, 100% passing)**
    - Internal relative routes with query params and hashes.
    - Null, empty, whitespace, and invalid paths.
    - Standard external URLs (`http`, `https`).
@@ -88,7 +88,7 @@ To prevent resource enumeration (attacker guessing foreign UUIDs by probing for 
    - Rejection of `x-forwarded-host` header spoofing.
    - HTTP Parameter Pollution (HPP) resistance.
 
-2. **`src/test/cross-user-ownership.test.ts` (14 tests, 100% passing)**
+2. **`src/test/server/cross-user-ownership.test.ts` (14 tests, 100% passing)**
    - `createFile` parent folder isolation between User A and User B.
    - `copyFile` destination folder isolation.
    - `moveFile` target parent folder isolation.

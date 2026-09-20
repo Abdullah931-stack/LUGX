@@ -150,5 +150,5 @@ flowchart LR
    - Active streaming state indicator with instant *"Stop Generation"* action.
 4. **`src/app/workspace/editor/[fileId]/page.tsx`**:
    - Integration point connecting `stream-handler`, unified inline `CMStreamingGhostWidget` with embedded controls, and atomic transaction commits on $[from, to]$ via `adapter.replaceRange`.
-5. **`src/lib/ai-transaction.test.ts`**:
+5. **`src/test/ai/ai-transaction.test.ts`**:
    - Comprehensive unit and integration test suite asserting auto-save isolation, partial range replacement, single-action undo, and failure recovery.

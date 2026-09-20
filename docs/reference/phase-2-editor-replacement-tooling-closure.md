@@ -40,12 +40,12 @@ Phase 2 replaces the legacy TipTap / ProseMirror editor surface on the main work
 All 34 unit and integration tests across Phase 1 and Phase 2 test suites pass with 100% success rate:
 
 ```powershell
-npx vitest run src/test/editor-phase2-replacement.test.ts src/test/markdown-editor.test.ts
+npx vitest run src/test/editor/editor-phase2-replacement.test.ts src/test/editor/markdown-editor.test.ts
 ```
 
 ```
- ✓ src/test/editor-phase2-replacement.test.ts (13 tests) 686ms
- ✓ src/test/markdown-editor.test.ts (21 tests) 929ms
+ ✓ src/test/editor/editor-phase2-replacement.test.ts (13 tests) 686ms
+ ✓ src/test/editor/markdown-editor.test.ts (21 tests) 929ms
 
  Test Files  2 passed (2)
       Tests  34 passed (34)

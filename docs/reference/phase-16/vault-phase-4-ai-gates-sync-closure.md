@@ -110,7 +110,7 @@ sequenceDiagram
 | **Editor Orchestrator** | `src/hooks/use-editor-orchestrator.ts` | Privacy check in `startAIOperation`, vault profile loading, conflict payload passthrough. |
 | **Database Schema** | `src/lib/db/schema.ts` | Added `allowAIOnEncryptedFiles` column to `user_vault_profiles`. |
 | **Migration** | `src/lib/db/migrations/0010_add_vault_ai_setting.sql` | PostgreSQL DDL migration script adding `allow_ai_on_encrypted_files`. |
-| **Test Verification** | `src/test/vault-sync-ai-gate.test.ts` | 28 automated tests covering all Phase 4 gatekeeper, sync, and syntax requirements. |
+| **Test Verification** | `src/test/vault/vault-sync-ai-gate.test.ts` | 28 automated tests covering all Phase 4 gatekeeper, sync, and syntax requirements. |
 
 ---
 
@@ -125,13 +125,13 @@ Test Files  46 passed (46)
 ```
 
 ### Specific Suites:
-1. `src/test/vault-sync-ai-gate.test.ts`:
+1. `src/test/vault/vault-sync-ai-gate.test.ts`:
    - 28/28 tests passed.
    - Covers: Markdown syntax integrity validation (fences, tables, null bytes, markers), ETag generation determinism, Zero-Knowledge AI streaming 403 rejection, atomic AI commit re-encryption enforcement, vault AI setting persistence, non-blocking `CONFLICT_LOCKED` isolation, concurrent clean file push, automatic resolution upon vault unlock.
-2. `src/test/vault-cross-module.integration.test.ts`:
+2. `src/test/vault/vault-cross-module.integration.test.ts`:
    - 5/5 tests passed.
    - Covers: Full Zero-Knowledge lifecycle, encrypted copy pipeline (AUD-02), AI stream commit with re-encryption and opt-in, 412 double-encryption prevention (AUD-03), central device trust revocation (AUD-05).
-3. `src/test/ai-server-atomic-commit.test.ts`:
+3. `src/test/ai/ai-server-atomic-commit.test.ts`:
    - 13/13 tests passed.
    - Covers: Optimistic concurrency guards, self-healing, transactional reservation settlement, encrypted payload commit.
 4. `npx tsc --noEmit`:

@@ -2,6 +2,33 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.31.2] - 2026-09-20 (Modular Test Suite Restructuring & Production Code Clean-up)
+
+### Refactored & Enhanced - Test Harness Architecture & Production Code Clean-up
+
+- **Domain-Specific Modular Subdirectories (`src/test/<domain>/`):**
+  - Reorganized all 87 test files in `src/test/` into 9 modular, domain-specific subdirectories based on functional responsibility:
+    - `src/test/ai/` (21 files): Gemini AI client, streaming NDJSON parser, circuit breaker, key rotation, quota settlement, and live E2E suites.
+    - `src/test/sync/` (16 files): Offline-first synchronization, IndexedDB operations, 3-way Diff3 merge, encrypted conflict quarantine, and queue rollback suites.
+    - `src/test/vault/` (12 files): Zero-Knowledge vault cryptography, WebAuthn PRF biometrics, recovery seeds, storage encryption, and cross-module integration suites.
+    - `src/test/parsers/` (10 files): Web Worker PDF extraction, spatial table reconstruction, Arabic Unicode normalizer, file conversion, and corruption detector suites.
+    - `src/test/editor/` (9 files): Standalone CodeMirror 6 editor, toolbar, bidirectional layout, search-and-replace, and orchestration suites.
+    - `src/test/server/` (6 files): Authenticated Server Actions, file operations, cross-user ownership isolation, and document ingestion pipeline suites.
+    - `src/test/auth/` (5 files): Authentication redirects, sign-out cache invalidation, proxy edge middleware, and distributed correlation tracking suites.
+    - `src/test/infrastructure/` (5 files): Dual-mode Redis rate limiter, automated quota expiration crons, multi-system lifecycle, and isolated database health suites.
+    - `src/test/api/` (3 files): REST API route handlers, optimistic version PUT guard, and Stripe webhook idempotency suites.
+  - Preserved shared root test infrastructure and harness files directly under `src/test/`: `test-db.ts`, `test-db-guard.ts`, `load-test-env.ts`, and `db.setup.ts`.
+
+- **Production Code Directory Cleansing & Git History Provenance:**
+  - Fully purged all 33 scattered `.test.ts` / `.test.tsx` files previously co-located inside production source trees (`src/app/`, `src/components/`, `src/hooks/`, `src/lib/`, `src/server/`).
+  - Executed all moves via `git mv` with 100% rename detection, preserving complete git blame history and commit provenance.
+  - Converted legacy relative path imports (`../lib/...`) to standardized `@/lib/...` alias imports across all relocated suites.
+
+- **Configuration & Living Documentation Synchronization:**
+  - Updated `vitest.constants.mts` to reflect new domain-partitioned paths across all 19 `LIVE_TEST_FILES` and `CLOUD_E2E_FILES`.
+  - Updated `.github/workflows/ci.yml` line 337 to target `src/test/ai/ai-live-e2e.test.ts`.
+  - Updated root `README.md`, `docs/README.md`, `docs/reference/test-database-isolation.md`, `docs/foundation/DESIGN_VS_REALITY.md`, `docs/TECHNICAL_DEBT_REGISTER.md`, and all living architectural documents to reflect current paths and verified passing metrics (67 test files, 817 passing tests).
+
 ## [1.31.1] - 2026-09-20 (Phase 23: Encrypted Conflict Quarantine Governance & Queue Backpressure Hardening)
 
 ### Added & Enhanced - Phase 23: Encrypted Conflict Quarantine Governance & Queue Backpressure Hardening

@@ -229,16 +229,16 @@ Automated expiration of leaked or orphaned in-flight AI quota reservations:
 ## 6. Verification
 
 ```bash
-npx vitest run src/test/rate-limit.test.ts                                                           # In-memory sliding window & IP fallback
-npx vitest run src/test/correlation.test.ts                                                         # Header parsing, UUID generation & CRLF sanitization
-npx vitest run src/test/cron-expire-reservations.test.ts                                             # CRON_SECRET auth, status transitions & failure isolation
-npx vitest run src/test/log-sanitizer.test.ts                                                        # Log hygiene, word-boundary isolation & RAM zeroing
-npx vitest run src/test/vault-crypto.test.ts                                                        # Phase 1 crypto worker, AAD, RAM wiping & BIP-39
-npx vitest run src/test/vault-storage.test.ts                                                       # Phase 2 database schema, migrations & transparent encrypted IDB
-npx vitest run src/test/auth-redirect.test.ts                                                      # open redirect & OAuth security
-npx vitest run --config vitest.live.config.ts src/test/cross-user-ownership.test.ts               # cross-user isolation & atomic sync (live DB)
-npx vitest run --config vitest.live.config.ts src/app/api/files/[id]/route.putguard.test.ts       # auth + rate-limit + version guards (live DB)
-npx vitest run --config vitest.live.config.ts src/server/actions/file-ops.ownership.test.ts       # ownership isolation (live DB)
-npx tsc --noEmit                                                                                   # type safety gate
+npx vitest run src/test/infrastructure/rate-limit.test.ts                                            # In-memory sliding window & IP fallback
+npx vitest run src/test/auth/correlation.test.ts                                                     # Header parsing, UUID generation & CRLF sanitization
+npx vitest run src/test/infrastructure/cron-expire-reservations.test.ts                              # CRON_SECRET auth, status transitions & failure isolation
+npx vitest run src/test/auth/log-sanitizer.test.ts                                                   # Log hygiene, word-boundary isolation & RAM zeroing
+npx vitest run src/test/vault/vault-crypto.test.ts                                                   # Phase 1 crypto worker, AAD, RAM wiping & BIP-39
+npx vitest run src/test/vault/vault-storage.test.ts                                                  # Phase 2 database schema, migrations & transparent encrypted IDB
+npx vitest run src/test/auth/auth-redirect.test.ts                                                   # open redirect & OAuth security
+npx vitest run --config vitest.live.config.mts src/test/server/cross-user-ownership.test.ts         # cross-user isolation & atomic sync (live DB)
+npx vitest run --config vitest.live.config.mts src/test/api/api-files-putguard.live.test.ts        # auth + rate-limit + version guards (live DB)
+npx vitest run --config vitest.live.config.mts src/test/server/file-ops.ownership.test.ts          # ownership isolation (live DB)
+npx tsc --noEmit                                                                                    # type safety gate
 ```
 

@@ -90,10 +90,10 @@ CREATE INDEX IF NOT EXISTS idx_subscription_events_created_at
 
 ## 4. Verification Evidence
 
-### 4.1 Unit / Contract Test Suite (`npx vitest run src/app/api/stripe/webhook/route.test.ts`)
+### 4.1 Unit / Contract Test Suite (`npx vitest run src/test/api/stripe-webhook.test.ts`)
 
 ```
-✓ src/app/api/stripe/webhook/route.test.ts (15 tests)
+✓ src/test/api/stripe-webhook.test.ts (15 tests)
   ✓ unmapped subscription status is fail-closed: throws, updates nothing
   ✓ checkout.session.completed with unpaid payment grants no tier (fail-closed)
   ✓ invoice.payment_failed downgrades to free and reconciles from local DB
@@ -112,10 +112,10 @@ CREATE INDEX IF NOT EXISTS idx_subscription_events_created_at
     ✓ Lock released on unhandled error in catch block (status 500)
 ```
 
-### 4.2 Isolated Neon Branch Live Integration Suite (`npx vitest run --config vitest.live.config.ts src/app/api/stripe/webhook/route.live.test.ts`)
+### 4.2 Isolated Neon Branch Live Integration Suite (`npx vitest run --config vitest.live.config.ts src/test/api/stripe-webhook.live.test.ts`)
 
 ```
-✓ src/app/api/stripe/webhook/route.live.test.ts (6 tests)
+✓ src/test/api/stripe-webhook.live.test.ts (6 tests)
   ✓ rejects an invalid signature with 400 BEFORE any parsing or mutation
   ✓ checkout.session.completed (paid) upgrades tier, persists subscription with valid period, and writes durable event
   ✓ durable restart idempotency: re-sending event after in-memory cache clear yields duplicate: true with ZERO DB mutation

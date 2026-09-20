@@ -86,20 +86,20 @@ sequenceDiagram
 All automated test suites passed with 100% success rate:
 
 ```bash
-npx vitest run src/test/vault-crypto.test.ts src/test/vault-storage.test.ts src/test/vault-orchestration.test.ts src/test/ai-server-atomic-commit.test.ts src/test/ai-preview-decision.test.ts src/test/vault-actions.unit.test.ts src/test/file-ops-vault.unit.test.ts src/test/vault-crypto-resilience.unit.test.ts src/test/vault-cross-module.integration.test.ts
+npx vitest run src/test/vault/vault-crypto.test.ts src/test/vault/vault-storage.test.ts src/test/vault/vault-orchestration.test.ts src/test/ai/ai-server-atomic-commit.test.ts src/test/ai/ai-preview-decision.test.ts src/test/vault/vault-actions.unit.test.ts src/test/vault/file-ops-vault.unit.test.ts src/test/vault/vault-crypto-resilience.unit.test.ts src/test/vault/vault-cross-module.integration.test.ts
 ```
 
 Output:
-- `src/test/vault-crypto.test.ts`: 31 passed
-- `src/test/vault-storage.test.ts`: 15 passed
-- `src/test/vault-orchestration.test.ts`: 29 passed
-- `src/test/ai-server-atomic-commit.test.ts`: 13 passed
-- `src/test/ai-preview-decision.test.ts`: 8 passed
-- `src/test/vault-actions.unit.test.ts`: 20 passed
-- `src/test/file-ops-vault.unit.test.ts`: 10 passed
-- `src/test/vault-crypto-resilience.unit.test.ts`: 17 passed
-- `src/test/vault-cross-module.integration.test.ts`: 5 passed
-- `src/test/webauthn-prf.unit.test.ts`: 12 passed
+- `src/test/vault/vault-crypto.test.ts`: 31 passed
+- `src/test/vault/vault-storage.test.ts`: 15 passed
+- `src/test/vault/vault-orchestration.test.ts`: 29 passed
+- `src/test/ai/ai-server-atomic-commit.test.ts`: 13 passed
+- `src/test/ai/ai-preview-decision.test.ts`: 8 passed
+- `src/test/vault/vault-actions.unit.test.ts`: 20 passed
+- `src/test/vault/file-ops-vault.unit.test.ts`: 10 passed
+- `src/test/vault/vault-crypto-resilience.unit.test.ts`: 17 passed
+- `src/test/vault/vault-cross-module.integration.test.ts`: 5 passed
+- `src/test/vault/webauthn-prf.unit.test.ts`: 12 passed
 - **Total: 160/160 automated tests passed (100% success rate)**
 - **Full Project Suite:** 45/45 test files, 629/629 tests passed (100% success rate) via `vitest.config.mts`.
 
@@ -120,7 +120,7 @@ Integration and Compilation Verifications:
 | File | Scope & Action |
 | :--- | :--- |
 | `src/lib/sync/webauthn-prf.ts` | **NEW**: Hardware-bound WebAuthn PRF engine (TPM 2.0 / Apple Secure Enclave / Android Titan M2), HKDF-SHA-256 derivation, W3C Level 3 `"extension:prf"` support, and real-time capability diagnostics (`checkWebAuthnSupportStatus`). |
-| `src/test/webauthn-prf.unit.test.ts` | **NEW**: 12 automated unit tests for WebAuthn PRF hardware derivation, mock enrollment, unwrap, and fallback compatibility. |
+| `src/test/vault/webauthn-prf.unit.test.ts` | **NEW**: 12 automated unit tests for WebAuthn PRF hardware derivation, mock enrollment, unwrap, and fallback compatibility. |
 | `src/lib/db/migrations/0009_add_device_trust_epoch.sql` | **NEW**: Database migration adding `device_trust_epoch` column to `user_vault_profiles` for global multi-device revocation. |
 | `src/server/actions/vault-actions.ts` | **NEW**: Server actions for vault profile management (`getUserVaultProfile`, `createUserVaultProfile`, `updateVaultPassword`, `revokeAllTrustedDevices`). |
 | `src/components/vault/create-vault-modal.tsx` | **NEW**: Vault creation modal with BIP-39 mnemonic generation, 3-word challenge, and dual key wrapping. |
@@ -129,11 +129,11 @@ Integration and Compilation Verifications:
 | `src/components/vault/vault-security-card.tsx` | **NEW**: Account security settings panel displaying vault status, recovery phrase trigger, and central device revocation. |
 | `src/components/vault/recovery-phrase-modal.tsx` | **NEW**: Standalone 12-word recovery phrase display modal. |
 | `src/components/vault/index.ts` | **NEW**: Vault components barrel export. |
-| `src/test/vault-orchestration.test.ts` | **NEW**: 29 automated tests for Phase 3 vault orchestration, PIN derivation, and double-encryption guards. |
-| `src/test/vault-actions.unit.test.ts` | **NEW**: 20 unit tests for vault server actions. |
-| `src/test/file-ops-vault.unit.test.ts` | **NEW**: 10 unit tests for toggle encryption and copy file. |
-| `src/test/vault-crypto-resilience.unit.test.ts` | **NEW**: 17 unit tests for PIN constraints, tampering detection, and RAM zeroization. |
-| `src/test/vault-cross-module.integration.test.ts` | **NEW**: 5 end-to-end cross-module integration tests. |
+| `src/test/vault/vault-orchestration.test.ts` | **NEW**: 29 automated tests for Phase 3 vault orchestration, PIN derivation, and double-encryption guards. |
+| `src/test/vault/vault-actions.unit.test.ts` | **NEW**: 20 unit tests for vault server actions. |
+| `src/test/vault/file-ops-vault.unit.test.ts` | **NEW**: 10 unit tests for toggle encryption and copy file. |
+| `src/test/vault/vault-crypto-resilience.unit.test.ts` | **NEW**: 17 unit tests for PIN constraints, tampering detection, and RAM zeroization. |
+| `src/test/vault/vault-cross-module.integration.test.ts` | **NEW**: 5 end-to-end cross-module integration tests. |
 | `vitest.constants.mts` | **NEW**: Single source of truth for test arrays, resolving Rollup `[MIXED_EXPORTS]`. |
 | `vitest.config.mts` | **NEW**: Native ESM configuration using `import.meta.dirname`, resolving Vite native loader warning. |
 | `vitest.live.config.mts` | **NEW**: Native ESM live test configuration. |

@@ -162,10 +162,10 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 ## 5. Verification & Test Evidence
 
 The implementation is verified with automated tests covering all parser, FSM, and adversarial edge cases:
-- `src/test/ai-stream-parser.test.ts`: 9 tests covering NDJSON framing, multi-byte UTF-8, incomplete EOF (`failed_incomplete_stream`), duplicate `done`, unknown frames, buffer overflow (`stream_buffer_overflow`), and signal aborts.
-- `src/test/ai-stream-session.test.ts`: 12 tests covering canonical FSM lifecycle, terminal state identification, illegal transitions, generation/version mismatch assertions, conflict rollback, and preview buffer boundaries.
-- `src/test/vault-sync-ai-gate.test.ts`: 28 tests verifying Zero-Knowledge AI route rejection, atomic commit re-encryption guard, user vault setting updates, syntax validator, non-blocking sync conflict isolation, and adversarial multi-device edge cases.
-- `src/test/rate-limit.test.ts`: 7 tests verifying `aiStreamRateLimiter` sliding window, fail-open degradation, and `Retry-After >= 1`.
-- `src/test/correlation.test.ts`: 5 tests verifying correlation ID generation, CRLF sanitization, and header injection.
-- `src/test/ai-stream-abort-latency.test.ts`: 2 tests verifying zero-latency client stop execution (< 50ms) and server-side disconnect settlement invariants.
+- `src/test/ai/ai-stream-parser.test.ts`: 9 tests covering NDJSON framing, multi-byte UTF-8, incomplete EOF (`failed_incomplete_stream`), duplicate `done`, unknown frames, buffer overflow (`stream_buffer_overflow`), and signal aborts.
+- `src/test/ai/ai-stream-session.test.ts`: 12 tests covering canonical FSM lifecycle, terminal state identification, illegal transitions, generation/version mismatch assertions, conflict rollback, and preview buffer boundaries.
+- `src/test/vault/vault-sync-ai-gate.test.ts`: 28 tests verifying Zero-Knowledge AI route rejection, atomic commit re-encryption guard, user vault setting updates, syntax validator, non-blocking sync conflict isolation, and adversarial multi-device edge cases.
+- `src/test/infrastructure/rate-limit.test.ts`: 7 tests verifying `aiStreamRateLimiter` sliding window, fail-open degradation, and `Retry-After >= 1`.
+- `src/test/auth/correlation.test.ts`: 5 tests verifying correlation ID generation, CRLF sanitization, and header injection.
+- `src/test/ai/ai-stream-abort-latency.test.ts`: 2 tests verifying zero-latency client stop execution (< 50ms) and server-side disconnect settlement invariants.
 

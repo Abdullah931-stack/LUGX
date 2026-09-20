@@ -178,21 +178,21 @@ If-Match: "server_etag"
 
 | Test Suite | Test Count | Status | Description |
 | :--- | :--- | :--- | :--- |
-| `src/lib/sync/conflict-resolver.test.ts` | 39 | Passed | 3-way merge, LCS linear array, adversarial chunk overlaps, escaped table pipes, CRLF normalization, large doc trimming. |
-| `src/lib/sync/indexeddb.test.ts` | 14 | Passed | Base snapshot persistence, create-to-update coalescing, store integrity. |
-| `src/lib/sync/sync-manager.test.ts` | 36 | Passed | 412 conflict handling, retry backoff, dead-letter transitions, RemoteUpdateEvent dispatch. |
-| `src/test/conflict-resolution.integration.test.ts` | 3 | Passed | Real PostgreSQL lifecycle integration (Base -> Remote write -> Local 412 -> 3-way merge -> Authoritative write -> Verified reload). |
-| `src/app/api/files/[id]/route.putguard.test.ts` | 3 | Passed | Concurrency race conditions, stale write rejection. |
-| `src/server/actions/file-ops.lostupdate.test.ts` | 4 | Passed | Lost-update prevention via optimistic database version locking. |
-| `src/lib/sync/operations-gc.test.ts` | 5 | Passed | Garbage collection of synced operations, compaction thresholds. |
-| `src/lib/sync/rollback.test.ts` | 22 | Passed | Checkpoint creation, rollback recovery from crashes. |
-| `src/lib/sync/connection-detector.test.ts` | 17 | Passed | Exponential backoff, jitter, network status detection. |
-| `src/lib/sync/etag-generator.test.ts` | 20 | Passed | ETag formatting, parsing, weak comparison, Markdown normalization. |
-| `src/lib/sync/parallel.test.ts` | 6 | Passed | Parallel batch file processing, concurrency throttling. |
-| `src/lib/sync/error-handler.test.ts` | 26 | Passed | Structured error dispatching and recovery logging. |
-| `src/lib/sync/concurrency-manager.test.ts` | 9 | Passed | Mutex locking per file ID. |
-| `src/test/vault-sync-ai-gate.test.ts` | 28 | Passed | AI gatekeepers, syntax validator, non-blocking encrypted conflict resolution, and adversarial edge cases. |
-| `src/lib/sync/sync-crypto-gateway.test.ts` | 5 | Passed | Inbound decryption gateway, outbound re-encryption with fresh IV, AAD binding, vault-lock quarantine. |
-| `src/test/encrypted-conflict-decryption.integration.test.ts` | 4 | Passed | End-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution, locked vault safety. |
+| `src/test/sync/sync-conflict-resolver.test.ts` | 39 | Passed | 3-way merge, LCS linear array, adversarial chunk overlaps, escaped table pipes, CRLF normalization, large doc trimming. |
+| `src/test/sync/sync-indexeddb.test.ts` | 14 | Passed | Base snapshot persistence, create-to-update coalescing, store integrity. |
+| `src/test/sync/sync-manager.test.ts` | 36 | Passed | 412 conflict handling, retry backoff, dead-letter transitions, RemoteUpdateEvent dispatch. |
+| `src/test/sync/conflict-resolution.integration.test.ts` | 3 | Passed | Real PostgreSQL lifecycle integration (Base -> Remote write -> Local 412 -> 3-way merge -> Authoritative write -> Verified reload). |
+| `src/test/api/api-files-putguard.live.test.ts` | 3 | Passed | Concurrency race conditions, stale write rejection. |
+| `src/test/server/file-ops.lostupdate.test.ts` | 4 | Passed | Lost-update prevention via optimistic database version locking. |
+| `src/test/sync/sync-operations-gc.test.ts` | 5 | Passed | Garbage collection of synced operations, compaction thresholds. |
+| `src/test/sync/sync-rollback.test.ts` | 22 | Passed | Checkpoint creation, rollback recovery from crashes. |
+| `src/test/sync/sync-connection-detector.test.ts` | 17 | Passed | Exponential backoff, jitter, network status detection. |
+| `src/test/sync/sync-etag-generator.test.ts` | 20 | Passed | ETag formatting, parsing, weak comparison, Markdown normalization. |
+| `src/test/sync/sync-parallel.test.ts` | 6 | Passed | Parallel batch file processing, concurrency throttling. |
+| `src/test/sync/sync-error-handler.test.ts` | 26 | Passed | Structured error dispatching and recovery logging. |
+| `src/test/sync/sync-concurrency-manager.test.ts` | 9 | Passed | Mutex locking per file ID. |
+| `src/test/vault/vault-sync-ai-gate.test.ts` | 28 | Passed | AI gatekeepers, syntax validator, non-blocking encrypted conflict resolution, and adversarial edge cases. |
+| `src/test/sync/sync-crypto-gateway.test.ts` | 5 | Passed | Inbound decryption gateway, outbound re-encryption with fresh IV, AAD binding, vault-lock quarantine. |
+| `src/test/sync/encrypted-conflict-decryption.integration.test.ts` | 4 | Passed | End-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution, locked vault safety. |
 | **Total Test Count** | **241** | **100% Passed** | **All suites verified against real database and runtime contracts.** |
 | **TypeScript Typecheck** | `tsc --noEmit` | **0 Errors** | **Strict TypeScript compliance verified across all workspace files.** |

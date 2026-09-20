@@ -181,12 +181,12 @@ const tierHierarchy = {
 
 #### Unit Tests:
 ```bash
-npx vitest run src/app/api/stripe/webhook/route.test.ts
+npx vitest run src/test/api/stripe-webhook.test.ts
 ```
 
 #### Live Integration Tests (Isolated Neon Branch):
 ```bash
-npx vitest run --config vitest.live.config.ts src/app/api/stripe/webhook/route.live.test.ts
+npx vitest run --config vitest.live.config.ts src/test/api/stripe-webhook.live.test.ts
 ```
 
 ---

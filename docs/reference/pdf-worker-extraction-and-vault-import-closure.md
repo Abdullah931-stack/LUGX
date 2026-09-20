@@ -112,16 +112,16 @@ All unit, contract, and integration test suites pass with 100% success rate:
 
 ```bash
 # Verify import action and server-side hardening
-npx vitest run src/server/actions/import-file.test.ts
+npx vitest run src/test/server/import-file.test.ts
 
 # Verify PDF preference settings manager
-npx vitest run src/lib/parsers/pdf-settings.test.ts
+npx vitest run src/test/parsers/parser-pdf-settings.test.ts
 
 # Verify dual-mode PDF worker bridge
-npx vitest run src/lib/parsers/pdf-worker-bridge.test.ts
+npx vitest run src/test/parsers/parser-pdf-worker-bridge.test.ts
 
 # Verify direct Zero-Knowledge vault import integration
-npx vitest run src/test/vault-import.integration.test.ts
+npx vitest run src/test/vault/vault-import.integration.test.ts
 
 # Verify full repository test suite
 npm run test

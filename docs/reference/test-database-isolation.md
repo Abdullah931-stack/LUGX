@@ -67,11 +67,11 @@ branch live twins were added and registered in `vitest.constants.mts`:
 
 | Mocked contract suite | LIVE twin (added 2026-08-24) |
 |---|---|
-| `src/test/ai-quota-idempotency.test.ts` | `src/test/ai-quota-idempotency.live.test.ts` — incl. concurrent same-operationId race on real rows |
-| `src/test/ai-server-atomic-commit.test.ts` | `src/test/ai-server-atomic-commit.live.test.ts` — only `getUser` mocked; real tx row-level assertions |
-| `src/test/editor-orchestration.integration.test.ts` | `src/test/editor-orchestration.live.test.ts` — real file-ops actions; real 412 vs sibling write + merge resolution |
-| `src/test/ai-preview-decision.test.ts` | `src/test/ai-preview-decision.live.test.ts` — hook-generated operationId settled against real reservation rows |
-| `src/app/api/stripe/webhook/route.test.ts` | `src/app/api/stripe/webhook/route.live.test.ts` — REAL HMAC signature verification + persisted tier/subscription rows (durable-ledger dedupe deferred to Phase 13) |
+| `src/test/ai/ai-quota-idempotency.test.ts` | `src/test/ai/ai-quota-idempotency.live.test.ts` — incl. concurrent same-operationId race on real rows |
+| `src/test/ai/ai-server-atomic-commit.test.ts` | `src/test/ai/ai-server-atomic-commit.live.test.ts` — only `getUser` mocked; real tx row-level assertions |
+| `src/test/editor/editor-orchestration.integration.test.ts` | `src/test/editor/editor-orchestration.live.test.ts` — real file-ops actions; real 412 vs sibling write + merge resolution |
+| `src/test/ai/ai-preview-decision.test.ts` | `src/test/ai/ai-preview-decision.live.test.ts` — hook-generated operationId settled against real reservation rows |
+| `src/test/api/stripe-webhook.test.ts` | `src/test/api/stripe-webhook.live.test.ts` — REAL HMAC signature verification + persisted tier/subscription rows (durable-ledger dedupe deferred to Phase 13) |
 
 ### Smart Hybrid Database Client (`db` & `txDb`)
 
@@ -129,7 +129,7 @@ to a live URL; push failures surface immediately).
 ## 5. Evidence of isolation
 
 - **Unit test suite (`npx vitest run`):** **37 files / 488 tests — all passed (100% pass rate)**, zero LIVE files included.
-- **Guard unit tests (`src/test/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
+- **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Live run (`npm run test:live`):** 16 registered suites executed against isolated PostgreSQL container / Neon branch.
 - **Phase 18 Comprehensive Verification & Post-Closure Hardening (2026-09-19):**
   - **Unit & Contract Suite (`npm run test`):** **67 files / 812 tests — all passed (100% pass rate)**, zero LIVE files included.
@@ -187,5 +187,5 @@ The repository runs a deterministic multi-stage CI pipeline on GitHub Actions co
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | Runs `npm run test:live` against isolated PostgreSQL 16 + Redis 7 service containers with `TEST_DB_FORBIDDEN_HOSTS` configured to reject production hosts, verifying lost-update guards, AI quota idempotency, and Stripe ledger deduplication. |
 | **5. Production Build** | `build-verification` | Full Next.js 16 production build (`npm run build`) with asset compilation and route validation. |
 | **6. Browser E2E Testing** | `e2e-browser-testing` | Playwright E2E test execution in Chromium across 15 automated user journeys with failure artifact reporting (`playwright-report`). |
-| **7. Live Smoke (Gated)** | `live-provider-smoke` | Gated provider live smoke (`src/test/ai-live-e2e.test.ts`) executed only on `main` push or manual `workflow_dispatch`. |
+| **7. Live Smoke (Gated)** | `live-provider-smoke` | Gated provider live smoke (`src/test/ai/ai-live-e2e.test.ts`) executed only on `main` push or manual `workflow_dispatch`. |
 

@@ -84,16 +84,16 @@ The 10 verification scenarios defined in [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](.
 
 | # | Test Scenario | Verified Behavior | Test Suite & Code Evidence | Verdict |
 | :--- | :--- | :--- | :--- | :--- |
-| **1** | **Lazy-Unlock & Login** | Standard login, browsing, and editing plaintext documents triggers zero vault prompts. The user experiences zero intrusive dialogs until touching encrypted assets. | `src/test/vault-orchestration.test.ts`<br/>`src/hooks/use-editor-orchestrator.ts` | **PASS (100%)** |
-| **2** | **First Encrypt Setup** | Encrypting a file for a new user prompts `CreateVaultModal`, generates a 12-word BIP-39 mnemonic, mandates a 3-word randomized challenge before activation, and converts atomically. | `src/test/file-conversion.test.ts`<br/>`src/components/vault/create-vault-modal.tsx` | **PASS (100%)** |
-| **3** | **Vault Activation** | Clicking a locked encrypted file halts hydration, mounts `VaultUnlockModal`, and prompts for Password, Biometrics PRF, or 6-digit PIN. | `src/test/vault-orchestration.test.ts`<br/>`src/components/vault/vault-unlock-modal.tsx` | **PASS (100%)** |
-| **4** | **Seed Recovery Flow** | Entering 12-word seed un-wraps master key, updates `user_vault_profiles.encrypted_master_key` with a new password, and unlocks all notes without re-encryption. | `src/test/vault-recovery.test.ts`<br/>`src/components/vault/vault-unlock-modal.tsx` | **PASS (100%)** |
-| **5** | **RAM Sanitization** | `extractable: false` on WebCrypto keys; temporary buffers zeroed via `wipeBuffer` in `finally` across modals; `SessionKeyStore` purges volatile heap on lock/logout. | `src/test/vault-crypto.test.ts` §9 (Matrix #5)<br/>`src/lib/sync/session-key-store.ts` | **PASS (100%)** |
-| **6** | **AI Hard Block (UI/API)** | AI toolbar tools hidden with amber shield badge (`ai-encrypted-badge`); server returns HTTP `403 Forbidden` (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) and refunds reservations. | `src/test/ai-gatekeeper.test.ts`<br/>`src/app/api/ai/stream/route.ts` | **PASS (100%)** |
-| **7** | **Worker Offloading** | 600,000 PBKDF2 iterations execute inside `CryptoWorkerBridge` off the main thread; browser UI maintains 60fps with zero frame freezing. | `src/test/vault-crypto.test.ts` §9 (Matrix #7)<br/>`src/lib/workers/crypto.worker.ts` | **PASS (100%)** |
-| **8** | **Conflict Isolation** | Encrypted files receiving 412/409 while vault is locked are quarantined in `pendingEncryptedConflicts` (`CONFLICT_LOCKED`); unencrypted files continue sync concurrently. | `src/test/sync-encrypted-conflict.test.ts`<br/>`src/lib/sync/sync-manager.ts` | **PASS (100%)** |
-| **9** | **Syntax-Safe Diff3 Merge** | Post-unlock automated 3-way Diff3 merge validates code fences, table column alignment, and null bytes via `validateMarkdownSyntaxIntegrity`; corrupt merges escalate to manual UI. | `src/test/sync-encrypted-conflict.test.ts`<br/>`src/lib/sync/syntax-validator.ts` | **PASS (100%)** |
-| **10** | **Log Sanitation** | Console logs, error handlers, and performance metrics redact plaintext, ciphertext, keys, and mnemonics, while preserving diagnostic call stacks and DAG topologies. | `src/test/log-sanitizer.test.ts`<br/>`src/lib/sync/log-sanitizer.ts` | **PASS (100%)** |
+| **1** | **Lazy-Unlock & Login** | Standard login, browsing, and editing plaintext documents triggers zero vault prompts. The user experiences zero intrusive dialogs until touching encrypted assets. | `src/test/vault/vault-orchestration.test.ts`<br/>`src/hooks/use-editor-orchestrator.ts` | **PASS (100%)** |
+| **2** | **First Encrypt Setup** | Encrypting a file for a new user prompts `CreateVaultModal`, generates a 12-word BIP-39 mnemonic, mandates a 3-word randomized challenge before activation, and converts atomically. | `src/test/parsers/file-conversion.test.ts`<br/>`src/components/vault/create-vault-modal.tsx` | **PASS (100%)** |
+| **3** | **Vault Activation** | Clicking a locked encrypted file halts hydration, mounts `VaultUnlockModal`, and prompts for Password, Biometrics PRF, or 6-digit PIN. | `src/test/vault/vault-orchestration.test.ts`<br/>`src/components/vault/vault-unlock-modal.tsx` | **PASS (100%)** |
+| **4** | **Seed Recovery Flow** | Entering 12-word seed un-wraps master key, updates `user_vault_profiles.encrypted_master_key` with a new password, and unlocks all notes without re-encryption. | `src/test/vault/vault-recovery.test.ts`<br/>`src/components/vault/vault-unlock-modal.tsx` | **PASS (100%)** |
+| **5** | **RAM Sanitization** | `extractable: false` on WebCrypto keys; temporary buffers zeroed via `wipeBuffer` in `finally` across modals; `SessionKeyStore` purges volatile heap on lock/logout. | `src/test/vault/vault-crypto.test.ts` §9 (Matrix #5)<br/>`src/lib/sync/session-key-store.ts` | **PASS (100%)** |
+| **6** | **AI Hard Block (UI/API)** | AI toolbar tools hidden with amber shield badge (`ai-encrypted-badge`); server returns HTTP `403 Forbidden` (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) and refunds reservations. | `src/test/ai/ai-gatekeeper.test.ts`<br/>`src/app/api/ai/stream/route.ts` | **PASS (100%)** |
+| **7** | **Worker Offloading** | 600,000 PBKDF2 iterations execute inside `CryptoWorkerBridge` off the main thread; browser UI maintains 60fps with zero frame freezing. | `src/test/vault/vault-crypto.test.ts` §9 (Matrix #7)<br/>`src/lib/workers/crypto.worker.ts` | **PASS (100%)** |
+| **8** | **Conflict Isolation** | Encrypted files receiving 412/409 while vault is locked are quarantined in `pendingEncryptedConflicts` (`CONFLICT_LOCKED`); unencrypted files continue sync concurrently. | `src/test/sync/sync-encrypted-conflict.test.ts`<br/>`src/lib/sync/sync-manager.ts` | **PASS (100%)** |
+| **9** | **Syntax-Safe Diff3 Merge** | Post-unlock automated 3-way Diff3 merge validates code fences, table column alignment, and null bytes via `validateMarkdownSyntaxIntegrity`; corrupt merges escalate to manual UI. | `src/test/sync/sync-encrypted-conflict.test.ts`<br/>`src/lib/sync/syntax-validator.ts` | **PASS (100%)** |
+| **10** | **Log Sanitation** | Console logs, error handlers, and performance metrics redact plaintext, ciphertext, keys, and mnemonics, while preserving diagnostic call stacks and DAG topologies. | `src/test/auth/log-sanitizer.test.ts`<br/>`src/lib/sync/log-sanitizer.ts` | **PASS (100%)** |
 
 ---
 
@@ -136,28 +136,28 @@ During the Phase 5 hardened re-audit, four critical issues were resolved to prot
 
 ```bash
 # 1. Log Sanitizer Unit Suite (12/12 passing)
-npx vitest run src/test/log-sanitizer.test.ts
+npx vitest run src/test/auth/log-sanitizer.test.ts
 
 # 2. Vault Crypto, RAM Wiping & Worker Offloading (35/35 passing)
-npx vitest run src/test/vault-crypto.test.ts
+npx vitest run src/test/vault/vault-crypto.test.ts
 
 # 3. Vault Storage & Transparent Encrypted IndexedDB (15/15 passing)
-npx vitest run src/test/vault-storage.test.ts
+npx vitest run src/test/vault/vault-storage.test.ts
 
 # 4. Vault Recovery with BIP-39 Seed (3/3 passing)
-npx vitest run src/test/vault-recovery.test.ts
+npx vitest run src/test/vault/vault-recovery.test.ts
 
 # 5. File Conversion Engine (14/14 passing)
-npx vitest run src/test/file-conversion.test.ts
+npx vitest run src/test/parsers/file-conversion.test.ts
 
 # 6. AI Safety Gatekeepers (12/12 passing)
-npx vitest run src/test/ai-gatekeeper.test.ts
+npx vitest run src/test/ai/ai-gatekeeper.test.ts
 
 # 7. Encrypted Conflict Isolation & Syntax Validation (3/3 passing)
-npx vitest run src/test/sync-encrypted-conflict.test.ts
+npx vitest run src/test/sync/sync-encrypted-conflict.test.ts
 
 # 8. Decryption Integration & Re-Encryption (4/4 passing)
-npx vitest run src/test/encrypted-conflict-decryption.integration.test.ts
+npx vitest run src/test/sync/encrypted-conflict-decryption.integration.test.ts
 
 # 9. Strict TypeScript Compilation (0 errors)
 npx tsc --noEmit

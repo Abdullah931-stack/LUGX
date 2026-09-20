@@ -399,11 +399,11 @@ Direct AI API requests on encrypted files fail with 403, standard files continue
 Execute comprehensive test matrix (Unit, Integration, E2E) in Vitest, audit logs to verify zero sensitive data leakage, and confirm all three core architectural enhancements.
 
 #### Targeted Files and Components
-- `src/test/vault-crypto.test.ts`
-- `src/test/vault-recovery.test.ts`
-- `src/test/file-conversion.test.ts`
-- `src/test/ai-gatekeeper.test.ts`
-- `src/test/sync-encrypted-conflict.test.ts`
+- `src/test/vault/vault-crypto.test.ts`
+- `src/test/vault/vault-recovery.test.ts`
+- `src/test/parsers/file-conversion.test.ts`
+- `src/test/ai/ai-gatekeeper.test.ts`
+- `src/test/sync/sync-encrypted-conflict.test.ts`
 - `src/lib/sync/error-handler.ts` and `src/lib/sync/performance-monitor.ts`
 
 #### Closure Test Matrix

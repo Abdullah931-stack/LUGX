@@ -26,12 +26,12 @@ In the original founding specifications, Supabase Storage (`user-files` bucket) 
   ```
 
 ### C. Test Suite & Fixture Clean-up
-- **`src/test/cross-user-ownership.test.ts`**: Removed import of `assertSafeStoragePath` and the obsolete `Storage Path Tenant Isolation & Path Traversal Guards` test block.
+- **`src/test/server/cross-user-ownership.test.ts`**: Removed import of `assertSafeStoragePath` and the obsolete `Storage Path Tenant Isolation & Path Traversal Guards` test block.
 - **Test Fixtures**: Removed `storagePath: null` mocks across:
-  - `src/test/editor-orchestration.integration.test.ts`
-  - `src/server/actions/file-ops.softdelete.test.ts`
-  - `src/server/actions/file-ops.lostupdate.test.ts`
-  - `src/app/api/files/[id]/route.putguard.test.ts`
+  - `src/test/editor/editor-orchestration.integration.test.ts`
+  - `src/test/server/file-ops.softdelete.test.ts`
+  - `src/test/server/file-ops.lostupdate.test.ts`
+  - `src/test/api/api-files-putguard.live.test.ts`
 
 ### D. Documentation & Environment Sync
 - **`.env.example`**: Updated header `# Supabase (Auth & Storage)` to `# Supabase (Authentication)`.

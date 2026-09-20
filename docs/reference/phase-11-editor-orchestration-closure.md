@@ -15,7 +15,7 @@ policies hold under pressure, and close the remaining browser-behavior gaps.
   resolution and sync replay all route through `useEditorOrchestrator`
   (`WriteStateType`: idle / saving / ai_committing / resolving_conflict /
   syncing / stopped). Assertions added to
-  `src/test/editor-orchestration.integration.test.ts`.
+  `src/test/editor/editor-orchestration.integration.test.ts`.
 - **AutoSave suspension gate** (`canAutoSave`): proven inactive during
   `streaming`, `reserved`, `preview_ready`, `committing`, unresolved conflict,
   and programmatic updates. Runtime log evidence during tests:
@@ -65,24 +65,24 @@ policies hold under pressure, and close the remaining browser-behavior gaps.
 Default suite (jsdom / mocked boundaries), single command:
 
 ```
-npx vitest run src/test/editor-orchestration.integration.test.ts \
-  src/test/editor-recovery-reload.test.ts \
-  src/test/editor-atomic-commit.test.ts \
-  src/test/ai-preview-decision.test.ts
+npx vitest run src/test/editor/editor-orchestration.integration.test.ts \
+  src/test/editor/editor-recovery-reload.test.ts \
+  src/test/editor/editor-atomic-commit.test.ts \
+  src/test/ai/ai-preview-decision.test.ts
 => Test Files 4 passed (4) | Tests 25 passed (25)
 ```
 
 New suites:
-- `src/test/editor-recovery-reload.test.ts` (5 tests): reload-during-preview,
+- `src/test/editor/editor-recovery-reload.test.ts` (5 tests): reload-during-preview,
   reload-during-generation, already-settled, unknown-id, SPA teardown tracking.
-- `src/test/editor-orchestration.integration.test.ts` extended with 4 tests:
+- `src/test/editor/editor-orchestration.integration.test.ts` extended with 4 tests:
   streaming suspension, preview_ready suspension, committing block + unload
   warning + single-write restoration, dirty unload warning.
 
 LIVE suite on the isolated Neon branch:
 
 ```
-npx vitest run --config vitest.live.config.ts src/test/ai-reservation-status.live.test.ts
+npx vitest run --config vitest.live.config.ts src/test/ai/ai-reservation-status.live.test.ts
 => [test-db] Isolated test branch identity - endpointId: 'ep-soft-glade-b1hdcbwm-pooler'
    host: 'ep-soft-glade-b1hdcbwm-pooler.c-5.eu-central-1.aws.neon.tech'
 => Test Files 1 passed (1) | Tests 4 passed (4)
@@ -120,10 +120,10 @@ plus the manual browser checklist below.
   mount recovery effect.
 - `src/server/actions/ai-ops.ts` (+54): read-only `getAIReservationStatus`.
 - `src/lib/ai/pending-operation-store.ts` (new).
-- `src/test/editor-orchestration.integration.test.ts` (+198): Phase 11 closure
+- `src/test/editor/editor-orchestration.integration.test.ts` (+198): Phase 11 closure
   assertions.
-- `src/test/editor-recovery-reload.test.ts` (new).
-- `src/test/ai-reservation-status.live.test.ts` (new, LIVE bucket).
+- `src/test/editor/editor-recovery-reload.test.ts` (new).
+- `src/test/ai/ai-reservation-status.live.test.ts` (new, LIVE bucket).
 - `vitest.live.config.ts` (+1): register the live suite.
 
 ## 8. Addendum - root cause of the aborted full-suite sweep
@@ -137,7 +137,7 @@ live test:
 
 - The default bucket structurally excludes every LIVE suite:
   `vitest.config.ts` sets `exclude: [...configDefaults.exclude, ...LIVE_TEST_FILES]`,
-  and `src/test/ai-reservation-status.live.test.ts` is registered exclusively in
+  and `src/test/ai/ai-reservation-status.live.test.ts` is registered exclusively in
   `LIVE_TEST_FILES` (single source of truth in `vitest.live.config.ts`).
 - All 14 suites importing `@/test/test-db` (the only Neon consumers) are members
   of `LIVE_TEST_FILES`; the default bucket therefore never touches Postgres.
@@ -167,7 +167,7 @@ Test Files  29 passed (29)
 
 File count (29, not 30) additionally confirms the live suite is excluded from
 the default bucket; the empirical filter probe returned "No test files found"
-for `src/test/ai-reservation-status.live.test.ts` under the default config.
+for `src/test/ai/ai-reservation-status.live.test.ts` under the default config.
 
 ## 10. Post-closure debt-cleanup round (same session, owner-directed)
 

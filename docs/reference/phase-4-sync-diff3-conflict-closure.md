@@ -33,12 +33,12 @@ Phase 4 migrates the offline synchronization and conflict resolution subsystem t
 All 30 unit and integration sync/reconciliation tests pass with 100% success rate:
 
 ```powershell
-npx vitest run src/lib/sync/reconciliation.test.ts src/lib/sync/etag-generator.test.ts
+npx vitest run src/test/sync/sync-reconciliation.test.ts src/test/sync/sync-etag-generator.test.ts
 ```
 
 ```
- ✓ src/lib/sync/etag-generator.test.ts (20 tests) 23ms
- ✓ src/lib/sync/reconciliation.test.ts (10 tests) 14ms
+ ✓ src/test/sync/sync-etag-generator.test.ts (20 tests) 23ms
+ ✓ src/test/sync/sync-reconciliation.test.ts (10 tests) 14ms
 
  Test Files  2 passed (2)
       Tests  30 passed (30)

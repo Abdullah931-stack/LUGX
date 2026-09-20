@@ -55,23 +55,23 @@ All automated unit, integration, and contract test suites pass with a 100% succe
 
 ```bash
 # 1. Rate limiter sliding window and fail-open tests
-npx vitest run src/test/rate-limit.test.ts
+npx vitest run src/test/infrastructure/rate-limit.test.ts
 
 # 2. Correlation ID extraction, injection, and sanitization tests
-npx vitest run src/test/correlation.test.ts
+npx vitest run src/test/auth/correlation.test.ts
 
 # 3. Reservation expiration cron route authentication and transitions
-npx vitest run src/test/cron-expire-reservations.test.ts
+npx vitest run src/test/infrastructure/cron-expire-reservations.test.ts
 
 # 4. Zero-Knowledge log hygiene and word-boundary tests
-npx vitest run src/test/log-sanitizer.test.ts
+npx vitest run src/test/auth/log-sanitizer.test.ts
 
 # 5. AI quota idempotency and atomic commit suites
-npx vitest run src/test/ai-quota-idempotency.test.ts
-npx vitest run src/test/ai-server-atomic-commit.test.ts
+npx vitest run src/test/ai/ai-quota-idempotency.test.ts
+npx vitest run src/test/ai/ai-server-atomic-commit.test.ts
 
 # 6. Encrypted vault sync and AI gatekeeper suite
-npx vitest run src/test/vault-sync-ai-gate.test.ts
+npx vitest run src/test/vault/vault-sync-ai-gate.test.ts
 
 # 7. Complete workspace test suite (65 test files)
 npm test

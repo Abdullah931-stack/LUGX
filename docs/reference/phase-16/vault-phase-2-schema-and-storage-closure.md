@@ -78,12 +78,12 @@ A comprehensive adversarial code audit evaluated technical reproducibility, defe
 
 | Invariant | Implementation Mechanism | Verification Proof |
 | :--- | :--- | :--- |
-| **Zero Plaintext At-Rest** | Low-level direct IndexedDB object store inspection; asserts 0 plaintext matches in raw records. | `src/test/vault-storage.test.ts` §3 |
-| **Uninitialized Lazy Persistence** | Direct `saveFile` without `init()` self-heals, saves key to `sync_metadata`, and recovers cleanly across reopens. | `src/test/vault-storage.test.ts` §8 |
-| **Cold-Start Concurrency Safety** | 20 parallel writes to a cold database derive identical keys and decrypt without authentication tag mismatches. | `src/test/vault-storage.test.ts` §8 |
-| **Multi-Tenant In-Memory Isolation** | Distinct managers for separate users maintain cryptographic isolation even without manual intermediate purges. | `src/test/vault-storage.test.ts` §8 |
-| **Corrupted Record Quarantining** | Tampered ciphertext or mismatched AAD throws `CorruptedLocalRecordError` and isolates the single file. | `src/test/vault-storage.test.ts` §6 |
-| **Zero-Downtime Migration** | In-place migration reads legacy plaintext files transparently and encrypts on subsequent modifications. | `src/test/vault-storage.test.ts` §5 |
+| **Zero Plaintext At-Rest** | Low-level direct IndexedDB object store inspection; asserts 0 plaintext matches in raw records. | `src/test/vault/vault-storage.test.ts` §3 |
+| **Uninitialized Lazy Persistence** | Direct `saveFile` without `init()` self-heals, saves key to `sync_metadata`, and recovers cleanly across reopens. | `src/test/vault/vault-storage.test.ts` §8 |
+| **Cold-Start Concurrency Safety** | 20 parallel writes to a cold database derive identical keys and decrypt without authentication tag mismatches. | `src/test/vault/vault-storage.test.ts` §8 |
+| **Multi-Tenant In-Memory Isolation** | Distinct managers for separate users maintain cryptographic isolation even without manual intermediate purges. | `src/test/vault/vault-storage.test.ts` §8 |
+| **Corrupted Record Quarantining** | Tampered ciphertext or mismatched AAD throws `CorruptedLocalRecordError` and isolates the single file. | `src/test/vault/vault-storage.test.ts` §6 |
+| **Zero-Downtime Migration** | In-place migration reads legacy plaintext files transparently and encrypts on subsequent modifications. | `src/test/vault/vault-storage.test.ts` §5 |
 
 ---
 
@@ -91,15 +91,15 @@ A comprehensive adversarial code audit evaluated technical reproducibility, defe
 
 ```bash
 # Phase 2 Database Schema, Migrations & Transparent Encrypted IDB
-npx vitest run src/test/vault-storage.test.ts
+npx vitest run src/test/vault/vault-storage.test.ts
 # Result: 15 passed (15) in 158ms
 
 # Phase 1 Crypto Core Suite
-npx vitest run src/test/vault-crypto.test.ts
+npx vitest run src/test/vault/vault-crypto.test.ts
 # Result: 28 passed (28) in 153ms
 
 # Sync Hook Scoped Lifecycle Suite
-npx vitest run src/hooks/use-sync.test.ts
+npx vitest run src/test/sync/use-sync.test.ts
 # Result: 14 passed (14) in 983ms
 
 # Full Repository Test Suite

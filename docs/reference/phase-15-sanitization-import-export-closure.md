@@ -27,7 +27,7 @@ Phase 15 completes the security hardening of the unified pure-Markdown content p
 - **Zero HTML Ingestion & Execution:** Replaces legacy DOMPurify with strict syntax AST tokenization in CodeMirror 6 (`@lezer/markdown`).
 - **Inert Adversarial Injection:** Malicious payloads (`<script>`, event handlers `onload=`, `javascript:` URLs) are treated strictly as inert Markdown text literals, eliminating DOM injection surfaces.
 
-### 4. End-to-End Round-Trip Fidelity (`src/test/export-import-roundtrip.integration.test.ts`)
+### 4. End-to-End Round-Trip Fidelity (`src/test/parsers/export-import-roundtrip.integration.test.ts`)
 - **Mathematical Identity:** Guarantees that exporting complex documents via `MarkdownExporter` and re-importing via `importFile` yields 100% bit-exact Markdown text and deterministic ETag generation.
 - **BiDi & Spatial Table Preservation:** Asserts complete preservation of Arabic RTL presentation forms, spatial GFM tables (`| Col 1 | Col 2 |`), code blocks, and dates across the entire ingestion cycle.
 
@@ -39,13 +39,13 @@ All automated unit and integration test suites pass with a 100% success rate:
 
 ```bash
 # 1. File validation and magic bytes unit tests
-npx vitest run src/lib/parsers/file-validator.test.ts
+npx vitest run src/test/parsers/parser-file-validator.test.ts
 
 # 2. Server action import and sanitization tests
-npx vitest run src/server/actions/import-file.test.ts
+npx vitest run src/test/server/import-file.test.ts
 
 # 3. Comprehensive round-trip integration suite
-npx vitest run src/test/export-import-roundtrip.integration.test.ts
+npx vitest run src/test/parsers/export-import-roundtrip.integration.test.ts
 
 # 4. Full repository test suite (62 test files)
 npm run test

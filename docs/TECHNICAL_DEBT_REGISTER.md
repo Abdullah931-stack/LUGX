@@ -29,9 +29,9 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   invoked it.
 - **Resolution:** Fixed in Phase 17 by deploying `/api/cron/expire-reservations`
   protected by `CRON_SECRET` and scheduling it via `.github/workflows/cron.yml`.
-  Covered by unit tests in `src/test/cron-expire-reservations.test.ts` and
+  Covered by unit tests in `src/test/infrastructure/cron-expire-reservations.test.ts` and
   verified against real database rows on the isolated Neon test branch in Phase 18
-  (`src/test/cron-expire-reservations.live.test.ts`).
+  (`src/test/infrastructure/cron-expire-reservations.live.test.ts`).
 
 ## TD-03 — No audit trail for destructive database operations
 
@@ -58,7 +58,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - In `src/app/api/ai/stream/route.ts`, implemented `handleClientDisconnect`: when client aborts post-TTFT (after tokens were streamed), the server autonomously settles the reservation via `commitAIReservation(operationId)`, while early disconnects pre-TTFT are refunded (`refundAIReservation`).
   - In `src/hooks/use-ai-stream.ts`, updated `stopStream()` to abort immediately (0ms) and dismantle ghost decorations instantly without awaiting a synchronous network round-trip, dispatching `settleReservationAsConsumed` as non-blocking defense-in-depth.
   - Upstream Gemini model generation terminates instantly at socket level, eliminating token bleed and reducing UI stop latency to 0ms.
-  - Verified via dedicated test suite `src/test/ai-stream-abort-latency.test.ts` alongside all existing AI decision suites (100% passing across 67 test files and 812 tests).
+  - Verified via dedicated test suite `src/test/ai/ai-stream-abort-latency.test.ts` alongside all existing AI decision suites (100% passing across 67 test files and 812 tests).
 
 ## TD-06 — Dead `'error'` member in the `SyncStatus` union — ✅ RESOLVED (2026-08-25)
 
@@ -125,4 +125,4 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Introduced Fast-Path routing in `src/proxy.ts` that completely bypasses `getUser()` network calls on public routes (e.g. `/`, static assets) and on `/login` when no auth cookies exist.
   - Equipped `getUser()` in `src/proxy.ts` with an `AbortSignal.timeout(2500)` watchdog race that fails closed gracefully into an unauthenticated null user without socket stalling.
   - Implemented `copyCookiesAndRedirect` helper ensuring all `Set-Cookie` directives (including deletions from `@supabase/ssr`) are retained and returned to the client browser on 307 redirects and 401 API responses.
-  - Verified via dedicated unit test suites (`src/test/auth-signout.test.ts` and `src/test/proxy.test.ts`), maintaining 100% test pass rate across all 66 test suites (797 passing tests) and clean ESLint status.
+  - Verified via dedicated unit test suites (`src/test/auth/auth-signout.test.ts` and `src/test/auth/proxy.test.ts`), maintaining 100% test pass rate across all 66 test suites (797 passing tests) and clean ESLint status.

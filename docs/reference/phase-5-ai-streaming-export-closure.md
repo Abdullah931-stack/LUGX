@@ -43,12 +43,12 @@ npm test
 ```
 
 ```
- ✓ src/test/ai-server-atomic-commit.test.ts (11 tests)
- ✓ src/test/ai-preview-decision.test.ts (10 tests)
- ✓ src/test/markdown-exporters.test.ts (6 tests)
- ✓ src/test/ai-stream-parser.test.ts (8 tests)
- ✓ src/test/ai-stream-session.test.ts (12 tests)
- ✓ src/test/markdown-editor.test.ts (18 tests)
+ ✓ src/test/ai/ai-server-atomic-commit.test.ts (11 tests)
+ ✓ src/test/ai/ai-preview-decision.test.ts (10 tests)
+ ✓ src/test/parsers/markdown-exporters.test.ts (6 tests)
+ ✓ src/test/ai/ai-stream-parser.test.ts (8 tests)
+ ✓ src/test/ai/ai-stream-session.test.ts (12 tests)
+ ✓ src/test/editor/markdown-editor.test.ts (18 tests)
 
  Test Files  36 passed (36)
       Tests  469 passed (469)

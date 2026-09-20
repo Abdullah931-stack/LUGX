@@ -41,12 +41,12 @@ Every file encryption binds Additional Authenticated Data formatted with the dom
 
 | Invariant | Implementation Mechanism | Verification Proof |
 | :--- | :--- | :--- |
-| **Defensive RAM Sanitization** | Explicit `safeKey.fill(0)` and `wipeBuffer(buffer)` executed inside `finally` blocks across all crypto workers and key stores. | `src/test/vault-crypto.test.ts` §5 |
-| **Deterministic Auto-Lock** | `SessionKeyStore` checks `Date.now() - this.lastActivityTimestamp > timeout` on every key accessor, immune to browser background tab timer throttling. | `src/test/vault-crypto.test.ts` §8 |
-| **Cross-Platform Password Parity** | Unicode `NFKC` normalization on raw passwords ensures identical key derivation across macOS (NFD) and Windows/Linux (NFC). | `src/test/vault-crypto.test.ts` §8 |
-| **Chunked Base64 Performance** | 8KB chunking (`subarray + apply`) for large payloads (500KB+) prevents call stack overflow and V8 heap churn. | `src/test/vault-crypto.test.ts` §8 |
-| **URL-Safe & Unpadded Base64 Resilience** | Automatic sanitization and padding reconstruction in `base64ToUint8Array`. | `src/test/vault-crypto.test.ts` §8 |
-| **Deterministic BIP-39 Validation** | Verified against official SatoshiLabs BIP-39 test vectors for zero-entropy phrases and checksum validation. | `src/test/vault-crypto.test.ts` §4 |
+| **Defensive RAM Sanitization** | Explicit `safeKey.fill(0)` and `wipeBuffer(buffer)` executed inside `finally` blocks across all crypto workers and key stores. | `src/test/vault/vault-crypto.test.ts` §5 |
+| **Deterministic Auto-Lock** | `SessionKeyStore` checks `Date.now() - this.lastActivityTimestamp > timeout` on every key accessor, immune to browser background tab timer throttling. | `src/test/vault/vault-crypto.test.ts` §8 |
+| **Cross-Platform Password Parity** | Unicode `NFKC` normalization on raw passwords ensures identical key derivation across macOS (NFD) and Windows/Linux (NFC). | `src/test/vault/vault-crypto.test.ts` §8 |
+| **Chunked Base64 Performance** | 8KB chunking (`subarray + apply`) for large payloads (500KB+) prevents call stack overflow and V8 heap churn. | `src/test/vault/vault-crypto.test.ts` §8 |
+| **URL-Safe & Unpadded Base64 Resilience** | Automatic sanitization and padding reconstruction in `base64ToUint8Array`. | `src/test/vault/vault-crypto.test.ts` §8 |
+| **Deterministic BIP-39 Validation** | Verified against official SatoshiLabs BIP-39 test vectors for zero-entropy phrases and checksum validation. | `src/test/vault/vault-crypto.test.ts` §4 |
 
 ---
 
@@ -54,7 +54,7 @@ Every file encryption binds Additional Authenticated Data formatted with the dom
 
 ```bash
 # Pure Crypto & Hardened Invariant Suite
-npx vitest run src/test/vault-crypto.test.ts
+npx vitest run src/test/vault/vault-crypto.test.ts
 # Result: 28 passed (28) in 150ms
 
 # Full Unit Test Suite

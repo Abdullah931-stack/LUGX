@@ -41,11 +41,11 @@ Phase 3 establishes raw Markdown as the single source of truth across the storag
 All 9 automated import and normalization tests pass with 100% success rate:
 
 ```powershell
-npx vitest run src/server/actions/import-file.test.ts
+npx vitest run src/test/server/import-file.test.ts
 ```
 
 ```
- ✓ src/server/actions/import-file.test.ts (9 tests) 26ms
+ ✓ src/test/server/import-file.test.ts (9 tests) 26ms
 
  Test Files  1 passed (1)
       Tests  9 passed (9)

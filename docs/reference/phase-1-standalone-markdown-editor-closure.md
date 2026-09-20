@@ -33,9 +33,9 @@ Phase 1 completes the construction and formal contract verification of the stand
 2. **`src/components/editor/ai-toolbar.tsx`**: Integration of `DirectionMenu` alongside the live/source mode switcher.
 
 ### C. Test Verification Suites
-1. **`src/test/markdown-editor.test.ts`**: 21 contract unit tests verifying raw-source invariant, empty string validity, incomplete markdown stability, adapter operations (setValue, replaceRange, setSelection bounds clamping, undo/redo), word/heading statistics, RTL/Arabic script integrity, text direction modes (`auto`, `rtl`, `ltr`), dynamic `lockCodeBlocksLTR` toggling, and live/source mode compartment switching.
-2. **`src/test/markdown-editor-e2e.test.ts`**: 9 end-to-end integration tests verifying complex GFM hydration, rapid keystroke consistency, atomic AI previews, plain text & markdown export fidelity, and virtualization bidi resilience across 2,000+ lines.
-3. **`src/components/editor/markdown/markdown-editor.test.tsx`**: Component integration tests verifying React mounting, `ref` imperative handle access, `onAdapterReady`, `onChange` event dispatching, controlled value sync, and dynamic mode switching.
+1. **`src/test/editor/markdown-editor.test.ts`**: 21 contract unit tests verifying raw-source invariant, empty string validity, incomplete markdown stability, adapter operations (setValue, replaceRange, setSelection bounds clamping, undo/redo), word/heading statistics, RTL/Arabic script integrity, text direction modes (`auto`, `rtl`, `ltr`), dynamic `lockCodeBlocksLTR` toggling, and live/source mode compartment switching.
+2. **`src/test/editor/markdown-editor-e2e.test.ts`**: 9 end-to-end integration tests verifying complex GFM hydration, rapid keystroke consistency, atomic AI previews, plain text & markdown export fidelity, and virtualization bidi resilience across 2,000+ lines.
+3. **`src/test/editor/markdown-editor.ui.test.tsx`**: Component integration tests verifying React mounting, `ref` imperative handle access, `onAdapterReady`, `onChange` event dispatching, controlled value sync, and dynamic mode switching.
 
 ---
 

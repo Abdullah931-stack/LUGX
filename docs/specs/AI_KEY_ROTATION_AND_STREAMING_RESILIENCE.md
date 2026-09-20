@@ -185,11 +185,11 @@ commit pipeline rejection    -> onError(original rejection) + client-side refund
 
 | Suite | Coverage |
 |-------|----------|
-| `src/test/ai-stream-completion-terminality.test.ts` (3 tests) | Async commit-pipeline rejection routes into `onError` with a single terminal callback; clean async completion emits no error; stalled provider fails closed via the first-chunk watchdog |
-| `src/test/ai-client-abort-propagation.test.ts` | The AbortSignal reaches `generateContentStream` request options verbatim |
+| `src/test/ai/ai-stream-completion-terminality.test.ts` (3 tests) | Async commit-pipeline rejection routes into `onError` with a single terminal callback; clean async completion emits no error; stalled provider fails closed via the first-chunk watchdog |
+| `src/test/ai/ai-client-abort-propagation.test.ts` | The AbortSignal reaches `generateContentStream` request options verbatim |
 
 ```bash
-npx vitest run src/test/ai-stream-completion-terminality.test.ts src/test/ai-client-abort-propagation.test.ts
+npx vitest run src/test/ai/ai-stream-completion-terminality.test.ts src/test/ai/ai-client-abort-propagation.test.ts
 node_modules/.bin/tsc --noEmit
 ```
 
@@ -198,10 +198,10 @@ node_modules/.bin/tsc --noEmit
 ## 6. Verification & Test Evidence
 
 All components have been rigorously verified through automated test suites:
-- `src/lib/ai/key-rotation.test.ts` (37 tests): 24h fixed window, 4 key states, atomic 5-minute probe lock, Fail-Closed policy, sanitization.
-- `src/lib/ai/client.test.ts` (20 tests): Model configuration, fast-path circuit breaker, in-flight 503 failover, streaming, cancellation.
-- `src/test/ai-provider-smoke.test.ts` (4 tests): Model contracts, error classifications.
-- `src/server/actions/ai-ops.integrity.test.ts` (6 tests on real PostgreSQL): Concurrency races, single charge on duplicates, cross-midnight safety, blind refund rejection.
-- `src/server/actions/ai-ops.refund.test.ts` (5 tests on real PostgreSQL): Bounded subtraction, underflow safety, quota restoration.
+- `src/test/ai/ai-key-rotation.test.ts` (37 tests): 24h fixed window, 4 key states, atomic 5-minute probe lock, Fail-Closed policy, sanitization.
+- `src/test/ai/ai-client.test.ts` (20 tests): Model configuration, fast-path circuit breaker, in-flight 503 failover, streaming, cancellation.
+- `src/test/ai/ai-provider-smoke.test.ts` (4 tests): Model contracts, error classifications.
+- `src/test/ai/ai-ops.integrity.test.ts` (6 tests on real PostgreSQL): Concurrency races, single charge on duplicates, cross-midnight safety, blind refund rejection.
+- `src/test/ai/ai-ops.refund.test.ts` (5 tests on real PostgreSQL): Bounded subtraction, underflow safety, quota restoration.
 - **Total Passing Tests**: **72 / 72 tests (100% passing)**.
 - **Type Safety**: **0 errors** via `npx tsc --noEmit`.

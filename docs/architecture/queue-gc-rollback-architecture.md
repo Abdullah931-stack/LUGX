@@ -253,17 +253,17 @@ has since grown to 33 tests; re-run the suite for current totals):
 ========================================================================================
 Test Suite Execution Matrix:
 ========================================================================================
- 1. src/lib/sync/sync-manager.test.ts          -> 31 tests  [ PASSED ]
- 2. src/lib/sync/error-handler.test.ts         -> 26 tests  [ PASSED ]
- 3. src/lib/sync/rollback.test.ts              -> 22 tests  [ PASSED ]
- 4. src/lib/sync/connection-detector.test.ts   -> 17 tests  [ PASSED ]
- 5. src/lib/sync/conflict-resolver.test.ts     -> 14 tests  [ PASSED ]
- 6. src/lib/sync/indexeddb.test.ts             -> 13 tests  [ PASSED ]
- 7. src/lib/sync/etag-generator.test.ts        -> 13 tests  [ PASSED ]
- 8. src/hooks/use-sync.test.ts                 -> 13 tests  [ PASSED ]
- 9. src/lib/sync/concurrency-manager.test.ts    ->  9 tests  [ PASSED ]
-10. src/lib/sync/parallel.test.ts               ->  6 tests  [ PASSED ]
-11. src/lib/sync/operations-gc.test.ts          ->  5 tests  [ PASSED ]
+ 1. src/test/sync/sync-manager.test.ts          -> 31 tests  [ PASSED ]
+ 2. src/test/sync/sync-error-handler.test.ts     -> 26 tests  [ PASSED ]
+ 3. src/test/sync/sync-rollback.test.ts          -> 22 tests  [ PASSED ]
+ 4. src/test/sync/sync-connection-detector.test.ts -> 17 tests [ PASSED ]
+ 5. src/test/sync/sync-conflict-resolver.test.ts -> 14 tests  [ PASSED ]
+ 6. src/test/sync/sync-indexeddb.test.ts         -> 13 tests  [ PASSED ]
+ 7. src/test/sync/sync-etag-generator.test.ts    -> 13 tests  [ PASSED ]
+ 8. src/test/sync/use-sync.test.ts               -> 13 tests  [ PASSED ]
+ 9. src/test/sync/sync-concurrency-manager.test.ts ->  9 tests [ PASSED ]
+10. src/test/sync/sync-parallel.test.ts           ->  6 tests  [ PASSED ]
+11. src/test/sync/sync-operations-gc.test.ts      ->  5 tests  [ PASSED ]
 ----------------------------------------------------------------------------------------
 Total Automated Tests:                         169 tests  [ 100% PASS RATE ]
 ========================================================================================
@@ -281,6 +281,6 @@ All codebase modifications for Phase 2 are strictly confined within the permitte
 - `src/lib/sync/operations-gc.ts`
 - `src/lib/sync/error-handler.ts`
 - `src/lib/sync/index.ts`
-- Associated unit and integration test suites in `src/lib/sync/*.test.ts`.
+- Associated unit and integration test suites in `src/test/sync/*.test.ts`.
 
 Zero files outside the Phase 2 boundary were altered.

@@ -203,8 +203,8 @@ sequenceDiagram
 
 | Suite | Coverage |
 |-------|----------|
-| `src/lib/sync/reconciliation.test.ts` (10 tests) | Closed matrix incl. cold-start rows (`bootstrap_server`, `adopt_metadata_keep_edits`); fast-forward on clean+newer; metadata adoption on identical payloads (precedence over dirty); dirty-divergent retention; non-newer retention (equal version, regressed version, version-without-ETag); weak-validator normalization (`W/`, quotes) derived from the REAL baseline |
-| `src/test/editor-orchestration.integration.test.ts` (18 tests) | Orchestrator integration vs mocked `fileOps`: suspension gates, committing exclusivity, unload warnings (dirty / committing / parked preview), cold-start painting of a server-v1 file with a lost local snapshot, sync-before-write anchor ordering, sibling tab `vault_locked` propagation, and local auto-lock `debouncedAutoSave` cancellation |
+| `src/test/sync/sync-reconciliation.test.ts` (10 tests) | Closed matrix incl. cold-start rows (`bootstrap_server`, `adopt_metadata_keep_edits`); fast-forward on clean+newer; metadata adoption on identical payloads (precedence over dirty); dirty-divergent retention; non-newer retention (equal version, regressed version, version-without-ETag); weak-validator normalization (`W/`, quotes) derived from the REAL baseline |
+| `src/test/editor/editor-orchestration.integration.test.ts` (18 tests) | Orchestrator integration vs mocked `fileOps`: suspension gates, committing exclusivity, unload warnings (dirty / committing / parked preview), cold-start painting of a server-v1 file with a lost local snapshot, sync-before-write anchor ordering, sibling tab `vault_locked` propagation, and local auto-lock `debouncedAutoSave` cancellation |
 
 ---
 
@@ -413,29 +413,29 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 ## 7. Verification Proof
 
 - **Automated Test Execution Evidence:**
-  - `src/lib/sync/conflict-resolver.test.ts` (32/32 passing)
-  - `src/lib/sync/sync-manager.test.ts` (36/36 passing)
-  - `src/test/editor-orchestration.integration.test.ts` (18/18 passing)
-  - `src/hooks/use-sync.test.ts` (14/14 passing)
-  - `src/test/editor-recovery-reload.test.ts` (5/5 passing)
-  - `src/test/editor-atomic-commit.test.ts` (4/4 passing)
-  - `src/lib/sync/reconciliation.test.ts` (10/10 passing)
-  - `src/test/ai-preview-decision.test.ts` (8/8 passing)
-  - `src/test/ai-server-atomic-commit.test.ts` (13/13 passing)
-  - `src/test/markdown-exporters.test.ts` (6/6 passing)
-  - `src/test/markdown-editor.test.ts` (21/21 passing)
-  - `src/test/markdown-editor-e2e.test.ts` (9/9 passing)
+  - `src/test/sync/sync-conflict-resolver.test.ts` (32/32 passing)
+  - `src/test/sync/sync-manager.test.ts` (36/36 passing)
+  - `src/test/editor/editor-orchestration.integration.test.ts` (18/18 passing)
+  - `src/test/sync/use-sync.test.ts` (14/14 passing)
+  - `src/test/editor/editor-recovery-reload.test.ts` (5/5 passing)
+  - `src/test/editor/editor-atomic-commit.test.ts` (4/4 passing)
+  - `src/test/sync/sync-reconciliation.test.ts` (10/10 passing)
+  - `src/test/ai/ai-preview-decision.test.ts` (8/8 passing)
+  - `src/test/ai/ai-server-atomic-commit.test.ts` (13/13 passing)
+  - `src/test/parsers/markdown-exporters.test.ts` (6/6 passing)
+  - `src/test/editor/markdown-editor.test.ts` (21/21 passing)
+  - `src/test/editor/markdown-editor-e2e.test.ts` (9/9 passing)
   - **Vault Cryptographic & Orchestration Subsystem Suites:**
-    - `src/test/vault-crypto.test.ts` (40/40 passing - W3C chunking, timeout & circuit-breaker queue draining, cross-tab volatile RAM purge & auto-lock synchronization)
-    - `src/test/vault-storage.test.ts` (15/15 passing - transparent IndexedDB encryption & raw store inspection)
-    - `src/test/vault-orchestration.test.ts` (29/29 passing - dual wrapping, seed recovery, 6-digit PIN, AAD re-encryption, double-encryption guards)
-    - `src/test/vault-actions.unit.test.ts` (20/20 passing - server actions CRUD, validation, 401/404/409 guards, device trust revocation)
-    - `src/test/file-ops-vault.unit.test.ts` (10/10 passing - encryption toggle, optimistic concurrency, copy with re-encrypted override)
-    - `src/test/vault-crypto-resilience.unit.test.ts` (17/17 passing - 6-digit PIN, tampering detection, RAM wipeBuffer, SessionKeyStore auto-lock & touch)
-    - `src/test/vault-cross-module.integration.test.ts` (5/5 passing - E2E zero-knowledge lifecycle, re-encrypted copy, AI commit, conflict 412, epoch invalidation)
-    - `src/test/vault-sync-ai-gate.test.ts` (28/28 passing - dual-layer AI safety barriers, non-blocking sync with CONFLICT_LOCKED quarantine, Markdown syntax validator)
-    - `src/lib/sync/sync-crypto-gateway.test.ts` (5/5 passing - transparent inbound decryption gateway, fresh outbound CSPRNG IV re-encryption, vault-lock quarantine)
-    - `src/test/encrypted-conflict-decryption.integration.test.ts` (4/4 passing - end-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution)
+    - `src/test/vault/vault-crypto.test.ts` (40/40 passing - W3C chunking, timeout & circuit-breaker queue draining, cross-tab volatile RAM purge & auto-lock synchronization)
+    - `src/test/vault/vault-storage.test.ts` (15/15 passing - transparent IndexedDB encryption & raw store inspection)
+    - `src/test/vault/vault-orchestration.test.ts` (29/29 passing - dual wrapping, seed recovery, 6-digit PIN, AAD re-encryption, double-encryption guards)
+    - `src/test/vault/vault-actions.unit.test.ts` (20/20 passing - server actions CRUD, validation, 401/404/409 guards, device trust revocation)
+    - `src/test/vault/file-ops-vault.unit.test.ts` (10/10 passing - encryption toggle, optimistic concurrency, copy with re-encrypted override)
+    - `src/test/vault/vault-crypto-resilience.unit.test.ts` (17/17 passing - 6-digit PIN, tampering detection, RAM wipeBuffer, SessionKeyStore auto-lock & touch)
+    - `src/test/vault/vault-cross-module.integration.test.ts` (5/5 passing - E2E zero-knowledge lifecycle, re-encrypted copy, AI commit, conflict 412, epoch invalidation)
+    - `src/test/vault/vault-sync-ai-gate.test.ts` (28/28 passing - dual-layer AI safety barriers, non-blocking sync with CONFLICT_LOCKED quarantine, Markdown syntax validator)
+    - `src/test/sync/sync-crypto-gateway.test.ts` (5/5 passing - transparent inbound decryption gateway, fresh outbound CSPRNG IV re-encryption, vault-lock quarantine)
+    - `src/test/sync/encrypted-conflict-decryption.integration.test.ts` (4/4 passing - end-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution)
   - **Vault Subsystem Total:** 10/10 test files, 173/173 tests passing (100% success rate).
   - **Project Full Test Suite:** 67/67 test files, 812/812 tests passing (100% success rate) via `vitest.config.mts`.
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

@@ -28,8 +28,8 @@ Transform the client-side synchronization layer into a strictly scoped, user-bou
 - **Multiple Consecutive Online Events:** Suppress duplicate parallel queue consumers via mutex.
 
 ### Closure Tests
-- `src/hooks/use-sync.test.ts` validating mount/unmount lifecycles, user switching, and logout during active sync.
-- `src/lib/sync/sync-manager.test.ts` and `concurrency-manager.test.ts` asserting consumer counts and operation serialization.
+- `src/test/sync/use-sync.test.ts` validating mount/unmount lifecycles, user switching, and logout during active sync.
+- `src/test/sync/sync-manager.test.ts` and `concurrency-manager.test.ts` asserting consumer counts and operation serialization.
 - `indexeddb.test.ts` proving complete isolation of records across distinct user IDs.
 - Phase closure requires verified absence of GC leaks, dangling listeners, or cross-user operation pollution.
 
@@ -83,7 +83,7 @@ Enforce server-side authentication, resource ownership, hierarchical parent vali
 
 ### Closure Tests
 - Execute `/api/files/[id]/route.putguard.test.ts`.
-- Execute `src/server/actions/file-ops.lostupdate.test.ts` and `file-ops.softdelete.test.ts`.
+- Execute `src/test/server/file-ops.lostupdate.test.ts` and `file-ops.softdelete.test.ts`.
 - Multi-user isolation integration tests on real PostgreSQL verifying cross-user parent rejection and stale `If-Match` rejection.
 
 ---
@@ -108,7 +108,7 @@ Anchor conflict resolution to verified base snapshots, implement structural 3-wa
 - **User Cancellation:** Retain dirty document state and prevent garbage collection of the pending operation.
 
 ### Closure Tests
-- `src/lib/sync/conflict-resolver.test.ts` validating overlapping and non-overlapping merge ranges against real base snapshots.
+- `src/test/sync/sync-conflict-resolver.test.ts` validating overlapping and non-overlapping merge ranges against real base snapshots.
 - Browser interaction tests verifying `ConflictDialog` behavior under simulated 412 responses.
 - Validation that resolved states persist accurately across page reloads.
 
@@ -135,8 +135,8 @@ Implement an idempotent daily quota reservation lifecycle linked to AI operation
 - **Database Failure Post-Reservation:** Re-query database before creating duplicate reservations.
 
 ### Closure Tests
-- `src/server/actions/ai-ops.integrity.test.ts` and `ai-ops.refund.test.ts`.
-- `src/test/ai-quota-idempotency.test.ts` running on live PostgreSQL validating concurrent transactions and rollback recovery.
+- `src/test/ai/ai-ops.integrity.test.ts` and `ai-ops.refund.test.ts`.
+- `src/test/ai/ai-quota-idempotency.test.ts` running on live PostgreSQL validating concurrent transactions and rollback recovery.
 
 ---
 
@@ -160,7 +160,7 @@ Implement concurrent, fail-safe Gemini API key rotation and circuit breakers bac
 - **Multiple Requests in Half-Open Circuit:** Allow only a single probe request through.
 
 ### Closure Tests
-- `src/lib/ai/client.test.ts` and `src/lib/ai/key-rotation.test.ts`.
+- `src/test/ai/ai-client.test.ts` and `src/test/ai/ai-key-rotation.test.ts`.
 - Concurrency tests for key selection, Redis disconnect handling, and TTL expiration.
 - Live provider smoke test validating payload streaming through real client.
 
@@ -189,7 +189,7 @@ Standardize the NDJSON streaming protocol between the stream route, client hooks
 - **Connection Closed Without Done Marker:** Transition to `failed_incomplete_stream`.
 
 ### Closure Tests
-- `src/test/ai-stream-parser.test.ts` and `src/test/ai-stream-session.test.ts`.
+- `src/test/ai/ai-stream-parser.test.ts` and `src/test/ai/ai-stream-session.test.ts`.
 - Integration tests over live HTTP route validating NDJSON framing.
 - Browser verification confirming ghost preview remains isolated from stored content until accepted.
 
@@ -214,7 +214,7 @@ Execute verified atomic commits linking AI generation results, document versioni
 - **Network Retry Following Unknown Outcome:** Query status via `operationId` before initiating new commit operations.
 
 ### Closure Tests
-- `src/test/ai-server-atomic-commit.test.ts` and `src/test/editor-atomic-commit.test.ts` against real database branch.
+- `src/test/ai/ai-server-atomic-commit.test.ts` and `src/test/editor/editor-atomic-commit.test.ts` against real database branch.
 - Simulated failure injections between document update and reservation settlement verifying rollback.
 - Live 412 conflict handling verification in browser.
 
@@ -336,7 +336,7 @@ Prevent open redirects and cross-user resource access across all server routes, 
 - **Accessing Another User's Resource:** Return 404 without leaking existence.
 
 ### Closure Tests
-- `src/test/auth-redirect.test.ts` (21 tests) and `src/test/cross-user-ownership.test.ts` (14 tests).
+- `src/test/auth/auth-redirect.test.ts` (21 tests) and `src/test/server/cross-user-ownership.test.ts` (14 tests).
 - Verifying complete rejection of protocol-relative (`//evil.com`) and encoded redirect vectors.
 
 ---
@@ -367,7 +367,7 @@ Establish durable, idempotent Stripe webhook handling with accurate subscription
 - **Stale Signature:** Reject immediately prior to database access.
 
 ### Closure Tests
-- `src/app/api/stripe/webhook/route.test.ts` covering duplicate events, restart scenarios, and invoice period extraction.
+- `src/test/api/stripe-webhook.test.ts` covering duplicate events, restart scenarios, and invoice period extraction.
 
 ---
 
@@ -422,7 +422,7 @@ Harden single secure content pipeline across import, normalization, editor previ
 - **Adversarial Injections (JavaScript URLs, Event Handlers, Malformed UTF-8):** Sanitized and preserved as inert Markdown text.
 
 ### Closure Tests
-- `src/lib/parsers/file-validator.test.ts`, `src/server/actions/import-file.test.ts`, `src/test/export-import-roundtrip.integration.test.ts`, and full repository test suite (776 tests passed across 62 suites).
+- `src/test/parsers/parser-file-validator.test.ts`, `src/test/server/import-file.test.ts`, `src/test/parsers/export-import-roundtrip.integration.test.ts`, and full repository test suite (776 tests passed across 62 suites).
 
 ### Transition Gate
 - **Status:** `CLOSED` ✅ (Fully verified and hardened under Phase 15 closure report).
@@ -455,7 +455,7 @@ Integrate client-side Zero-Knowledge vault encryption with authenticated key env
 - **Corrupted Ciphertext:** Reject immediately without leaking decrypted buffers.
 
 ### Closure Tests
-- 10-scenario closure matrix in `src/test/vault-crypto.test.ts`, `vault-recovery.test.ts`, `file-conversion.test.ts`, `ai-gatekeeper.test.ts`, `sync-encrypted-conflict.test.ts`, and `src/test/vault-import.integration.test.ts`.
+- 10-scenario closure matrix in `src/test/vault/vault-crypto.test.ts`, `vault-recovery.test.ts`, `file-conversion.test.ts`, `ai-gatekeeper.test.ts`, `sync-encrypted-conflict.test.ts`, and `src/test/vault/vault-import.integration.test.ts`.
 
 ---
 
@@ -506,10 +506,10 @@ Validate end-to-end multi-system contracts combining authentication, sync, confl
 - **AI Happy Path & Atomic Commit Suite:** Auth session, Redis/Postgres reservation, streaming NDJSON with correlationId, ghost preview in CodeMirror 6, atomic ACID commit (file update + version bump + reservation settlement + usage counter), and reload.
 - **AI Failure & Quota Sweeper Suite:** Provider failure, client abort signal, single-refund idempotency, and automated reservation expiration sweeper (`/api/cron/expire-reservations` - TD-02).
 - **Stripe Billing & Durable Ledger Suite:** Live signed HMAC webhook verification (`route.live.test.ts`), ACID event ledger (`subscription_events`), restart replay idempotency, period mapping, and terminal status protection.
-- **Encrypted Vault & Zero-Knowledge Security Suite:** BIP-39 12-word seed, transparent local AES-GCM-256 encryption, deterministic AAD binding `vault:file:${userId}:${fileId}`, locked conflict isolation (`CONFLICT_LOCKED`), unlock & safe merge, Zero-Knowledge AI gatekeeper HTTP 403, and cross-user tenant isolation (`src/test/vault-sync.live.test.ts`).
-- **Document Ingestion, Normalization & Export Suite:** Client-side Web Worker PDF extraction, magic bytes disguised binary rejection (PE/ELF/ZIP), path traversal & null-byte scrubbing, CodeMirror 6 BiDi/RTL rendering, and 100% round-trip pure Markdown export (`src/test/document-pipeline.live.test.ts`).
+- **Encrypted Vault & Zero-Knowledge Security Suite:** BIP-39 12-word seed, transparent local AES-GCM-256 encryption, deterministic AAD binding `vault:file:${userId}:${fileId}`, locked conflict isolation (`CONFLICT_LOCKED`), unlock & safe merge, Zero-Knowledge AI gatekeeper HTTP 403, and cross-user tenant isolation (`src/test/vault/vault-sync.live.test.ts`).
+- **Document Ingestion, Normalization & Export Suite:** Client-side Web Worker PDF extraction, magic bytes disguised binary rejection (PE/ELF/ZIP), path traversal & null-byte scrubbing, CodeMirror 6 BiDi/RTL rendering, and 100% round-trip pure Markdown export (`src/test/server/document-pipeline.live.test.ts`).
 - **Tenant Isolation & Authorization Boundary Suite:** Cross-user resource isolation on files, folders, and AI streams with 404 anti-enumeration error masking, and atomic concurrent user synchronization (`syncUserToDatabase`).
-- **Consolidated Multi-System Lifecycle:** End-to-end 8-stage verification uniting all platform subsystems under concurrent transactional execution (`src/test/multi-system-lifecycle.live.test.ts`).
+- **Consolidated Multi-System Lifecycle:** End-to-end 8-stage verification uniting all platform subsystems under concurrent transactional execution (`src/test/infrastructure/multi-system-lifecycle.live.test.ts`).
 
 ### Exception & Edge Case Handling
 - All integration suites execute on isolated Neon test branch (`TEST_DATABASE_URL`) guarded fail-closed by `test-db-guard.ts` under `singleFork: true` serialization in `vitest.live.config.mts`.
