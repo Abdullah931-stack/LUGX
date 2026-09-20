@@ -2,6 +2,39 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.32.0] - 2026-09-20 (Documentation Ecosystem Restructuring, Nested Domain Hierarchy & Governance Hardening)
+
+### Changed & Reorganized - Documentation Tree Architecture & Governance Protocols
+
+- **Domain-Driven Subdirectory Hierarchy (`docs/`):**
+  - Restructured the entire flat/semi-structured documentation repository into nested domain-driven subdirectories matching codebase subsystems:
+    - `docs/architecture/` organized into functional domain subdirectories: `sync/` (6 specs including `sync-architecture-overview.md` relocated from reference), `ai/` (3 streaming and quota lifecycle specs), and `security/` (rate limiting, proxy, ZK log masking).
+    - `docs/reference/` purged of 21 historical closure files and strictly dedicated to living contracts: `sync-api.md`, `ui-streaming-readiness.md`, and `test-database-isolation.md`.
+    - `docs/records/` structured into 4 distinct categories: `incidents/` (`test-database-safety.md`), `audits/` (`W10-Final-Closure-Round.md`), `closures/` (organized across 5 milestone bundles: Phase 1–6, 11–15, 16, 17–20, and extensions), and `archive/` (legacy development session logs and superseded snapshots).
+    - `docs/guides/` organized into domain subdirectories: `billing/` (`stripe-setup.md`, `stripe-integration.md`), `editor/` (`editor-ui-enhancements.md`, `search-replace-feature.md`, `data-export-guide.md`), and `ai/` (`ai-models-config.md`).
+    - `docs/specs/` standardized with clean kebab-case naming: `offline-sync-blueprint.md`, `ai-key-rotation-and-resilience.md`, `ui-streaming-requirements.md`.
+
+- **Code Directory Purity & Export Documentation Centralization:**
+  - Consolidated data export technical documentation from `src/lib/exporters/README.md` into `docs/guides/editor/data-export-guide.md`.
+  - Completely purged `src/lib/exporters/README.md` from the source tree, enforcing the strict architectural invariant that `src/**` is code-exclusive and must contain zero markdown files.
+  - Removed obsolete redundant `Rules.md` from repository root.
+
+- **Dual-Track Planning Governance & Milestone M6 Plan Publication:**
+  - Established formal separation between `docs/.Plans/` (untracked in git, Arabic internal incubator for candidate future proposals) and `docs/Plans/` (tracked in git, official English execution plans).
+  - Published comprehensive engineering execution plan for Milestone M6: `docs/Plans/PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md` documenting completed Phases 21–24 (Upstash Redis in-flight webhook distributed locking, synchronous cross-tab volatile RAM zeroing via `BroadcastChannel`, quarantined encrypted conflict governance with 100-item capacity limit, and the 10-gate G1–G10 production verification matrix).
+
+- **Documentation Governance, Permissible Boundaries & ADR Protocol:**
+  - Updated operational rules (`.agents/rules/docs-governance.md`) and repository standards (`docs/DOCUMENTATION_GUIDELINES.md`):
+    - Permissible Modification Boundaries matrix classifying each directory (`IMMUTABLE BASELINE`, `LIVING SPEC/CONTRACT/GUIDE`, `PERMANENT HISTORY`, `INTERNAL INCUBATOR`, `CODE EXCLUSIVE`).
+    - Explicit exemption for `docs/foundation/DESIGN_VS_REALITY.md` as a living reconciler required to co-evolve with active code, while Day-0 foundation baseline artifacts remain strictly immutable.
+    - Operational Trigger-Action decision matrix mapping engineering events directly to required documentation actions.
+    - Rule 6: Formal 4-tier Architectural Decisions, Trade-offs & Migration Triggers governance, mandating quantitative or functional Migration Triggers for all architectural alternatives alongside a standard clean Markdown template.
+
+- **Automated Verification & Zero-Regression Integrity:**
+  - Verified 100% relative link resolution across all 76 markdown files (0 broken relative links).
+  - Verified clean static type check (`npx tsc --noEmit` -> 0 errors, exit code 0).
+  - Verified 100% test pass rate across the full test suite (67 test files, 820 passing tests).
+
 ## [1.31.3] - 2026-09-20 (AI Resilience Hardening: Cascading Fallback Chain & In-Flight Model Failover)
 
 ### Added & Enhanced - AI Multi-Tier Fallback Chain, In-Flight Failover & Graceful Overload Recovery
@@ -144,7 +177,7 @@ All notable changes to the LUGX project will be documented in this file.
   - Integrated `request.signal.addEventListener("abort", handleClientDisconnect)` to track client transport terminations deterministically.
   - **Pre-TTFT Disconnects (`ttftMs === null`):** Automatically releases user quota via `refundAIReservation(reservationId, userId, "client_disconnected_pre_ttft")` if the client disconnects before receiving the first token.
   - **Post-TTFT Disconnects (`ttftMs !== null`):** Automatically commits quota consumption via `commitAIReservation(operationId, userId)` upon stream interruption, preventing orphaned reservations and closing quota leak vectors if the client tab closes or network drops.
-- **Quota Lifecycle Documentation Synchronization ([`docs/architecture/ai-quota-reservation-lifecycle.md`](architecture/ai-quota-reservation-lifecycle.md)):**
+- **Quota Lifecycle Documentation Synchronization ([`docs/architecture/ai/ai-quota-reservation-lifecycle.md`](architecture/ai/ai-quota-reservation-lifecycle.md)):**
   - Synchronized architectural documentation and Mermaid sequence diagrams with the Dual-Side Inversion model, clarifying pre-TTFT vs. post-TTFT disconnect guarantees and non-blocking client stop latency.
 - **Automated Test Verification & Type Cleanliness:**
   - Added dedicated latency and abort behavior test suite `src/test/ai-stream-abort-latency.test.ts` verifying immediate stop execution time (< 50ms) and background settlement dispatch.
@@ -176,7 +209,7 @@ All notable changes to the LUGX project will be documented in this file.
 
 ### Added & Verified - Phase 20 Closure & 100% Technical Plan Completion
 
-- **Final Verification & Technical Plan Closure Dossier ([`docs/reference/phase-20-production-readiness-dossier.md`](reference/phase-20-production-readiness-dossier.md)):**
+- **Final Verification & Technical Plan Closure Dossier ([`docs/records/closures/phase-17-to-20-production-readiness/phase-20-production-readiness-dossier.md`](records/closures/phase-17-to-20-production-readiness/phase-20-production-readiness-dossier.md)):**
   - Compiled empirical verification evidence across all 11 final verification gates (G1–G11).
   - Validated database schema invariants and applied migrations (`0001` through `0010`) on Neon PostgreSQL branch.
   - Documented disaster recovery, fail-open/fail-closed circuit breaking, and atomic checkpoint rollback plans.
@@ -216,7 +249,7 @@ All notable changes to the LUGX project will be documented in this file.
 - **Zero-Flakiness Validation Proof:**
   - 100% pass rate achieved across all 15 scenarios across two consecutive automated validation runs (Run 1: 15/15 passed in 2.4m, Run 2: 15/15 passed in 2.1m).
   - Officially resolved and closed **TD-07** in `docs/TECHNICAL_DEBT_REGISTER.md`.
-  - Published comprehensive Phase 19 closure report: [`docs/reference/phase-19-browser-e2e-testing-closure.md`](reference/phase-19-browser-e2e-testing-closure.md).
+  - Published comprehensive Phase 19 closure report: [`docs/records/closures/phase-17-to-20-production-readiness/phase-19-browser-e2e-testing-closure.md`](records/closures/phase-17-to-20-production-readiness/phase-19-browser-e2e-testing-closure.md).
 
 ### Fixed & Hardened - Terminal Warnings & Errors Remediation (PID: 3104 Clean Sweep)
 
@@ -247,7 +280,7 @@ All notable changes to the LUGX project will be documented in this file.
 - **Scythed Test User Cleanup Isolation (`src/server/actions/ai-ops.integrity.test.ts`):**
   - Scoped user cleanup strictly to `TEST_USER_ID`, preventing global wildcard deletion of concurrent test accounts during serialized suite runs.
 - **Documentation Parity & Technical Debt Synchronization:**
-  - Published comprehensive Phase 18 closure report: [`docs/reference/phase-18-multi-system-integration-closure.md`](reference/phase-18-multi-system-integration-closure.md).
+  - Published comprehensive Phase 18 closure report: [`docs/records/closures/phase-17-to-20-production-readiness/phase-18-multi-system-integration-closure.md`](records/closures/phase-17-to-20-production-readiness/phase-18-multi-system-integration-closure.md).
   - Updated `docs/reference/test-database-isolation.md` to reflect all 19 LIVE suites.
   - Updated `docs/TECHNICAL_DEBT_REGISTER.md` recording live database verification of TD-02 and current 89-test live baseline.
 - **Repository Verification Parity:**
@@ -410,7 +443,7 @@ All notable changes to the LUGX project will be documented in this file.
   - Detailed PBKDF2-SHA256 (600,000 iterations in Web Worker), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, BIP-39 12-word recovery seed, transparent local IndexedDB encryption (`LocalDeviceKey`), domain AAD binding (`vault:file:${userId}:${fileId}`), and AI safety gatekeepers.
 - **Living Documentation Corrections & Technical Debt Remediation:**
   - **Sync Protocol Parameterization (`docs/reference/SYNC_API.md`, `docs/reference/SYNC_ARCHITECTURE.md`):** Corrected outdated `?since=<number>` Unix timestamp queries to the verified `?updated_after=<ISO_8601_string>` parameter matching `src/app/api/files/sync/route.ts` and `src/lib/sync/sync-manager.ts`.
-  - **Circuit Breaker Cooldown Duration (`docs/architecture/ai-quota-reservation-lifecycle.md`):** Aligned default Redis circuit breaker TTL from 3600s to 600s (10 minutes) matching `DEFAULT_CIRCUIT_TTL_SECONDS` in `src/lib/ai/key-rotation.ts`.
+  - **Circuit Breaker Cooldown Duration (`docs/architecture/ai/ai-quota-reservation-lifecycle.md`):** Aligned default Redis circuit breaker TTL from 3600s to 600s (10 minutes) matching `DEFAULT_CIRCUIT_TTL_SECONDS` in `src/lib/ai/key-rotation.ts`.
   - **Search & Replace Debounce & Localization (`docs/guides/Search_Replace_Feature.md`):** Corrected search debounce timeout from 2000ms to 300ms and updated bilingual UI placeholders to match `src/components/editor/search-replace.tsx`.
   - **User Vault Profile Schema Alignment (`docs/reference/phase-16/vault-phase-3-ui-and-conversion-closure.md`):** Aligned `saveCachedVaultProfile` documentation snippet to match the exact schema of `UserVaultProfile` (`encryptedMasterKey`, `keySalt`, `recoverySalt`, `kdfIterations`).
   - **Domain AAD Prefix Standard (`docs/reference/phase-16/vault-phase-1-crypto-core-closure.md`):** Documented canonical domain prefix in AAD construction: `vault:file:${userId}:${fileId}` matching `src/lib/sync/sync-manager.ts`.
@@ -434,7 +467,7 @@ All notable changes to the LUGX project will be documented in this file.
 
 ### Hardened & Fixed - Zero-Knowledge Defense-in-Depth & Key Store Resilience
 
-- **Formal Closure of Vault Plan Phase 5 ([`docs/reference/phase-16/vault-phase-5-closure-test-matrix.md`](reference/phase-16/vault-phase-5-closure-test-matrix.md)):**
+- **Formal Closure of Vault Plan Phase 5 ([`docs/records/closures/phase-16-vault-encryption/vault-phase-5-closure-test-matrix.md`](records/closures/phase-16-vault-encryption/vault-phase-5-closure-test-matrix.md)):**
   - Completed and verified all 10 criteria of the Closure Test Matrix from the Hybrid Vault Execution Plan (§4.5): Lazy-Unlock & Login, First Encrypt Setup with 3-word challenge, Vault Activation, BIP-39 Seed Recovery, RAM Sanitization, AI Hard Block, Worker Offloading (600K PBKDF2), Non-Blocking Conflict Isolation (`CONFLICT_LOCKED`), Syntax-Safe Diff3 Merge, and Zero-Knowledge Log Sanitation.
   - Formally declared Phase 16 (Hybrid Encryption & Zero-Knowledge Vault - M1 through M5) as **CLOSED**.
 - **Zero-Knowledge Log Hygiene Engine (`src/lib/sync/log-sanitizer.ts`, `src/lib/sync/index.ts`):**
@@ -1008,7 +1041,7 @@ write, pinned against the TTL sweeper and stray refunds (`already_committed`):
 Key ordering guarantee: `stopStream` awaits the settlement round-trip **before**
 aborting the fetch, so the server-side disconnect refund handler (`cancel()` in
 `/api/ai/stream/route.ts`) deterministically no-ops with `already_committed` instead
-of winning the race. Full matrix: `docs/architecture/ai-quota-reservation-lifecycle.md` §4-D.
+of winning the race. Full matrix: `docs/architecture/ai/ai-quota-reservation-lifecycle.md` §4-D.
 Autosave suspension gate (`canAutoSave`) extended to cover `preview_ready`.
 
 ### Fixed - Sync & Restore Data-Safety
