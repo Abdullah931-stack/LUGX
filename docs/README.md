@@ -14,8 +14,9 @@ automated tests remain the single source of truth for all technical claims.
 docs/
 ├── README.md                          ← you are here (structural master index)
 ├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
-├── CHANGELOG.md                       ← release history (v1.0.0 through v1.32.1)
+├── CHANGELOG.md                       ← release history (v1.0.0 through v1.32.2)
 ├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-12)
+├── METRICS.json                       ← automated single source of truth for test & suite metrics
 │
 ├── architecture/                      ← subsystem designs, protocols, state machines
 │   ├── sync/                          ← offline-first sync engine, concurrency & storage
@@ -46,12 +47,13 @@ docs/
 ├── records/                           ← engineering records, incidents, audits & closures
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md)
 │   ├── audits/                        ← verification audit records (W10-Final-Closure-Round.md)
-│   ├── closures/                      ← official milestone & phase closure dossiers (Phases 1–20)
+│   ├── closures/                      ← official milestone & phase closure dossiers (Phases 1–20, Core Hardening)
 │   │   ├── phase-01-to-06-markdown-editor/
 │   │   ├── phase-11-to-15-core-infrastructure/
 │   │   ├── phase-16-vault-encryption/
 │   │   ├── phase-17-to-20-production-readiness/
-│   │   └── extensions/                ← pdf worker extraction & vault import closure
+│   │   ├── extensions/                ← pdf worker extraction & vault import closure
+│   │   └── core-hardening/            ← pre-phase 2 core hardening dossiers (Phase 1: metrics & debt sync)
 │   └── archive/                       ← legacy development logs & superseded delivery snapshots
 │
 ├── foundation/                        ← founding pre-implementation baseline record (strictly immutable)
@@ -77,8 +79,9 @@ docs/
 | :--- | :--- |
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
-| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.32.1 |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.32.2 |
 | [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-12) |
+| [METRICS.json](./METRICS.json) | Centralized single source of truth for test suite counts and verification numbers |
 
 ---
 
@@ -192,6 +195,7 @@ docs/
 | [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
 | [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
 | [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report |
+| [core-hardening/](./records/closures/core-hardening/) | Pre-Phase 2 Core Hardening dossiers: Phase 1 (documentation metrics, SSOT JSON contract, and debt sync) |
 
 #### Archive (`records/archive/`)
 

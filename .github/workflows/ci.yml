@@ -58,6 +58,9 @@ jobs:
       - name: Dependency Security Audit
         run: npm audit --audit-level=high
 
+      - name: Verify Documentation Metrics & SSOT Sync
+        run: node scripts/sync-doc-metrics.mjs --check
+
   # =========================================================================
   # Stage 2: Pure Unit & Deterministic Contract Tests (Zero DB / Network)
   # =========================================================================

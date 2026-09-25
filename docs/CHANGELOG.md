@@ -2,6 +2,31 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.32.2] - 2026-09-25 (Documentation Metrics SSOT Unification, Automated Badge Synchronization & Core Hardening Phase 1)
+
+### Added & Automated - SSOT Metrics Contract, Fail-Closed CI Gate & Programmatic Sync Engine
+
+- **Centralized Single Source of Truth (`docs/METRICS.json`):**
+  - Established a machine-readable JSON data contract defining authoritative test counts across the repository: 67 unit/contract test suites (820 tests), 19 live multi-system suites (89 tests), and 14 Playwright E2E specs (15 user journeys).
+  - Indexed `docs/METRICS.json` in `docs/README.md` under Central Registers (Section 2.1).
+
+- **Automated Synchronization Engine (`scripts/sync-doc-metrics.mjs`):**
+  - Implemented an ESM CLI tool providing dual operational modes:
+    - `--check`: Deterministic audit mode scanning 8 living documentation targets using number-agnostic contextual regexes (`README.md`, `docs/README.md`, `docs/TECHNICAL_DEBT_REGISTER.md`, `docs/reference/test-database-isolation.md`, `docs/architecture/sync/editor-sync-orchestration.md`, `docs/architecture/sync/file-ownership-and-versioning.md`, `docs/foundation/DESIGN_VS_REALITY.md`, and `docs/METRICS.json`). Fails closed (exit code 1) on any detected documentation drift.
+    - `--update-docs`: Programmatic updater mode that automatically aligns all living documentation files with the active metrics contract, completely eliminating manual text edits for metric figures.
+    - `--report=<path>`: Automated ingestion of Vitest JSON reports with fail-closed abortion on test failures (`success === false` or `numFailedTests > 0`).
+
+- **Continuous Integration Hardening (`.github/workflows/ci.yml`):**
+  - Integrated `node scripts/sync-doc-metrics.mjs --check` into `Stage 1: Quality Gate`, guaranteeing that any future documentation drift or uncommitted metric discrepancy rejects PRs and pushes immediately.
+
+- **Technical Debt & Isolation Reference Modernization:**
+  - Synchronized `docs/TECHNICAL_DEBT_REGISTER.md` (TD-05, TD-09, TD-11, TD-12) to reflect the active 820 unit tests baseline.
+  - Purged obsolete legacy Phase 10 metrics from `docs/reference/test-database-isolation.md` (Section 5), clearly separating active verified figures (67 unit files / 820 tests, 19 live suites / 89 tests) from historical archival baselines.
+  - Aligned full test suite counts in `docs/architecture/sync/editor-sync-orchestration.md` and `docs/architecture/sync/file-ownership-and-versioning.md`.
+
+- **Milestone Closure Dossier (`docs/records/closures/core-hardening/`):**
+  - Published official Phase 1 closure dossier: [`phase-01-doc-metrics-and-debt-sync-closure.md`](records/closures/core-hardening/phase-01-doc-metrics-and-debt-sync-closure.md) with complete verifiable execution evidence and Mermaid SSOT data flow diagrams.
+
 ## [1.32.1] - 2026-09-20 (Co-located Architectural Decision Records & Trade-offs Institutionalization)
 
 ### Added & Documented - Co-located Subsystem ADRs, Trade-off Matrices & Zero-Knowledge CRDT Complexity Barrier

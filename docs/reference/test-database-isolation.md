@@ -128,12 +128,10 @@ to a live URL; push failures surface immediately).
 
 ## 5. Evidence of isolation
 
-- **Unit test suite (`npx vitest run`):** **37 files / 488 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Unit & Contract Suite (`npm run test`):** **67 files / 820 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Live Multi-System Suite (`npm run test:live`):** **19 registered suites / 89 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
-- **Live run (`npm run test:live`):** 16 registered suites executed against isolated PostgreSQL container / Neon branch.
-- **Phase 18 Comprehensive Verification & Post-Closure Hardening (2026-09-19):**
-  - **Unit & Contract Suite (`npm run test`):** **67 files / 812 tests — all passed (100% pass rate)**, zero LIVE files included.
-  - **Live Multi-System Suite (`npm run test:live`):** **19 registered suites / 89 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
+- **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
 - Mandatory identity line printed at the start of every live run:
   `[test-db] Isolated test branch identity — endpointId: 'ep-soft-glade-b1hdcbwm-pooler' host: 'ep-soft-glade-b1hdcbwm-pooler.c-5.eu-central-1.aws.neon.tech'`
 - Main-branch row counts before/after a full live run (2026-08-24, operator
