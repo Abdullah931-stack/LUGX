@@ -42,7 +42,8 @@ docs/
 │   ├── TECHNICAL_EXECUTION_PLAN.md    ← code-based execution plan (Phases 1–20 closed)
 │   ├── HYBRID_ENCRYPTION_AND_VAULT_PLAN.md ← zero-knowledge vault execution plan (closed)
 │   ├── MARKDOWN_EDITOR_MIGRATION_PLAN.md   ← CodeMirror 6 migration plan (closed)
-│   └── PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md ← production hardening plan (M6 closed)
+│   ├── PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md ← production hardening plan (M6 closed)
+│   └── CORE_HARDENING_PRE_STAGE_2_PLAN.md ← pre-stage 2 core hardening plan (Active: Phase 1 closed, 2–11 planned)
 │
 ├── records/                           ← engineering records, incidents, audits & closures
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md)
@@ -167,6 +168,7 @@ docs/
 | [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](./Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan | ✅ Closed |
 | [MARKDOWN_EDITOR_MIGRATION_PLAN.md](./Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6) | ✅ Closed |
 | [PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md](./Plans/PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md) | Concurrency hardening, distributed webhook locks, RAM purge & conflict quarantine | ✅ Closed |
+| [CORE_HARDENING_PRE_STAGE_2_PLAN.md](./Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md) | Pre-Stage 2 core hardening: CI gates, Redis lock, zero-leak vault, modular sync engine & SRE runbooks | 🟡 Active (Phase 1 Closed, 2–11 Planned) |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
