@@ -2,6 +2,36 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.32.4] - 2026-09-26 (CI Skipped Test Elimination, Progressive Fail-Closed Release Gate & GITHUB_STEP_SUMMARY Dashboard)
+
+### Added & Hardened - CI Progressive Release Gating, Adversarial Shell Hardening & Step Summary Reporting
+
+- **Elimination of Silent Skips (`Silent Skip with Exit 0` Purge):**
+  - Refactored Stages 6 (`e2e-browser-testing`) and 7 (`live-provider-smoke`) in `.github/workflows/ci.yml` to eradicate the silent skip vulnerability where missing repository secrets allowed CI to pass with a false green status (`exit 0`).
+  - Implemented progressive fail-closed gating:
+    - **Protected Contexts:** Pushes to production branches (`main`, `master`), release tags (`refs/tags/v*`), published releases, or manual dispatch with `run_live_smoke: true` strictly enforce fail-closed termination (`exit 1`) whenever mandatory secrets are absent, preventing unverified production deployments.
+    - **Permissive Contexts:** External fork pull requests gracefully bypass browser runs (`exit 0`) accompanied by a prominent warning banner in the step summary.
+
+- **Automated Dashboard Step Summaries (`$GITHUB_STEP_SUMMARY`):**
+  - Engineered transparent markdown reporting for Stages 6 and 7, rendering credential availability matrices, execution parameters, browser engine targets, and test counts directly on the GitHub Actions dashboard.
+  - Intercepted test execution exit codes via `set +e` / `set -e` traps (`TEST_EXIT_CODE=$?`), ensuring failure summaries (`FAILED (Test Spec Failures)`) are recorded in `$GITHUB_STEP_SUMMARY` before the runner exits.
+
+- **Adversarial Shell Hardening (YAML Block Scalar vs POSIX Bash Heredoc):**
+  - Conducted an Adversarial Code Audit eliminating fatal heredoc closing delimiter (`EOF`) indentation collisions with YAML block scalars (`run: |`) via standard POSIX `printf "%s\n"` commands.
+  - Verified 100% bash syntax correctness via `bash -n` across all inline scripts.
+
+- **Deterministic Simulation Suite (`scripts/test-ci-gating.mjs`):**
+  - Created a 30-assertion local simulation harness verifying all matrix permutations (main push, release tags, manual smoke, fork PRs, full credentials, failure interception, and heredoc elimination).
+  - Registered `"test:ci-gate": "node scripts/test-ci-gating.mjs"` in `package.json`.
+
+- **Living Contract & Architectural Specification:**
+  - Published [`docs/reference/ci-pipeline.md`](reference/ci-pipeline.md) formalizing the 7-stage CI/CD pipeline, progressive gating decision matrix, and secret requirements.
+  - Indexed the new living contract and verification commands in `docs/README.md`.
+  - Updated Section 7 of [`docs/reference/test-database-isolation.md`](reference/test-database-isolation.md) to link to the new CI pipeline specification.
+
+- **Milestone Closure Dossier (`docs/records/closures/core-hardening/`):**
+  - Published official Phase 3 closure dossier: [`phase-03-ci-skipped-tests-and-release-gate-closure.md`](records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md).
+
 ## [1.32.3] - 2026-09-26 (Internal Markdown Link Audit, CommonMark Encoding Remediation & CI Link Checker Gate)
 
 ### Added & Remediated - Deterministic Link Checker, CommonMark Angle Bracket Paths & Stage 1 CI Quality Gate

@@ -175,15 +175,15 @@ const p = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUn
 
 ## 7. Multi-Stage CI/CD Pipeline Automation (`.github/workflows/ci.yml`)
 
-The repository runs a deterministic multi-stage CI pipeline on GitHub Actions configured to strictly enforce concurrency integrity and database isolation across every pull request and branch push:
+The repository runs a deterministic multi-stage CI pipeline on GitHub Actions configured to strictly enforce concurrency integrity, documentation synchronization, and database isolation across every pull request and branch push. For the exhaustive specification and gating decision matrix, see [ci-pipeline.md](./ci-pipeline.md).
 
 | Stage | Job Name | Isolation & Execution Guarantees |
 |---|---|---|
-| **1. Quality Gate** | `quality-gate` | Pure static verification: ESLint 9, TypeScript strictness (`tsc --noEmit`), and dependency vulnerability audits (`npm audit`). |
+| **1. Quality Gate** | `quality-gate` | Pure static verification: ESLint 9, TypeScript strictness (`tsc --noEmit`), dependency vulnerability audits (`npm audit`), documentation metrics check (`sync-doc-metrics.mjs --check`), and internal link validation (`check-markdown-links.mjs`). |
 | **2. Pure Unit Contracts** | `unit-contracts` | Runs `npm run test` strictly excluding `LIVE_TEST_FILES` (zero database or network dependencies, < 20s runtime). |
 | **3. Schema Integrity** | `migration-integrity` | Ephemeral `postgres:16-alpine` service container verifies sequential migration application (`scripts/verify-migrations.mjs`) and Drizzle schema sync (`drizzle-kit push --config drizzle.config.test.ts --force`). |
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | Runs `npm run test:live` against isolated PostgreSQL 16 + Redis 7 service containers with `TEST_DB_FORBIDDEN_HOSTS` configured to reject production hosts, verifying lost-update guards, AI quota idempotency, and Stripe ledger deduplication. |
 | **5. Production Build** | `build-verification` | Full Next.js 16 production build (`npm run build`) with asset compilation and route validation. |
-| **6. Browser E2E Testing** | `e2e-browser-testing` | Playwright E2E test execution in Chromium across 15 automated user journeys with failure artifact reporting (`playwright-report`). |
-| **7. Live Smoke (Gated)** | `live-provider-smoke` | Gated provider live smoke (`src/test/ai/ai-live-e2e.test.ts`) executed only on `main` push or manual `workflow_dispatch`. |
+| **6. Browser E2E Testing** | `e2e-browser-testing` | Playwright E2E test execution in Chromium across 15 automated user journeys with progressive fail-closed release gating, failure artifact reporting (`playwright-report`), and dashboard step summaries (`$GITHUB_STEP_SUMMARY`). |
+| **7. Live Smoke (Gated)** | `live-provider-smoke` | Gated provider live smoke (`src/test/ai/ai-live-e2e.test.ts`) executed on `main` push, release tags, release publish, or manual `workflow_dispatch` with strict fail-closed gating on missing credentials. |
 

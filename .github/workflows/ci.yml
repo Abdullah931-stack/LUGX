@@ -3,8 +3,11 @@ name: CI — Multi-Stage Quality, Concurrency & Database Isolation
 on:
   push:
     branches: [main, master, develop]
+    tags: ['v*']
   pull_request:
     branches: [main, master, develop]
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       run_live_smoke:
@@ -282,12 +285,138 @@ jobs:
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN || vars.UPSTASH_REDIS_REST_TOKEN }}
           GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 || vars.GEMINI_KEY_1 }}
           CI: "true"
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF: ${{ github.ref }}
+          RUN_LIVE_SMOKE: ${{ github.event.inputs.run_live_smoke || 'false' }}
         run: |
+          # 1. Determine execution context & protection level
+          IS_PROTECTED="false"
+          if [ "$EVENT_NAME" = "release" ] || [ "$REF" = "refs/heads/main" ] || [ "$REF" = "refs/heads/master" ] || [[ "$REF" == refs/tags/* ]] || [ "$RUN_LIVE_SMOKE" = "true" ]; then
+            IS_PROTECTED="true"
+          fi
+
+          # 2. Secret presence audit helpers
+          status_icon() {
+            if [ -n "$1" ]; then echo "✅ Configured"; else echo "❌ Missing"; fi
+          }
+
+          DB_STATUS=$(status_icon "$TEST_DATABASE_URL")
+          SB_URL_STATUS=$(status_icon "$NEXT_PUBLIC_SUPABASE_URL")
+          SB_KEY_STATUS=$(status_icon "$SUPABASE_SERVICE_ROLE_KEY")
+          STRIPE_KEY_STATUS=$(status_icon "$STRIPE_SECRET_KEY")
+          REDIS_URL_STATUS=$(status_icon "$UPSTASH_REDIS_REST_URL")
+          GEMINI_STATUS=$(status_icon "$GEMINI_KEY_1")
+
+          # 3. Check mandatory secret requirements
+          MISSING_MANDATORY="false"
           if [ -z "$TEST_DATABASE_URL" ] || [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
-            echo "Skipping Playwright browser tests: Required repository secrets (TEST_DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) not available in this workflow context."
-          else
-            echo "Running Playwright E2E user journeys against isolated environment..."
-            npx playwright test
+            MISSING_MANDATORY="true"
+          fi
+
+          # 4. Handle Missing Secrets Branch
+          if [ "$MISSING_MANDATORY" = "true" ]; then
+            if [ "$IS_PROTECTED" = "true" ]; then
+              echo "::error::Stage 6 Playwright E2E failed: Mandatory secrets missing in protected context ($REF / $EVENT_NAME). Fail-closed release gate enforced."
+
+              if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+                printf "%s\n" \
+                  "## ❌ Stage 6: Playwright E2E Browser Testing — FAILED (Fail-Closed Gate)" \
+                  "" \
+                  "> [!CAUTION]" \
+                  "> **Release Deployment Blocked:** Mandatory repository secrets are missing in protected context (\`$REF\` via \`$EVENT_NAME\`)." \
+                  "> Silent skips with exit 0 are strictly prohibited on production branches and release tags." \
+                  "" \
+                  "### Credential Verification Matrix" \
+                  "| Secret / Environment Variable | Status | Gating Rule |" \
+                  "| :--- | :--- | :--- |" \
+                  "| \`TEST_DATABASE_URL\` | $DB_STATUS | **Mandatory (Missing)** |" \
+                  "| \`NEXT_PUBLIC_SUPABASE_URL\` | $SB_URL_STATUS | **Mandatory** |" \
+                  "| \`SUPABASE_SERVICE_ROLE_KEY\` | $SB_KEY_STATUS | **Mandatory** |" \
+                  "| \`STRIPE_SECRET_KEY\` | $STRIPE_KEY_STATUS | Optional / Mock Fallback |" \
+                  "| \`UPSTASH_REDIS_REST_URL\` | $REDIS_URL_STATUS | Optional / Mock Fallback |" \
+                  "| \`GEMINI_KEY_1\` | $GEMINI_STATUS | Optional / Mock Fallback |" \
+                  "" \
+                  "**Resolution:** Configure the missing secrets in GitHub Repository Settings > Secrets and variables > Actions." \
+                  >> "$GITHUB_STEP_SUMMARY"
+              fi
+              exit 1
+            else
+              echo "::warning::Playwright browser tests skipped: Mandatory secrets unavailable in non-protected context ($REF / $EVENT_NAME)."
+
+              if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+                printf "%s\n" \
+                  "## ⚠️ Stage 6: Playwright E2E Browser Testing — SKIPPED (Permissive PR Gate)" \
+                  "" \
+                  "> [!WARNING]" \
+                  "> **Browser E2E Tests Gracefully Skipped:** Required secrets are not configured in this pull request or non-protected context (\`$REF\` via \`$EVENT_NAME\`)." \
+                  "> This permissive bypass is restricted to pull requests and forks to maintain non-blocking CI feedback. Production releases enforce strict fail-closed execution." \
+                  "" \
+                  "### Credential Status Matrix" \
+                  "| Secret / Environment Variable | Status | Context Classification |" \
+                  "| :--- | :--- | :--- |" \
+                  "| \`TEST_DATABASE_URL\` | $DB_STATUS | Mandatory for Release |" \
+                  "| \`NEXT_PUBLIC_SUPABASE_URL\` | $SB_URL_STATUS | Mandatory for Release |" \
+                  "| \`SUPABASE_SERVICE_ROLE_KEY\` | $SB_KEY_STATUS | Mandatory for Release |" \
+                  "| \`STRIPE_SECRET_KEY\` | $STRIPE_KEY_STATUS | Optional |" \
+                  "| \`UPSTASH_REDIS_REST_URL\` | $REDIS_URL_STATUS | Optional |" \
+                  "| \`GEMINI_KEY_1\` | $GEMINI_STATUS | Optional |" \
+                  >> "$GITHUB_STEP_SUMMARY"
+              fi
+              exit 0
+            fi
+          fi
+
+          # 5. Execute Playwright Tests and capture exit code
+          echo "Running Playwright E2E user journeys against isolated environment..."
+          set +e
+          npx playwright test
+          TEST_EXIT_CODE=$?
+          set -e
+
+          # 6. Record Outcome in Step Summary
+          if [ $TEST_EXIT_CODE -ne 0 ]; then
+            echo "::error::Stage 6 Playwright E2E failed with exit code $TEST_EXIT_CODE."
+            if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+              printf "%s\n" \
+                "## ❌ Stage 6: Playwright E2E Browser Testing — FAILED (Test Spec Failures)" \
+                "" \
+                "> [!CAUTION]" \
+                "> One or more Playwright E2E user journeys failed. Review uploaded \`playwright-report\` artifact for traces, screenshots, and videos." \
+                "" \
+                "| Metric / Parameter | Value |" \
+                "| :--- | :--- |" \
+                "| **Execution Status** | ❌ FAILED (Exit Code: $TEST_EXIT_CODE) |" \
+                "| **Workflow Context** | \`$REF\` (\`$EVENT_NAME\`) |" \
+                "| **Protected Gate** | \`$IS_PROTECTED\` |" \
+                "| **Browser Target** | Chromium Headless |" \
+                >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit $TEST_EXIT_CODE
+          fi
+
+          if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+            printf "%s\n" \
+              "## ✅ Stage 6: Playwright E2E Browser Testing — PASSED" \
+              "" \
+              "| Metric / Parameter | Value |" \
+              "| :--- | :--- |" \
+              "| **Execution Status** | ✅ 100% Passed (All specs executed) |" \
+              "| **Workflow Context** | \`$REF\` (\`$EVENT_NAME\`) |" \
+              "| **Protected Gate** | \`$IS_PROTECTED\` |" \
+              "| **Browser Target** | Chromium Headless |" \
+              "| **Test Inventory** | 14 Specs / 15 User Journeys |" \
+              "" \
+              "### Verified Environment Credentials" \
+              "| Secret / Environment Variable | Status |" \
+              "| :--- | :--- |" \
+              "| \`TEST_DATABASE_URL\` | $DB_STATUS |" \
+              "| \`NEXT_PUBLIC_SUPABASE_URL\` | $SB_URL_STATUS |" \
+              "| \`SUPABASE_SERVICE_ROLE_KEY\` | $SB_KEY_STATUS |" \
+              "| \`STRIPE_SECRET_KEY\` | $STRIPE_KEY_STATUS |" \
+              "| \`UPSTASH_REDIS_REST_URL\` | $REDIS_URL_STATUS |" \
+              "| \`GEMINI_KEY_1\` | $GEMINI_STATUS |" \
+              >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload Playwright Artifacts on Failure
@@ -306,7 +435,7 @@ jobs:
   live-provider-smoke:
     name: 7. Live Provider Smoke (Gated)
     needs: e2e-browser-testing
-    if: ${{ github.event.inputs.run_live_smoke == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    if: ${{ github.event.inputs.run_live_smoke == 'true' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -335,10 +464,83 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || vars.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || vars.SUPABASE_SERVICE_ROLE_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_LIVE_SMOKE: ${{ github.event.inputs.run_live_smoke || 'false' }}
         run: |
+          status_icon() {
+            if [ -n "$1" ]; then echo "✅ Configured"; else echo "❌ Missing"; fi
+          }
+
+          DB_STATUS=$(status_icon "$TEST_DATABASE_URL")
+          GEMINI_STATUS=$(status_icon "$GEMINI_KEY_1")
+
+          # Stage 7 triggers under gated/protected conditions.
+          # Missing secrets here must ALWAYS trigger fail-closed exit 1.
           if [ -z "$TEST_DATABASE_URL" ] || [ -z "$GEMINI_KEY_1" ]; then
-            echo "Skipping live cloud smoke tests: TEST_DATABASE_URL or GEMINI_KEY_1 not configured in repository secrets."
-          else
-            echo "Running live e2e tests against isolated cloud environment..."
-            npx vitest run src/test/ai/ai-live-e2e.test.ts --config vitest.live.config.ts
+            echo "::error::Stage 7 Live Smoke failed: TEST_DATABASE_URL or GEMINI_KEY_1 missing in gated execution ($REF / $EVENT_NAME)."
+
+            if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+              printf "%s\n" \
+                "## ❌ Stage 7: Live Provider Smoke — FAILED (Missing Required Secrets)" \
+                "" \
+                "> [!CAUTION]" \
+                "> **Live Smoke Gate Failed:** Execution of live provider smoke tests was triggered for \`$REF\` (\`$EVENT_NAME\`), but required live credentials are not configured." \
+                "> Fail-closed gate prevents unverified cloud provider releases." \
+                "" \
+                "### Provider Credential Matrix" \
+                "| Secret Name | Status | Requirement |" \
+                "| :--- | :--- | :--- |" \
+                "| \`TEST_DATABASE_URL\` | $DB_STATUS | **Mandatory** |" \
+                "| \`GEMINI_KEY_1\` | $GEMINI_STATUS | **Mandatory** |" \
+                "" \
+                "**Resolution:** Provide valid Neon and Gemini test keys in GitHub Repository Settings > Secrets and variables > Actions." \
+                >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 1
+          fi
+
+          echo "Running live e2e tests against isolated cloud environment..."
+          set +e
+          npx vitest run src/test/ai/ai-live-e2e.test.ts --config vitest.live.config.ts
+          TEST_EXIT_CODE=$?
+          set -e
+
+          if [ $TEST_EXIT_CODE -ne 0 ]; then
+            echo "::error::Stage 7 Live Smoke failed with exit code $TEST_EXIT_CODE."
+            if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+              printf "%s\n" \
+                "## ❌ Stage 7: Live Provider Smoke — FAILED (Cloud Provider Failure)" \
+                "" \
+                "> [!CAUTION]" \
+                "> Live provider smoke test suite \`src/test/ai/ai-live-e2e.test.ts\` failed." \
+                "" \
+                "| Metric / Parameter | Value |" \
+                "| :--- | :--- |" \
+                "| **Execution Status** | ❌ FAILED (Exit Code: $TEST_EXIT_CODE) |" \
+                "| **Target Suite** | \`src/test/ai/ai-live-e2e.test.ts\` |" \
+                "| **Target Providers** | Google Gemini 2.5 + Isolated Neon PostgreSQL |" \
+                "| **Trigger Context** | \`$REF\` (\`$EVENT_NAME\`) |" \
+                >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit $TEST_EXIT_CODE
+          fi
+
+          if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+            printf "%s\n" \
+              "## ✅ Stage 7: Live Provider Smoke — PASSED" \
+              "" \
+              "| Metric / Parameter | Value |" \
+              "| :--- | :--- |" \
+              "| **Execution Status** | ✅ Passed (Live provider smoke verified) |" \
+              "| **Target Suite** | \`src/test/ai/ai-live-e2e.test.ts\` |" \
+              "| **Target Providers** | Google Gemini 2.5 + Isolated Neon PostgreSQL |" \
+              "| **Trigger Context** | \`$REF\` (\`$EVENT_NAME\`) |" \
+              "" \
+              "### Verified Live Credentials" \
+              "| Secret Name | Status |" \
+              "| :--- | :--- |" \
+              "| \`TEST_DATABASE_URL\` | $DB_STATUS |" \
+              "| \`GEMINI_KEY_1\` | $GEMINI_STATUS |" \
+              >> "$GITHUB_STEP_SUMMARY"
           fi

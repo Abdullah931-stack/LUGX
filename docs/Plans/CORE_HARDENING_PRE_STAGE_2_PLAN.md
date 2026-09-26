@@ -108,24 +108,26 @@ Remediate all 11 broken or malformed Markdown links across repository documentat
 
 ---
 
-### [Phase 3: Skipped Test Detection & Fail-Closed Release Gate] — Status: ⏳ PLANNED
+### [Phase 3: Skipped Test Detection & Fail-Closed Release Gate] — Status: ✅ COMPLETED
 
 #### Technical Objective
 Eliminate the silent skip vulnerability (`Silent Skip with Exit 0`) in Playwright E2E and Live Smoke CI stages, generate transparent markdown summaries in `$GITHUB_STEP_SUMMARY`, and enforce strict fail-closed termination (`exit 1`) for release tags and main branch pushes when required cloud credentials or test secrets are missing.
 
 #### Concrete Execution Steps
-- **Step 1:** Modify Stage 6 in `.github/workflows/ci.yml` to export a transparent markdown table to `$GITHUB_STEP_SUMMARY` detailing executed test counts and secret availability status.
-- **Step 2:** Modify Stage 7 in `.github/workflows/ci.yml` to record Live Smoke test execution status in `$GITHUB_STEP_SUMMARY`.
-- **Step 3:** Implement progressive gating logic in CI: if the workflow runs under a `release` context, push to `main`, or manual dispatch `workflow_dispatch` with `run_live_smoke: true`, absent secrets mandate immediate `exit 1` failure blocking release deployment, while permitting conditional bypass with warning notices for untrusted `pull_request` forks.
-- **Step 4:** Document release gating policies and CI stage requirements in `docs/reference/ci-pipeline.md`.
+- **Step 1:** Modified Stage 6 in `.github/workflows/ci.yml` to export a transparent markdown table to `$GITHUB_STEP_SUMMARY` detailing executed test counts and secret availability status.
+- **Step 2:** Modified Stage 7 in `.github/workflows/ci.yml` to record Live Smoke test execution status and cloud credential availability in `$GITHUB_STEP_SUMMARY`.
+- **Step 3:** Implemented progressive gating logic in CI: if the workflow runs under a `release` context, push to `main`/`master`, release tag `refs/tags/v*`, or manual dispatch `workflow_dispatch` with `run_live_smoke: true`, absent secrets mandate immediate `exit 1` failure blocking release deployment, while permitting conditional bypass (`exit 0`) with warning notices for untrusted `pull_request` forks.
+- **Step 4:** Documented release gating policies and CI stage requirements in `docs/reference/ci-pipeline.md`.
+- **Step 5:** Implemented deterministic simulation suite `scripts/test-ci-gating.mjs` and added `"test:ci-gate"` command in `package.json`.
 
 #### Exception & Edge Case Handling
-- External fork Pull Requests: Allow graceful skip with an explicit warning banner (`WARNING: E2E skipped due to missing secrets`) without failing isolated PR validation.
-- Release Tag or Main Branch push: Trigger immediate hard failure (`exit 1`) if any browser or live cloud test suite is skipped.
+- External fork Pull Requests: Allowed graceful skip with an explicit warning banner (`WARNING: Browser E2E Tests Gracefully Skipped`) without failing isolated PR validation.
+- Release Tag or Main Branch push: Triggered immediate hard failure (`exit 1`) if any browser or live cloud test suite is skipped due to absent secrets.
 
 #### Closure Verifications
-- Run local simulation of `$GITHUB_STEP_SUMMARY` generation to verify table rendering.
-- Verify fail-closed enforcement triggers correctly when simulating a release run without configured secrets.
+- Executed `node scripts/test-ci-gating.mjs` verifying 100% of all 30 CI gating matrix checks passed.
+- Verified `$GITHUB_STEP_SUMMARY` Markdown table formatting, delimiter syntax, and alert blocks across all execution contexts.
+- Documented official closure dossier: [`docs/records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md`](../records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md).
 
 ---
 

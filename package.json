@@ -1,6 +1,6 @@
 {
   "name": "lugx",
-  "version": "1.32.3",
+  "version": "1.32.4",
   "private": true,
   "engines": {
     "node": ">=22.0.0",
@@ -12,6 +12,7 @@
     "start": "next start",
     "lint": "eslint",
     "lint:links": "node scripts/check-markdown-links.mjs",
+    "test:ci-gate": "node scripts/test-ci-gating.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:live": "vitest run --config vitest.live.config.mts",
