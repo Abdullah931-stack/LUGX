@@ -467,6 +467,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           RUN_LIVE_SMOKE: ${{ github.event.inputs.run_live_smoke || 'false' }}
+          CLOUD_SMOKE: 'true'
         run: |
           status_icon() {
             if [ -n "$1" ]; then echo "✅ Configured"; else echo "❌ Missing"; fi
@@ -502,7 +503,7 @@ jobs:
 
           echo "Running live e2e tests against isolated cloud environment..."
           set +e
-          npx vitest run src/test/ai/ai-live-e2e.test.ts --config vitest.live.config.ts
+          npx vitest run src/test/ai/ai-live-e2e.test.ts --config vitest.live.config.mts
           TEST_EXIT_CODE=$?
           set -e
 

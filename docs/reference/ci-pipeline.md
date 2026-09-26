@@ -73,7 +73,7 @@ flowchart TD
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | `ubuntu-latest` + `postgres:16-alpine` + `redis:7-alpine` | `npm run test:live` | Runs 19 live integration suites against isolated containers; enforces `TEST_DB_FORBIDDEN_HOSTS` to block accidental production connections. |
 | **5. Production Build** | `build-verification` | `ubuntu-latest` | `npm run build` | Validates complete Next.js 16 production build compilation with route tree generation and asset optimization. |
 | **6. Browser E2E Testing** | `e2e-browser-testing` | `ubuntu-latest` | `npx playwright test` | Executes 14 Playwright specs across 15 user journeys in headless Chromium. Gated by progressive fail-closed rules. |
-| **7. Live Provider Smoke** | `live-provider-smoke` | `ubuntu-latest` | `npx vitest run src/test/ai/ai-live-e2e.test.ts --config vitest.live.config.ts` | Gated verification of live Google Gemini API and cloud database connectivity. Strictly fail-closed on release branches. |
+| **7. Live Provider Smoke** | `live-provider-smoke` | `ubuntu-latest` | `npx vitest run src/test/ai/ai-live-e2e.test.ts --config vitest.live.config.mts` | Gated verification of live Google Gemini API and cloud database connectivity. Strictly fail-closed on release branches. |
 
 ---
 
