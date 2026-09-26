@@ -61,6 +61,9 @@ jobs:
       - name: Verify Documentation Metrics & SSOT Sync
         run: node scripts/sync-doc-metrics.mjs --check
 
+      - name: Verify Documentation Internal Links
+        run: node scripts/check-markdown-links.mjs
+
   # =========================================================================
   # Stage 2: Pure Unit & Deterministic Contract Tests (Zero DB / Network)
   # =========================================================================

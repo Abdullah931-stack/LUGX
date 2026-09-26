@@ -14,7 +14,7 @@ automated tests remain the single source of truth for all technical claims.
 docs/
 ├── README.md                          ← you are here (structural master index)
 ├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
-├── CHANGELOG.md                       ← release history (v1.0.0 through v1.32.2)
+├── CHANGELOG.md                       ← release history (v1.0.0 through v1.32.3)
 ├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-12)
 ├── METRICS.json                       ← automated single source of truth for test & suite metrics
 │
@@ -43,7 +43,7 @@ docs/
 │   ├── HYBRID_ENCRYPTION_AND_VAULT_PLAN.md ← zero-knowledge vault execution plan (closed)
 │   ├── MARKDOWN_EDITOR_MIGRATION_PLAN.md   ← CodeMirror 6 migration plan (closed)
 │   ├── PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md ← production hardening plan (M6 closed)
-│   └── CORE_HARDENING_PRE_STAGE_2_PLAN.md ← pre-stage 2 core hardening plan (Active: Phase 1 closed, 2–11 planned)
+│   └── CORE_HARDENING_PRE_STAGE_2_PLAN.md ← pre-stage 2 core hardening plan (Active: Phases 1–2 closed, 3–11 planned)
 │
 ├── records/                           ← engineering records, incidents, audits & closures
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md)
@@ -54,7 +54,7 @@ docs/
 │   │   ├── phase-16-vault-encryption/
 │   │   ├── phase-17-to-20-production-readiness/
 │   │   ├── extensions/                ← pdf worker extraction & vault import closure
-│   │   └── core-hardening/            ← pre-phase 2 core hardening dossiers (Phase 1: metrics & debt sync)
+│   │   └── core-hardening/            ← pre-phase 2 core hardening dossiers (Phase 1: metrics & SSOT, Phase 2: link audit & CI)
 │   └── archive/                       ← legacy development logs & superseded delivery snapshots
 │
 ├── foundation/                        ← founding pre-implementation baseline record (strictly immutable)
@@ -80,7 +80,7 @@ docs/
 | :--- | :--- |
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
-| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.32.2 |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.32.3 |
 | [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-12) |
 | [METRICS.json](./METRICS.json) | Centralized single source of truth for test suite counts and verification numbers |
 
@@ -168,7 +168,7 @@ docs/
 | [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](./Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan | ✅ Closed |
 | [MARKDOWN_EDITOR_MIGRATION_PLAN.md](./Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6) | ✅ Closed |
 | [PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md](./Plans/PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md) | Concurrency hardening, distributed webhook locks, RAM purge & conflict quarantine | ✅ Closed |
-| [CORE_HARDENING_PRE_STAGE_2_PLAN.md](./Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md) | Pre-Stage 2 core hardening: CI gates, Redis lock, zero-leak vault, modular sync engine & SRE runbooks | 🟡 Active (Phase 1 Closed, 2–11 Planned) |
+| [CORE_HARDENING_PRE_STAGE_2_PLAN.md](./Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md) | Pre-Stage 2 core hardening: CI gates, Redis lock, zero-leak vault, modular sync engine & SRE runbooks | 🟡 Active (Phases 1–2 Closed, 3–11 Planned) |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -197,7 +197,7 @@ docs/
 | [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
 | [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
 | [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report |
-| [core-hardening/](./records/closures/core-hardening/) | Pre-Phase 2 Core Hardening dossiers: Phase 1 (documentation metrics, SSOT JSON contract, and debt sync) |
+| [core-hardening/](./records/closures/core-hardening/) | Pre-Phase 2 Core Hardening dossiers: Phase 1 (metrics & SSOT sync) and Phase 2 (internal link audit & CI link checker) |
 
 #### Archive (`records/archive/`)
 
@@ -221,14 +221,14 @@ docs/
 | Document | Scope |
 | :--- | :--- |
 | [DESIGN_VS_REALITY.md](./foundation/DESIGN_VS_REALITY.md) | **Living Divergence Tracker:** Documents every architectural divergence between founding design and implemented reality |
-| [Product Requirements Document (PRD).md](./foundation/Product%20Requirements%20Document%20%28PRD%29.md) | Founding product requirements |
-| [System Architecture Design.md](./foundation/System%20Architecture%20Design.md) | Original architecture: IAM, data layer, key rotation, risk analysis |
+| [Product Requirements Document (PRD).md](<./foundation/Product Requirements Document (PRD).md>) | Founding product requirements |
+| [System Architecture Design.md](<./foundation/System Architecture Design.md>) | Original architecture: IAM, data layer, key rotation, risk analysis |
 | [Project_Structure.md](./foundation/Project_Structure.md) | Planned directory tree and component responsibilities |
 | [Implementation_Master_Plan.md](./foundation/Implementation_Master_Plan.md) | Founding master implementation plan |
-| [LUGX platform subscription plans.md](./foundation/LUGX%20platform%20subscription%20plans.md) | Tier definitions, quotas, pricing |
-| [UI_UX Guidelines.md](./foundation/UI_UX%20Guidelines.md) | Visual direction, design system, components |
-| [Using AI/AI Key Document.md](./foundation/Using%20AI/AI%20Key%20Document.md) | AI model matrix & generation parameters per operation |
-| [Using AI/correct.md](./foundation/Using%20AI/correct.md) · `improve` · `summarize` · `toPrompt` · `translate` | Original system prompts (source material for `src/lib/ai/prompts.ts`) |
+| [LUGX platform subscription plans.md](<./foundation/LUGX platform subscription plans.md>) | Tier definitions, quotas, pricing |
+| [UI_UX Guidelines.md](<./foundation/UI_UX Guidelines.md>) | Visual direction, design system, components |
+| [Using AI/AI Key Document.md](<./foundation/Using AI/AI Key Document.md>) | AI model matrix & generation parameters per operation |
+| [Using AI/correct.md](<./foundation/Using AI/correct.md>) · `improve` · `summarize` · `toPrompt` · `translate` | Original system prompts (source material for `src/lib/ai/prompts.ts`) |
 
 ---
 
@@ -245,6 +245,7 @@ docs/
 
 ```bash
 npm run lint            # static analysis & ESLint 9 code quality gate
+npm run lint:links      # deterministic markdown internal link verification (zero broken links)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
 npm run test            # pure unit, contract, and vault cryptographic test suites (67 files, 820 tests via vitest.config.mts)

@@ -2,6 +2,31 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.32.3] - 2026-09-26 (Internal Markdown Link Audit, CommonMark Encoding Remediation & CI Link Checker Gate)
+
+### Added & Remediated - Deterministic Link Checker, CommonMark Angle Bracket Paths & Stage 1 CI Quality Gate
+
+- **Remediation of Broken & URL-Encoded Links (11 Links Remediated):**
+  - Eliminated URL-encoded whitespace (`%20`) and parentheses (`%28`, `%29`) across `docs/README.md` (6 foundation document links) and root `README.md` (1 link), replacing them with standard filesystem-compatible CommonMark angle-bracket paths (`<./foundation/Product Requirements Document (PRD).md>`).
+  - Purged 4 placeholder dummy link destinations (`[alt](url)`, `[text](url)`, `[Link\](url)`) in `docs/guides/editor/data-export-guide.md`, replacing them with explicit URL syntax examples to avoid false-positive local resolution failures.
+
+- **Deterministic Link Verification Tooling (`scripts/check-markdown-links.mjs`):**
+  - Engineered an ESM CLI link audit utility scanning all 75 tracked Markdown files in the repository.
+  - Implemented strict network isolation bypassing external URLs (`http://`, `https://`, `mailto:`, `tel:`), ensuring deterministic offline execution without CI network flakiness.
+  - Hardened with zero-overhead defense layers:
+    - **Windows Backslash Immunity:** Strictly rejects Windows-style backslashes (`\`) in markdown destinations to prevent OS-specific path leaks.
+    - **Path Traversal Containment:** Verifies that all resolved relative destinations remain bounded within the repository root (`ROOT`).
+    - **Query Parameter Sanitization:** Gracefully strips query strings (`?query`) prior to on-disk filesystem validation.
+    - **Code Span Isolation:** Completely ignores fenced code blocks (``` ``` ```) and inline code spans (``` `...` ```) to prevent code documentation snippets from triggering false positives.
+  - Enforced fail-closed termination (`process.exit(1)`) upon detecting any broken local link, un-normalized backslash, or path traversal.
+
+- **Tooling & CI Stage 1 Integration:**
+  - Registered `"lint:links": "node scripts/check-markdown-links.mjs"` in `package.json`.
+  - Embedded `Verify Documentation Internal Links` into `Stage 1: Quality & Security Gate` in `.github/workflows/ci.yml`.
+
+- **Milestone Closure Dossier (`docs/records/closures/core-hardening/`):**
+  - Published official Phase 2 completion dossier: [`phase-02-internal-link-audit-and-ci-closure.md`](records/closures/core-hardening/phase-02-internal-link-audit-and-ci-closure.md) documenting full remediation inventory, Mermaid validation workflow, and verifiable execution evidence.
+
 ## [1.32.2] - 2026-09-25 (Documentation Metrics SSOT Unification, Automated Badge Synchronization & Core Hardening Phase 1)
 
 ### Added & Automated - SSOT Metrics Contract, Fail-Closed CI Gate & Programmatic Sync Engine

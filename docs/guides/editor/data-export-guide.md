@@ -170,8 +170,8 @@ const blob = new Blob([cleanText], {
 Removes all Markdown marks:
 - Code blocks: ` ```...``` `
 - Inline code: `` `...` ``
-- Images: `![alt](url)`
-- Links: `[text](url)`
+- Images: `![alt](https://example.com/image.png)`
+- Links: `[text](https://example.com)`
 - Bold: `**text**`, `__text__`
 - Italic: `*text*`, `_text_`
 - Strikethrough: `~~text~~`
@@ -290,8 +290,8 @@ Expected: Proper UTF-8 encoding in both formats
 
 ### ✅ Test Case 5: Complex Markdown
 ```
-Input: "\[Link\](url) `code` ~~strike~~"
-Expected MD: "\[Link\](url) `code` ~~strike~~"
+Input: "[Link](https://example.com) `code` ~~strike~~"
+Expected MD: "[Link](https://example.com) `code` ~~strike~~"
 Expected TXT: "Link code strike"
 ```
 

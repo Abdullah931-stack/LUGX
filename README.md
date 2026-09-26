@@ -319,6 +319,9 @@ npx tsc --noEmit
 
 # Execute ESLint verification
 npm run lint
+
+# Verify documentation internal links (deterministic offline checker)
+npm run lint:links
 ```
 
 ---
@@ -619,7 +622,7 @@ Comprehensive architectural designs, specifications, guides, and engineering rec
 | [`docs/records/`](./docs/records/) | Engineering records, incident post-mortems, and phase closure dossiers | [`test-database-safety.md`](./docs/records/incidents/test-database-safety.md), [`W10-Final-Closure-Round.md`](./docs/records/audits/W10-Final-Closure-Round.md), [`Phase Closures (Phases 1–20)`](./docs/records/closures/), [`Archive`](./docs/records/archive/) |
 | [`docs/specs/`](./docs/specs/) | Living technical specifications & blueprints | [`offline-sync-blueprint.md`](./docs/specs/offline-sync-blueprint.md), [`ai-key-rotation-and-resilience.md`](./docs/specs/ai-key-rotation-and-resilience.md), [`ui-streaming-requirements.md`](./docs/specs/ui-streaming-requirements.md) |
 | [`docs/guides/`](./docs/guides/) | Developer & operational how-tos (`billing/`, `editor/`, `ai/`) | [`stripe-integration.md`](./docs/guides/billing/stripe-integration.md), [`stripe-setup.md`](./docs/guides/billing/stripe-setup.md), [`ai-models-config.md`](./docs/guides/ai/ai-models-config.md), [`editor-ui-enhancements.md`](./docs/guides/editor/editor-ui-enhancements.md), [`search-replace-feature.md`](./docs/guides/editor/search-replace-feature.md), [`data-export-guide.md`](./docs/guides/editor/data-export-guide.md) |
-| [`docs/foundation/`](./docs/foundation/) | Verbatim founding design & divergence log | [`DESIGN_VS_REALITY.md`](./docs/foundation/DESIGN_VS_REALITY.md), [`Project_Structure.md`](./docs/foundation/Project_Structure.md), [`LUGX platform subscription plans.md`](./docs/foundation/LUGX%20platform%20subscription%20plans.md) |
+| [`docs/foundation/`](./docs/foundation/) | Verbatim founding design & divergence log | [`DESIGN_VS_REALITY.md`](./docs/foundation/DESIGN_VS_REALITY.md), [`Project_Structure.md`](./docs/foundation/Project_Structure.md), [`LUGX platform subscription plans.md`](<./docs/foundation/LUGX platform subscription plans.md>) |
 | Root Registers | Release history & debt tracking | [`CHANGELOG.md`](./docs/CHANGELOG.md), [`TECHNICAL_DEBT_REGISTER.md`](./docs/TECHNICAL_DEBT_REGISTER.md), [`DOCUMENTATION_GUIDELINES.md`](./docs/DOCUMENTATION_GUIDELINES.md) |
 
 ---
