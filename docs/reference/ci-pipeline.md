@@ -1,9 +1,9 @@
 # CI/CD Pipeline & Fail-Closed Release Gate Specification
 
 **Status:** ✅ Living Contract · Pre-Stage 2 Core Hardening (Phase 3)  
-**Authoritative Workflow:** [`.github/workflows/ci.yml`](file:///d:/Projects/LUGX/.github/workflows/ci.yml)  
-**Verification Harness:** [`scripts/test-ci-gating.mjs`](file:///d:/Projects/LUGX/scripts/test-ci-gating.mjs) (`npm run test:ci-gate`)  
-**Associated Contracts:** [`docs/reference/test-database-isolation.md`](file:///d:/Projects/LUGX/docs/reference/test-database-isolation.md)
+**Authoritative Workflow:** [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)  
+**Verification Harness:** [`scripts/test-ci-gating.mjs`](../../scripts/test-ci-gating.mjs) (`npm run test:ci-gate`)  
+**Associated Contracts:** [`docs/reference/test-database-isolation.md`](./test-database-isolation.md)
 
 ---
 

@@ -5,7 +5,7 @@
 **Status:** CLOSED ✅  
 **Date:** 2026-09-26  
 **Authoritative Artifacts:** `.github/workflows/ci.yml`, `scripts/test-ci-gating.mjs`, `package.json`, `docs/reference/ci-pipeline.md`, `docs/README.md`.  
-**Verification Baseline:** 30 CI Gating Matrix Assertions (100% Passed), 76 Markdown Files Verified (0 Broken Links), 100% Doc Metrics Synchronization.  
+**Verification Baseline:** 30 CI Gating Matrix Assertions (100% Passed), 78 Markdown Files Verified (0 Broken Links), 100% Doc Metrics Synchronization.  
 
 ---
 
@@ -23,7 +23,7 @@ Phase 3 establishes an airtight, deterministic gating regime:
 - **Permissive Pull Request Bypass (`exit 0`):** Permits external forks to pass CI without cloud credentials, accompanied by prominent warning notices.
 - **Automated `$GITHUB_STEP_SUMMARY` Dashboards:** Emits rich Markdown tables into the GitHub Actions run summary displaying secret availability, browser engine, test counts, and release gate status via YAML-safe `printf`.
 - **Failure Summary Interception:** Under `set +e` / `set -e`, test execution exit codes are trapped and written to `$GITHUB_STEP_SUMMARY` before terminating with failure exit code.
-- **Comprehensive Reference Contract:** Authored [`docs/reference/ci-pipeline.md`](../../reference/ci-pipeline.md) formalizing the 7-stage CI pipeline rules and gating matrix.
+- **Comprehensive Reference Contract:** Authored [`docs/reference/ci-pipeline.md`](../../../reference/ci-pipeline.md) formalizing the 7-stage CI pipeline rules and gating matrix.
 - **Deterministic Simulation Suite:** Authored `scripts/test-ci-gating.mjs` verifying all 30 matrix permutations and syntax checks locally via `npm run test:ci-gate`.
 
 ---
@@ -148,14 +148,14 @@ Total Checks: 30 | Passed: 30 | Failed: 0
 
 ### 4.2 Documentation Internal Link Integrity (`npm run lint:links`)
 ```
-[check-markdown-links] Scanning 76 Markdown files for link validity...
+[check-markdown-links] Scanning 78 Markdown files for link validity...
 
 === Markdown Link Verification Summary ===
-Total files scanned:       76
-Total links analyzed:      205
+Total files scanned:       78
+Total links analyzed:      209
 External links (bypassed): 0
 Anchor links (same-file):  28
-Local paths verified:      177
+Local paths verified:      181
 Broken / Invalid links:    0
 
 ✅ SUCCESS: 100% of internal Markdown links are valid and resolvable on disk.
