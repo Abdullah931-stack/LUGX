@@ -398,9 +398,9 @@ Decommission unused Supabase Storage wrappers, removing dead code while preservi
 ## [Phase 15: Sanitization, Import & Export] — Status: ✅ CLOSED
 
 ### Current State
-Completed. Server-side 10MB text payload ceiling and PostgreSQL null-byte scrubbing (`\0`) enforced in `importFile`, disguised binary headers (PE/ELF/Mach-O/ZIP) rejected via `isDisguisedBinary` in `file-validator.ts`, filename path traversal sanitized via `sanitizeFilename`, and end-to-end round-trip fidelity verified across complex Arabic RTL, spatial GFM tables, code blocks, and adversarial payloads (`export-import-roundtrip.integration.test.ts`). Fully documented in [`phase-15-sanitization-import-export-closure.md`](../records/closures/phase-11-to-15-core-infrastructure/phase-15-sanitization-import-export-closure.md).
+Completed. Server-side 10MB text payload ceiling and PostgreSQL null-byte scrubbing (`\0`) enforced in `importFile`, disguised binary headers (PE/ELF/Mach-O/ZIP) rejected via `isDisguisedBinary` in `file-validator.ts`, filename path traversal sanitized via `sanitizeFilename`, and end-to-end round-trip fidelity verified across complex Arabic RTL, spatial GFM tables, code blocks, and adversarial payloads (`export-import-roundtrip.integration.test.ts`). Fully documented in [`phase-15-sanitization-import-export-closure.md`](../closures/phase-11-to-15-core-infrastructure/phase-15-sanitization-import-export-closure.md).
 
-> **Architectural Note:** The client-side Web Worker PDF extraction, 2D spatial clustering table generation (`pdf-table-extractor.ts`), pure TypeScript Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR engine (`pdf-ocr-engine.ts`), PUA font corruption detection (`pdf-corruption-detector.ts`), and direct Zero-Knowledge vault import were completed and closed as an independent milestone documented in [`pdf-worker-extraction-and-vault-import-closure.md`](../records/closures/extensions/pdf-worker-extraction-and-vault-import-closure.md).
+> **Architectural Note:** The client-side Web Worker PDF extraction, 2D spatial clustering table generation (`pdf-table-extractor.ts`), pure TypeScript Arabic Unicode normalization (`arabic-normalizer.ts`), on-demand bilingual OCR engine (`pdf-ocr-engine.ts`), PUA font corruption detection (`pdf-corruption-detector.ts`), and direct Zero-Knowledge vault import were completed and closed as an independent milestone documented in [`pdf-worker-extraction-and-vault-import-closure.md`](../closures/extensions/pdf-worker-extraction-and-vault-import-closure.md).
 
 ### Derivation Constraint
 Phases 9 through 14.
@@ -433,7 +433,7 @@ Harden single secure content pipeline across import, normalization, editor previ
 ## [Phase 16: Zero-Knowledge Hybrid Encryption & Vault] — Status: ✅ CLOSED
 
 ### Current State
-Completed. Dual-tier hybrid encryption active: transparent local at-rest encryption in IndexedDB, 600K PBKDF2 Web Worker offloading, 12-word BIP-39 recovery seed, non-blocking conflict queue (`CONFLICT_LOCKED`), post-merge syntax integrity check, direct encrypted import pipeline in `sidebar.tsx`, and AI gatekeeper. Detailed in `HYBRID_ENCRYPTION_AND_VAULT_PLAN.md` and [Phase 16 Reference](../records/closures/phase-16-vault-encryption/).
+Completed. Dual-tier hybrid encryption active: transparent local at-rest encryption in IndexedDB, 600K PBKDF2 Web Worker offloading, 12-word BIP-39 recovery seed, non-blocking conflict queue (`CONFLICT_LOCKED`), post-merge syntax integrity check, direct encrypted import pipeline in `sidebar.tsx`, and AI gatekeeper. Detailed in `HYBRID_ENCRYPTION_AND_VAULT_PLAN.md` and [Phase 16 Reference](../closures/phase-16-vault-encryption/).
 
 ### Derivation Constraint
 Phases 1 through 15 closure.
@@ -575,7 +575,7 @@ Phase 20 is 100% closed and verified on 2026-09-19. All 11 critical verification
 - Browser-driven E2E suite (`npx playwright test`): 14 suites, 15 user journeys passed (100%) in Chromium with `retries: 0`.
 - CI Pipeline Integration: Playwright E2E browser testing officially integrated as Stage 6 of `.github/workflows/ci.yml` with failure artifact uploads.
 - Production build compilation (`npm run build`): 17 static and dynamic routes compiled successfully in 53s.
-The official Final Verification Dossier is published in [`docs/reference/phase-20-production-readiness-dossier.md`](../records/closures/phase-17-to-20-production-readiness/phase-20-production-readiness-dossier.md).
+The official Final Verification Dossier is published in [`docs/reference/phase-20-production-readiness-dossier.md`](../closures/phase-17-to-20-production-readiness/phase-20-production-readiness-dossier.md).
 
 ### Derivation Constraint
 - Official `CLOSED` state recorded for Phase 18 (Multi-System Integration Testing). (Verified ✅)

@@ -188,7 +188,7 @@ All changes in Phase 3 strictly conformed to the pre-approved scoping boundaries
 | `package.json` | Registered `"test:ci-gate": "node scripts/test-ci-gating.mjs"` script. | No |
 | `docs/reference/ci-pipeline.md` | Authored formal Living Contract defining the 7-stage CI pipeline, gating rules, and credential requirements. | No |
 | `docs/README.md` | Indexed `ci-pipeline.md` in Section 1 tree map, Section 2.3 living contracts table, Section 2.6 plan status, and Section 4 verification commands. | No |
-| `docs/Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md` | Marked Phase 3 as `COMPLETED` with closure verification references. | No |
+| `docs/Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md` (superseding `CORE_HARDENING_PRE_STAGE_2_PLAN.md`) | Marked Phase 3 as `COMPLETED` with closure verification references. | No |
 | `docs/.Plans/خطة تصليد النواة ما قبل المرحلة الثانية من المشروع.md` | Marked Phase 3 as `COMPLETED` in the incubator plan. | No |
 | `docs/records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md` | Authored authoritative closure dossier. | No |
 

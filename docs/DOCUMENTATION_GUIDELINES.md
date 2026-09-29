@@ -31,7 +31,8 @@ to a source file, route, migration, or test.
 | ├── `incidents/` | Post-mortem root-cause analyses and remediation designs (`test-database-safety.md`) | Permanent incident record |
 | ├── `audits/` | Architectural verification audit closure records (`W10-Final-Closure-Round.md`) | Permanent audit record |
 | ├── `closures/` | Phase closure dossiers organized by milestone bundles (Phases 1–6, 11–15, 16, 17–20, extensions) | Historical milestone closures |
-| └── `archive/` | Superseded development session logs and legacy snapshots (`legacy-milestones`, `sync-system-legacy-snapshot.md`) | Historical archive |
+| ├── `plans/` | Completed historical execution plans moved after milestone closure (`technical-execution-plan.md`, etc.) | Completed historical plans |
+| └── `archive/` | Superseded, halted, or abandoned specs, roadmaps, and legacy snapshots (`core-hardening-pre-stage-2-plan.md`) | Deprecated & abandoned archive |
 | `foundation/` (Day-0 artifacts) | Founding pre-implementation design record (PRD, initial architecture, UI/UX guidelines, system prompts). **Preserved verbatim** as the foundational baseline against which `DESIGN_VS_REALITY.md` measures architectural evolution and code divergence | **IMMUTABLE DAY-0 BASELINE:** Strictly read-only; never edited or extended |
 | `foundation/DESIGN_VS_REALITY.md` | **Living Reality Reconciler & Divergence Auditor:** The sole active reconciliation document inside `foundation/` bridging founding theory with active code | **LIVING RECONCILER (Explicit Exemption):** Must be updated whenever active code diverges from or reaffirms Day-0 foundational designs |
 
@@ -43,12 +44,14 @@ to a source file, route, migration, or test.
 | :--- | :--- | :--- | :--- |
 | `docs/foundation/` (Day-0) | `IMMUTABLE BASELINE` | None. Pure read-only historical Day-0 baseline. | Any edits to PRD, system architecture, or subscription plans. |
 | `docs/foundation/DESIGN_VS_REALITY.md` | `LIVING RECONCILER` | Synchronizing architectural divergence, preserved continuities, and active runtime realities. | Freezing into an immutable record; allowing divergence drift against active code. |
-| `docs/records/` | `PERMANENT HISTORY` | Appending new incident reports, audits, phase closures, or archiving deprecated files with banners. | Editing past test figures, rewriting historical session narratives, or deleting past records. |
+| `docs/records/` | `PERMANENT HISTORY` | Appending new incident reports, audits, phase closures, completed plans, or archiving deprecated files with banners. | Editing past test figures, rewriting historical session narratives, or deleting past records. |
+| `docs/records/plans/` | `COMPLETED PLANS HISTORY` | Archiving fully executed, verified plans after milestone closure. Preserving historical execution roadmaps. | Storing active execution plans currently undergoing implementation, or storing abandoned drafts. |
+| `docs/records/archive/` | `DEPRECATED & ABANDONED ARCHIVE` | Archiving abandoned, halted, or superseded specs, roadmaps, and partial plans with historical deprecation banners. | Storing active execution plans or completed milestone blueprints. |
 | `docs/architecture/` | `LIVING SPEC` | Updating sequence flows, component interactions, and state machines to match active code. | Allowing architectural documentation to contradict active code. |
 | `docs/reference/` | `LIVING CONTRACT` | Updating endpoint schemas, status codes, query parameters, hook interfaces, and isolation guards. | Dumping milestone closure reports or historical logs (which belong in `records/closures/`). |
 | `docs/guides/` | `LIVING GUIDE` | Updating setup sequences, configuration steps, and operational workflows. | Documenting unverified, non-reproducible manual instructions. |
 | `docs/specs/` | `DESIGN BLUEPRINT` | Updating technical requirements prior to major implementation work. | Treating specs as operational work logs. |
-| `docs/Plans/` | `TRACKED PLANS` | Maintaining and adding rigorous English execution plans for active or completed milestones. | Storing unapproved drafts or Arabic incubator notes. |
+| `docs/Plans/` (or `docs/plans/`) | `ACTIVE PLANS EXCLUSIVE` | Hosting and maintaining the active milestone execution roadmap currently undergoing implementation. | Accumulating completed historical plans (must move to `records/plans/`), or storing abandoned drafts. |
 | `docs/.Plans/` | `INTERNAL INCUBATOR` | Drafting, incubating, and evaluating future candidate plans in Arabic. | Tracking in Git (must remain in `.gitignore`), or treating as approved plans. |
 | `src/**` | `CODE EXCLUSIVE` | TypeScript source and test files only. | **Strictly prohibited:** Creating or keeping any `README.md` or markdown files in `src/`. |
 
@@ -61,10 +64,10 @@ graph TD
     Trigger["Engineering Event"] --> Branch{"Event Classification"}
     Branch -- "Code / API Change" --> A1["Update LIVING docs:<br/>architecture/, reference/, or guides/"]
     Branch -- "Code Divergence from Day-0 Design" --> A2["Update docs/foundation/DESIGN_VS_REALITY.md"]
-    Branch -- "Milestone / Phase Closed" --> A3["Append closure dossier to records/closures/<bundle>/<br/>Update tracked plan in Plans/"]
+    Branch -- "Milestone / Phase Closed" --> A3["Append closure dossier to records/closures/<bundle>/<br/>Move completed plan to records/plans/"]
+    Branch -- "Component / Plan Abandoned or Replaced" --> A6["Move old doc to records/archive/ with banner"]
     Branch -- "Incident / Security Failure" --> A4["Append post-mortem to records/incidents/"]
     Branch -- "Architectural Audit Completed" --> A5["Append closure report to records/audits/"]
-    Branch -- "Component Deprecated / Replaced" --> A6["Move old doc to records/archive/ with banner"]
     Branch -- "Candidate Feature Proposal" --> A7["Draft proposal in Arabic inside docs/.Plans/"]
     Branch -- "Candidate Plan Adopted" --> A8["Promote to docs/Plans/ in rigorous English"]
 ```
@@ -75,13 +78,13 @@ graph TD
 2. **Divergence from Founding Day-0 Design:**
    - Update `docs/foundation/DESIGN_VS_REALITY.md` to document the divergence rationale, active implementation path, and verified verification source. Never alter the founding Day-0 files themselves.
 3. **Milestone or Phase Completion:**
-   - Compile a closure dossier and save it in the appropriate bundle under `docs/records/closures/<bundle>/`. Update the corresponding technical execution plan in `docs/Plans/`.
+   - Compile a closure dossier and save it in the appropriate bundle under `docs/records/closures/<bundle>/`. Move the completed execution plan from `docs/Plans/` to `docs/records/plans/`.
 4. **Production Incident or Concurrency Failure:**
    - Author a root-cause forensic report and remediation design in `docs/records/incidents/`.
 5. **Architectural Verification Audit:**
    - Document the comprehensive audit results in `docs/records/audits/`.
-6. **Component Deprecation or Replacement:**
-   - Move the obsolete living document to `docs/records/archive/` and prepend a point-in-time archival banner directing readers to the active replacement. Do not delete historical technical context.
+6. **Component Deprecation or Abandonment:**
+   - Move obsolete, abandoned, or superseded documents and roadmaps to `docs/records/archive/` and prepend a point-in-time archival banner directing readers to the active replacement. Do not delete historical technical context.
 7. **Future Feature Incubation:**
    - Create and iterate on candidate proposals in Arabic inside `docs/.Plans/`. Keep the directory untracked in `.gitignore`.
 8. **Plan Adoption for Execution:**

@@ -1,7 +1,12 @@
 # Core Hardening Pre-Stage 2 Technical Execution Plan (LUGX Platform)
 
+> ⚠️ **HISTORICAL ARCHIVE / SUPERSEDED (September 2026)**  
+> Execution of this plan was halted after Phase 4. Its remaining scope (Phases 5–11)  
+> has been absorbed and expanded into the comprehensive technical remediation plan:  
+> [`../../Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`](../../Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md).
+
 **Plan Identifier:** `PLAN-CORE-HARDENING-PRE-STAGE-2`  
-**Operational Status:** 🟡 ACTIVE (Phase 1 Closed; Phases 2–11 Planned)  
+**Operational Status:** ⚪ SUPERSEDED / ARCHIVED (Phases 1–4 Closed; Phases 5–11 absorbed into `COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`)  
 **Reference Document:** Internal Incubator Blueprint (`docs/.Plans/خطة تصليد النواة ما قبل المرحلة الثانية من المشروع.md`)  
 **Core Objective:** Establish deterministic engineering gates, eliminate documentation drift, decouple monolithic sync and editor state controllers into isolated single-responsibility modules, enforce fail-closed CI and zero-leakage security boundaries, and provide operational SRE runbooks ahead of Stage 2 platform scaling while unconditionally preserving a zero-regression baseline (820 passing unit tests across 67 test files).
 
@@ -127,7 +132,7 @@ Eliminate the silent skip vulnerability (`Silent Skip with Exit 0`) in Playwrigh
 #### Closure Verifications
 - Executed `node scripts/test-ci-gating.mjs` verifying 100% of all 30 CI gating matrix checks passed.
 - Verified `$GITHUB_STEP_SUMMARY` Markdown table formatting, delimiter syntax, and alert blocks across all execution contexts.
-- Documented official closure dossier: [`docs/records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md`](../records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md).
+- Documented official closure dossier: [`docs/records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md`](../closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md).
 
 ---
 
@@ -149,7 +154,7 @@ Bridge the protocol gap between the Upstash HTTP REST client and the standard TC
 
 #### Closure Verifications
 - Executed `npx vitest run src/test/infrastructure/redis-live-integration.test.ts`: 100% pass rate across all 6 test cases (Healthy, Contention, Timeout, Wire Protocol, Outage).
-- Documented official closure dossier: [`docs/records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md`](../records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md).
+- Documented official closure dossier: [`docs/records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md`](../closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md).
 
 ---
 

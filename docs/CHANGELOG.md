@@ -2,6 +2,17 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.32.6] - 2026-09-29 (Documentation Governance & Historical Plans Reorganization)
+
+### Changed & Reorganized - Roadmap Lifecycle & Governance Architecture
+
+- **Plans Lifecycle & Historical Separation (`docs/records/plans/` & `docs/records/archive/`):**
+  - Established formal architectural boundaries separating active execution plans from completed and deprecated roadmaps:
+    - Dedicated `docs/Plans/` exclusively to active milestone roadmaps currently undergoing implementation (`COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`).
+    - Migrated completed, verified milestone roadmaps to `docs/records/plans/` (`technical-execution-plan.md`, `hybrid-encryption-and-vault-plan.md`, `markdown-editor-migration-plan.md`, `production-hardening-and-remediation-plan-m6.md`).
+    - Migrated superseded/halted plans to `docs/records/archive/` (`core-hardening-pre-stage-2-plan.md`) with explicit deprecation banners.
+  - Formalized directory boundaries in `.agents/rules/docs-governance.md` and synchronized `docs/README.md`.
+
 ## [1.32.5] - 2026-09-29 (Phase 4: Upstash REST Protocol Emulator, Distributed Lock Contention & Fail-Open Hardening)
 
 ### Added & Hardened - In-Memory Upstash REST Mock Server, Concurrency Lock Verification & Fail-Open Degradation
@@ -575,9 +586,9 @@ All notable changes to the LUGX project will be documented in this file.
 
 - **Public Plans Directory & Translation (`docs/Plans/`):**
   - Created tracked `docs/Plans/` directory containing verified, comprehensive English translations of core architectural roadmaps:
-    - [`TECHNICAL_EXECUTION_PLAN.md`](Plans/TECHNICAL_EXECUTION_PLAN.md): 20-phase technical execution roadmap derived directly from active source code, establishing exact phase status (16 phases `CLOSED`, Phase 9 `ACTIVE` session governance standard, Phases 17–18 `IN PROGRESS` / `PARTIALLY DONE`, and Phases 19–20 `PENDING`).
-    - [`HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`](Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md): Complete architectural plan for the Zero-Knowledge Cloud Vault and Dual-Tier Hybrid Encryption engine, confirming 100% closure of Milestones M1 through M5.
-    - [`MARKDOWN_EDITOR_MIGRATION_PLAN.md`](Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md): Complete architectural plan for the native CodeMirror 6 Markdown editor migration, confirming 100% closure of Phases 1 through 6 and elimination of legacy `@tiptap/*` dependencies.
+    - `TECHNICAL_EXECUTION_PLAN.md`: 20-phase technical execution roadmap derived directly from active source code, establishing exact phase status (16 phases `CLOSED`, Phase 9 `ACTIVE` session governance standard, Phases 17–18 `IN PROGRESS` / `PARTIALLY DONE`, and Phases 19–20 `PENDING`).
+    - `HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`: Complete architectural plan for the Zero-Knowledge Cloud Vault and Dual-Tier Hybrid Encryption engine, confirming 100% closure of Milestones M1 through M5.
+    - `MARKDOWN_EDITOR_MIGRATION_PLAN.md`: Complete architectural plan for the native CodeMirror 6 Markdown editor migration, confirming 100% closure of Phases 1 through 6 and elimination of legacy `@tiptap/*` dependencies.
   - Preserved untracked local roadmaps for private planning without Git exposure.
 - **Founding Divergence Register Update (`docs/foundation/DESIGN_VS_REALITY.md`):**
   - Added the Zero-Knowledge Vault and Client-Side Hybrid Encryption subsystem to Section 1 (*Systems Added After the Founding Design*).

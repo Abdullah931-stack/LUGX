@@ -39,16 +39,12 @@ docs/
 │   ├── offline-sync-blueprint.md      ← foundational blueprint for IndexedDB offline synchronization
 │   └── ui-streaming-requirements.md
 │
-├── Plans/                             ← official tracked technical execution plans (English)
-│   ├── TECHNICAL_EXECUTION_PLAN.md    ← code-based execution plan (Phases 1–20 closed)
-│   ├── HYBRID_ENCRYPTION_AND_VAULT_PLAN.md ← zero-knowledge vault execution plan (closed)
-│   ├── MARKDOWN_EDITOR_MIGRATION_PLAN.md   ← CodeMirror 6 migration plan (closed)
-│   ├── PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md ← production hardening plan (M6 closed)
-│   └── CORE_HARDENING_PRE_STAGE_2_PLAN.md ← pre-stage 2 core hardening plan (Active: Phases 1–3 closed, 4–11 planned)
+├── Plans/                             ← active official technical execution roadmaps (English)
+│   └── COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md ← unified technical remediation & hardening plan (Active: Phases 1–4 closed, 5–23 planned)
 │
-├── records/                           ← engineering records, incidents, audits & closures
+├── records/                           ← engineering records, incidents, audits, closures & plans archive
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md)
-│   ├── audits/                        ← verification audit records (W10-Final-Closure-Round.md)
+│   ├── audits/                        ← verification audit records (W10-Final-Closure-Round.md, unified-security-and-engineering-audit.md)
 │   ├── closures/                      ← official milestone & phase closure dossiers (Phases 1–20, Core Hardening)
 │   │   ├── phase-01-to-06-markdown-editor/
 │   │   ├── phase-11-to-15-core-infrastructure/
@@ -56,7 +52,8 @@ docs/
 │   │   ├── phase-17-to-20-production-readiness/
 │   │   ├── extensions/                ← pdf worker extraction & vault import closure
 │   │   └── core-hardening/            ← pre-phase 2 core hardening dossiers (Phase 1: metrics & SSOT, Phase 2: link audit & CI, Phase 3: skipped tests & release gate)
-│   └── archive/                       ← legacy development logs & superseded delivery snapshots
+│   ├── plans/                         ← completed historical execution plans (technical-execution, hybrid-vault, markdown-editor, M6)
+│   └── archive/                       ← superseded, halted, or abandoned specs & plans (core-hardening-pre-stage-2, legacy snapshots)
 │
 ├── foundation/                        ← founding pre-implementation baseline record (strictly immutable)
 │   ├── DESIGN_VS_REALITY.md           ← living divergence tracker measuring design vs reality
@@ -162,15 +159,11 @@ docs/
 
 ---
 
-### 2.6. Plans (`Plans/`) — Official Tracked Execution Plans (English)
+### 2.6. Plans (`Plans/`) — Active Execution Plans (English)
 
 | Document | Scope | Status |
 | :--- | :--- | :--- |
-| [TECHNICAL_EXECUTION_PLAN.md](./Plans/TECHNICAL_EXECUTION_PLAN.md) | Code-based technical execution plan covering all 20 phases | ✅ Closed |
-| [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](./Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan | ✅ Closed |
-| [MARKDOWN_EDITOR_MIGRATION_PLAN.md](./Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6) | ✅ Closed |
-| [PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md](./Plans/PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md) | Concurrency hardening, distributed webhook locks, RAM purge & conflict quarantine | ✅ Closed |
-| [CORE_HARDENING_PRE_STAGE_2_PLAN.md](./Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md) | Pre-Stage 2 core hardening: CI gates, Redis lock, zero-leak vault, modular sync engine & SRE runbooks | 🟡 Active (Phases 1–4 Closed, 5–11 Planned) |
+| [COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md](./Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) | Unified technical remediation & hardening plan (23 isolated SRP phases, 100% audit findings closure) | 🟢 Active (Phases 1–4 Closed, 5–23 Planned) |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -188,6 +181,7 @@ docs/
 
 | Document | Scope / Date |
 | :--- | :--- |
+| [unified-security-and-engineering-audit.md](./records/audits/unified-security-and-engineering-audit.md) | Comprehensive 7-module security, reliability & architectural audit (183 consolidated findings, v1.32.4 / commit `d2d60a7`) |
 | [W10-Final-Closure-Round.md](./records/audits/W10-Final-Closure-Round.md) | Concurrency-window closure F1 (SQL optimistic locking on `PUT /api/files/:id`) & Vitest `singleFork` serialization — 2026-08-16 |
 
 #### Milestone Closures (`records/closures/`)
@@ -201,7 +195,16 @@ docs/
 | [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report |
 | [core-hardening/](./records/closures/core-hardening/) | Pre-Phase 2 Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), and Phase 4 (Redis REST emulator, lock contention & fail-open) |
 
-#### Archive (`records/archive/`)
+#### Completed Plans (`records/plans/`)
+
+| Document | Scope | Status |
+| :--- | :--- | :--- |
+| [technical-execution-plan.md](./records/plans/technical-execution-plan.md) | Code-based technical execution plan covering all 20 phases | ✅ Completed |
+| [hybrid-encryption-and-vault-plan.md](./records/plans/hybrid-encryption-and-vault-plan.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan | ✅ Completed |
+| [markdown-editor-migration-plan.md](./records/plans/markdown-editor-migration-plan.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6) | ✅ Completed |
+| [production-hardening-and-remediation-plan-m6.md](./records/plans/production-hardening-and-remediation-plan-m6.md) | Concurrency hardening, distributed webhook locks, RAM purge & conflict quarantine | ✅ Completed |
+
+#### Deprecated & Abandoned Archive (`records/archive/`)
 
 | Document | Scope |
 | :--- | :--- |
@@ -209,6 +212,7 @@ docs/
 | [technical-fix-documentation-security-hardening.md](./records/archive/technical-fix-documentation-security-hardening.md) | Early W1–W8 hardening record (branch `merge`, 2026-08-16) |
 | [sync-unit-tests-fixes.md](./records/archive/sync-unit-tests-fixes.md) | Early sync unit test fixes snapshot (February 2026) |
 | [sync-system-legacy-snapshot.md](./records/archive/sync-system-legacy-snapshot.md) | Legacy initial sync delivery snapshot with historical deprecation banner |
+| [core-hardening-pre-stage-2-plan.md](./records/archive/core-hardening-pre-stage-2-plan.md) | Pre-Stage 2 core hardening plan (Phases 1–4 closed; superseded & absorbed into COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) |
 
 ---
 
