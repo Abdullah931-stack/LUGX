@@ -127,7 +127,7 @@ Authoritative webhook ingestion endpoint with alias re-export at `/api/webhooks/
 - **Multi-Tiered Idempotency & Distributed Lock (Phase 21):**
   - **L1 (Memory):** In-memory Set fast-path check.
   - **L1.5 (Redis Dedup):** `stripe:dedup:${eventId}` cache check with 24h TTL (shields PostgreSQL).
-  - **L1.5 (Redis Lock):** In-flight distributed concurrency lock via `stripe:lock:${eventId}` (`NX EX 30`) drops concurrent executions with 200 `{ deduplicated: true }` and fails open to PostgreSQL ACID transactions upon Redis outage or 1500ms timeout.
+  - **L1.5 (Redis Lock):** In-flight distributed concurrency lock via `stripe:lock:${eventId}` (`NX EX 30`) drops concurrent executions with 200 `{ deduplicated: true }` and fails open to PostgreSQL ACID transactions upon Redis outage or 1500ms timeout (with explicit `clearTimeout` timer cleanup in `finally` and bounded single-retry policy `retry: { retries: 1, backoff: 50ms }`).
   - **L2 (DB Ledger):** Authoritative `subscription_events` database query & atomic ACID insertion.
 - **Atomic ACID Transitions:** Encapsulated in `executeSubscriptionTransition(tx)`.
 - **Terminal State Protection:** A subscription in `canceled` state rejects stale `customer.subscription.updated` events attempting to set it back to `active`.
@@ -184,13 +184,18 @@ const tierHierarchy = {
 npx vitest run src/test/api/stripe-webhook.test.ts
 ```
 
+#### Redis Live Integration & Lock Contention Tests (In-Memory REST Mock):
+```bash
+npx vitest run src/test/infrastructure/redis-live-integration.test.ts
+```
+
 #### Live Integration Tests (Isolated Neon Branch):
 ```bash
-npx vitest run --config vitest.live.config.ts src/test/api/stripe-webhook.live.test.ts
+npx vitest run --config vitest.live.config.mts src/test/api/stripe-webhook.live.test.ts
 ```
 
 ---
 
-**Last Updated:** 2026-09-20  
-**Version:** 1.29.2  
-**Status:** ✅ Phase 21 Hardened & Closed
+**Last Updated:** 2026-09-29  
+**Version:** 1.32.5  
+**Status:** ✅ Phase 4 Hardened & Closed

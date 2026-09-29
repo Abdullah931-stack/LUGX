@@ -2,6 +2,38 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.32.5] - 2026-09-29 (Phase 4: Upstash REST Protocol Emulator, Distributed Lock Contention & Fail-Open Hardening)
+
+### Added & Hardened - In-Memory Upstash REST Mock Server, Concurrency Lock Verification & Fail-Open Degradation
+
+- **In-Memory Upstash REST Protocol Emulator (`src/test/infrastructure/redis-mock-server.ts`):**
+  - Bridged the protocol mismatch between `@upstash/redis` HTTP REST client and standard CI TCP containers (port 6379, RESP).
+  - Built a lightweight in-memory HTTP server (`node:http`) listening on random ephemeral loopback ports (`127.0.0.1:0`).
+  - Implemented `/pipeline` batch array routing and single-command endpoints, complying strictly with the `Upstash-Encoding: base64` header contract.
+  - Implemented atomic `SET ... NX EX`, `GET` (with TTL eviction), and `DEL` primitives, along with programmable delay injection (`setDelay(ms)`) and socket lifecycle termination.
+  - Hardened with normalized pathname routing (`req.url.split('?')[0]`) to tolerate telemetry query strings cleanly.
+
+- **Dedicated Live Integration Test Suite (`src/test/infrastructure/redis-live-integration.test.ts`):**
+  - Authored a comprehensive 6-case live integration test suite against the Upstash mock server and isolated Neon PostgreSQL test branch.
+  - Verified healthy lock acquisition (`stripe:lock:${eventId}` with `nx: true` and `ex: 30`), atomic database transaction, `stripe:dedup` fast-path caching, and lock deletion.
+  - Verified concurrent distributed lock contention (`Promise.all`): proved simultaneous duplicate deliveries are dropped with `{ received: true, deduplicated: true }` at the Redis layer, completely shielding PostgreSQL from connection pool exhaustion.
+  - Verified latency degradation (>1500ms): asserted that `withTimeout` watchdogs cleanly fail open to the PostgreSQL ACID Ledger (`subscription_events`) with zero unhandled rejections or HTTP 500 errors.
+  - Verified complete network outage resilience against unreachable endpoints (`ECONNREFUSED`), proving graceful fail-open degradation.
+
+- **Event Loop Timer Leak Elimination (`src/app/api/stripe/webhook/route.ts`):**
+  - Refactored `withTimeout` to explicitly clear the `setTimeout` timer inside a `.finally()` block via `clearTimeout(timer)`.
+  - Prevented orphaned timer objects from lingering in the libuv / V8 timer wheel under high-throughput webhook delivery spikes.
+
+- **Bounded Upstash Retry Policy & Fail-Open Acceleration (`src/lib/redis.ts`):**
+  - Configured `{ retry: { retries: 1, backoff: () => 50 } }` on the Upstash Redis client.
+  - Eliminated background retry storms (previously defaulting to 5 retries / 4.5s) during network outages, reducing outage fail-open test latency from 3,506ms to 625ms (82% latency reduction).
+
+- **Documentation & Metrics Synchronization (`docs/METRICS.json` & Plans):**
+  - Synchronized Single Source of Truth test metrics: unit suites expanded from 67 to 68, unit tests expanded from 820 to 826 passing tests (100% pass rate).
+  - Synchronized living documents: `docs/README.md`, `docs/foundation/DESIGN_VS_REALITY.md`, `docs/reference/test-database-isolation.md`, and `docs/guides/billing/stripe-integration.md`.
+  - Updated tracked execution plans `docs/Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md` and `docs/.Plans/خطة تصليد النواة ما قبل المرحلة الثانية من المشروع.md` to `COMPLETED ✅`.
+  - Published authoritative Phase 4 closure dossier in `docs/records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md`.
+
 ## [1.32.4] - 2026-09-26 (CI Skipped Test Elimination, Progressive Fail-Closed Release Gate & GITHUB_STEP_SUMMARY Dashboard)
 
 ### Added & Hardened - CI Progressive Release Gating, Adversarial Shell Hardening & Step Summary Reporting

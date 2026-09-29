@@ -60,17 +60,21 @@ const MAX_TIMESTAMP_AGE_SECONDS = 300; // 5 minutes
 const REDIS_TIMEOUT_MS = 1500;
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs = REDIS_TIMEOUT_MS): Promise<T> {
-    return Promise.race([
-        promise,
-        new Promise<never>((_, reject) => {
-            const timer = setTimeout(() => {
-                reject(new Error(`Redis operation timed out after ${timeoutMs}ms`));
-            }, timeoutMs);
-            if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
-                (timer as { unref: () => void }).unref();
-            }
-        }),
-    ]);
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+            reject(new Error(`Redis operation timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+            (timer as { unref: () => void }).unref();
+        }
+    });
+
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    });
 }
 
 /**

@@ -170,7 +170,7 @@ docs/
 | [HYBRID_ENCRYPTION_AND_VAULT_PLAN.md](./Plans/HYBRID_ENCRYPTION_AND_VAULT_PLAN.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan | ✅ Closed |
 | [MARKDOWN_EDITOR_MIGRATION_PLAN.md](./Plans/MARKDOWN_EDITOR_MIGRATION_PLAN.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6) | ✅ Closed |
 | [PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md](./Plans/PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md) | Concurrency hardening, distributed webhook locks, RAM purge & conflict quarantine | ✅ Closed |
-| [CORE_HARDENING_PRE_STAGE_2_PLAN.md](./Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md) | Pre-Stage 2 core hardening: CI gates, Redis lock, zero-leak vault, modular sync engine & SRE runbooks | 🟡 Active (Phases 1–3 Closed, 4–11 Planned) |
+| [CORE_HARDENING_PRE_STAGE_2_PLAN.md](./Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md) | Pre-Stage 2 core hardening: CI gates, Redis lock, zero-leak vault, modular sync engine & SRE runbooks | 🟡 Active (Phases 1–4 Closed, 5–11 Planned) |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -199,7 +199,7 @@ docs/
 | [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
 | [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
 | [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report |
-| [core-hardening/](./records/closures/core-hardening/) | Pre-Phase 2 Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), and Phase 3 (skipped tests & release gate) |
+| [core-hardening/](./records/closures/core-hardening/) | Pre-Phase 2 Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), and Phase 4 (Redis REST emulator, lock contention & fail-open) |
 
 #### Archive (`records/archive/`)
 
@@ -251,7 +251,7 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (67 files, 820 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (68 files, 826 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (19 files, 89 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)

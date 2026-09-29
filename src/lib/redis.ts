@@ -18,9 +18,20 @@ export function getRedisClient(): Redis {
             redisInstance = new Redis({
                 url: url || "https://placeholder-redis.upstash.io",
                 token: token || "placeholder-token",
+                retry: {
+                    retries: 1,
+                    backoff: () => 50,
+                },
             });
         } else {
-            redisInstance = new Redis({ url, token });
+            redisInstance = new Redis({
+                url,
+                token,
+                retry: {
+                    retries: 1,
+                    backoff: () => 50,
+                },
+            });
         }
         lastUrl = url;
         lastToken = token;

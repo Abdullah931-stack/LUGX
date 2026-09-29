@@ -131,24 +131,25 @@ Eliminate the silent skip vulnerability (`Silent Skip with Exit 0`) in Playwrigh
 
 ---
 
-### [Phase 4: Upstash REST Emulator, Lock Contention & Fail-Open Verification] — Status: ⏳ PLANNED
+### [Phase 4: Upstash REST Emulator, Lock Contention & Fail-Open Verification] — Status: COMPLETED ✅
 
 #### Technical Objective
 Bridge the protocol gap between the Upstash HTTP REST client and the standard TCP Redis container in CI, construct a lightweight in-memory HTTP REST emulator via `node:http`, and author a dedicated integration test suite verifying standard lock operations, parallel lock contention, timeout degradation (>1500ms), and safe fail-open fallback to the PostgreSQL ACID Ledger.
 
 #### Concrete Execution Steps
-- **Step 1:** Implement an in-memory Upstash REST Mock Server using `node:http` within the test harness handling `/pipeline`, `/set`, `/get`, and `/del` commands along with `nx` and `ex` parameters.
+- **Step 1:** Implement an in-memory Upstash REST Mock Server in `src/test/infrastructure/redis-mock-server.ts` using `node:http` handling `/pipeline` and `/` commands with `Upstash-Encoding: base64` contract, along with `nx` and `ex` parameters.
 - **Step 2:** Author a dedicated integration test suite `src/test/infrastructure/redis-live-integration.test.ts`.
-- **Step 3:** Verify **Redis Healthy** path: Validate setting, reading, and releasing distributed lock key `stripe:lock:${eventId}` with `nx: true` and `ex: 30`.
+- **Step 3:** Verify **Redis Healthy** path: Validate setting, reading, and releasing distributed lock key `stripe:lock:${eventId}` with `nx: true` and `ex: 30`, and verify the `stripe:dedup` fast-path cache.
 - **Step 4:** Verify **Lock Contention** path: Dispatch concurrent identical requests with the same `eventId` and assert that the second request is dropped with `deduplicated: true` at the Redis tier prior to consuming database connections.
-- **Step 5:** Verify **Timeout & Fail-Open** path: Simulate network latency exceeding 1500ms and verify seamless fail-open fallback to the `PostgreSQL ACID Ledger` without throwing unhandled exceptions.
+- **Step 5:** Verify **Timeout & Fail-Open** path: Simulate network latency exceeding 1500ms and verify seamless fail-open fallback to the `PostgreSQL ACID Ledger` without throwing unhandled exceptions, as well as total network outage resilience.
 
 #### Exception & Edge Case Handling
 - Total Redis network disconnection: Application safely falls back to PostgreSQL idempotency path while logging a structured warning.
 - Processing duration exceeds lock TTL (30s): PostgreSQL transactional unique constraints guarantee deduplication even if the Redis lock expires.
 
 #### Closure Verifications
-- Execute `npx vitest run src/test/infrastructure/redis-live-integration.test.ts` and verify 100% pass rate across Healthy, Contention, and Timeout paths.
+- Executed `npx vitest run src/test/infrastructure/redis-live-integration.test.ts`: 100% pass rate across all 6 test cases (Healthy, Contention, Timeout, Wire Protocol, Outage).
+- Documented official closure dossier: [`docs/records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md`](../records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md).
 
 ---
 
