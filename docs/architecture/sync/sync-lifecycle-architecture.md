@@ -131,3 +131,39 @@ flowchart LR
 ### 6.2 Outbound Egress Pipeline
 - **Symmetric Re-Encryption**: Whenever a document is saved or a conflict is resolved, the orchestrator passes the plaintext to `encryptOutbound`. The gateway generates a cryptographically secure 12-byte IV via CSPRNG, constructs the file AAD binding (`vault:file:${userId}:${fileId}`), and encrypts via AES-GCM-256.
 - **Double-Encryption Immunity**: Because the editor surface operates exclusively on decrypted Markdown, re-encryption always originates from clean plaintext, completely eliminating nested encryption bugs (`gcm:v1:gcm:v1:...`).
+
+---
+
+## 7. Pure Sync State Reducer & Contract Safety Net (Phase 6)
+
+In Phase 6 (v1.34.0), the core state transition logic across synchronization was extracted into a deterministic, side-effect-free reducer (`src/lib/sync/sync-state-reducer.ts`), establishing a mathematical safety net:
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    
+    IDLE --> SYNCING : START_SYNC (fileId, operationId)
+    IDLE --> [*] : RESET_TO_IDLE
+    
+    SYNCING --> IDLE : SYNC_SUCCESS (newEtag, newVersion)
+    SYNCING --> CONFLICT : CONFLICT_DETECTED (HTTP 412 / ETag Mismatch)
+    SYNCING --> ERROR : SYNC_ERROR (HTTP 5xx / Network Failure)
+    
+    CONFLICT --> SYNCING : RESOLVE_LOCAL (Forces Push - LUGX-003)
+    CONFLICT --> IDLE : RESOLVE_REMOTE (Accepts Server Version)
+    CONFLICT --> SYNCING : RESOLVE_MERGE (Forces Push of Merged Doc)
+    CONFLICT --> IDLE : RESET_TO_IDLE
+    
+    ERROR --> SYNCING : RETRY_SYNC (Preserves retryCount)
+    ERROR --> IDLE : RESET_TO_IDLE
+    
+    note right of IDLE
+        Impossible direct jump:
+        IDLE to CONFLICT throws InvalidSyncTransitionError
+    end note
+```
+
+### 7.1 Contract Invariants
+1. **Rejection of Impossible Jumps:** Direct transitions from `idle` to `conflict` or `error` without an active `syncing` network request are rejected fail-closed, throwing `InvalidSyncTransitionError` in strict mode.
+2. **Conflict Resolution Push Guarantee (LUGX-003):** When resolving a conflict with `local` or `merge`, the reducer transitions to `syncing` rather than `idle`, ensuring that dirty local edits are pushed to the server and acknowledged before being marked clean.
+3. **Purity Invariant:** Zero calls to `Date.now()`, `fetch()`, or browser storage APIs. All event timestamps are injected externally via the event payload.

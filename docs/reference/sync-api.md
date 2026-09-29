@@ -602,3 +602,48 @@ export class SessionKeyStore {
 3. **Caller Buffer Independence**: Modals and derivation routines wipe their local key buffers (`wipeBuffer(localKey)`) in `finally` blocks without zeroing the persistent `masterKeyRaw` instance held within `SessionKeyStore`.
 4. **Cross-Tab Volatile RAM Purge Synchronization**: When `lock()` or `purgeKeys()` is invoked (or upon inactivity timeout expiration via `isUnlocked()`), a `vault_locked` broadcast event is dispatched across sibling tabs via `BroadcastChannel('textai_cross_tab_sync')`. All sibling tabs immediately sanitize volatile RAM via `wipeBuffer()` (`.fill(0)`) and transition to locked state without re-broadcasting, preventing echo loops.
 
+---
+
+### 8. `SyncStateReducer` Contracts (`src/lib/sync/sync-state-reducer.ts`)
+
+Pure, deterministic state machine governing sync status transitions with zero I/O and zero clock side-effects (remediating LUGX-003, LUGX-010, LUGX-036, LUGX-040):
+
+```typescript
+export type SyncStatusState = 'idle' | 'syncing' | 'conflict' | 'error';
+
+export interface SyncConflictPayload {
+    readonly baseVersion: number;
+    readonly remoteVersion: number;
+    readonly remoteEtag: string;
+    readonly detectedAt: number;
+}
+
+export type SyncState =
+    | { readonly status: 'idle'; readonly lastSyncedAt?: number; readonly lastError?: string }
+    | { readonly status: 'syncing'; readonly fileId?: string; readonly operationId?: string; readonly startedAt: number; readonly retryCount: number }
+    | { readonly status: 'conflict'; readonly fileId: string; readonly conflict: SyncConflictPayload }
+    | { readonly status: 'error'; readonly fileId?: string; readonly error: string; readonly retryAfterSeconds?: number; readonly retryCount: number; readonly failedAt: number };
+
+export type SyncEvent =
+    | { readonly type: 'START_SYNC'; readonly fileId?: string; readonly operationId?: string; readonly timestamp: number }
+    | { readonly type: 'SYNC_SUCCESS'; readonly timestamp: number; readonly newEtag?: string; readonly newVersion?: number }
+    | { readonly type: 'SYNC_ERROR'; readonly error: string; readonly retryAfterSeconds?: number; readonly timestamp: number }
+    | { readonly type: 'CONFLICT_DETECTED'; readonly fileId: string; readonly conflict: SyncConflictPayload; readonly timestamp: number }
+    | { readonly type: 'RESOLVE_CONFLICT'; readonly resolution: 'local' | 'remote' | 'merge'; readonly mergedContent?: string; readonly timestamp: number }
+    | { readonly type: 'RETRY_SYNC'; readonly timestamp: number }
+    | { readonly type: 'RESET_TO_IDLE' };
+
+export function reduceSyncState(
+    currentState: SyncState,
+    event: SyncEvent,
+    options?: ReducerOptions
+): SyncState;
+
+export function isValidSyncTransition(state: SyncState, event: SyncEvent): boolean;
+```
+
+#### Invariants:
+1. **Rejection of Impossible Jumps:** Transitions from `idle` directly to `conflict` or `error` without an active `syncing` network attempt throw `InvalidSyncTransitionError` in strict mode.
+2. **Push Mandate on Conflict Resolution (LUGX-003):** Resolving a conflict via `local` or `merge` transitions directly to `syncing` (forcing a push before local changes can be marked clean), rather than silently transitioning to `idle`.
+3. **Purity Guarantee:** Reducer functions execute without side-effects, making zero calls to `Date.now()`, `fetch()`, or browser storage APIs.
+

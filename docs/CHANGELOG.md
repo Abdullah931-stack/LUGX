@@ -2,6 +2,34 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.34.0] - 2026-09-29 (Phase 6: Pure State Reducers as Contractual Safety Nets)
+
+### Added & Hardened - Pure State Reducers, Terminal State Protection & Quota Conservation
+
+- **Pure Sync State Reducer (`src/lib/sync/sync-state-reducer.ts`):**
+  - Remediates audit findings `LUGX-003, LUGX-010, LUGX-036, LUGX-040`.
+  - Encoded pure, side-effect-free state transitions over `idle | syncing | conflict | error`.
+  - Rejects impossible direct state jumps (e.g. `idle` to `conflict` directly without an active sync response) with `InvalidSyncTransitionError`.
+  - Enforced that conflict resolution with `resolution: 'local'` or `'merge'` immediately transitions to `syncing` (remediating `LUGX-003`), forcing a server push before any local edits can be marked clean.
+  - Implemented pure type guards: `isIdleSyncState`, `isSyncingState`, `isConflictSyncState`, and `isErrorSyncState`.
+
+- **Pure Stripe Webhook Event Reducer & Terminal Protection (`src/lib/stripe/webhook-event-reducer.ts`):**
+  - Remediates audit findings `LUGX-025, LUGX-135`.
+  - Defined subscription lifecycle states `trialing | active | past_due | canceled | incomplete | incomplete_expired | unpaid`.
+  - Implemented strict **Terminal State Protection**: once a subscription enters terminal state (`canceled` or `incomplete_expired`), incoming stale or out-of-order `customer.subscription.updated` events attempting reactivation for the same subscription ID are frozen with `action: 'ignored_stale'` (or rejected via `TerminalSubscriptionStateError` in strict mode).
+  - Enforced payment privilege coupling: non-paid checkouts fail-closed with `action: 'noop'`, and only genuine `active` and `trialing` statuses retain paid tiers.
+
+- **Pure Quota Settlement Reducer & Reservation State Machine (`src/lib/ai/quota-settlement-reducer.ts`):**
+  - Remediates audit findings `LUGX-001, LUGX-115`.
+  - Formalized deterministic integer quota calculation via `calculateQuotaSettlement()`.
+  - Guaranteed mathematical **Conservation Law**: `toCommit + toRefund === reservedUnits` across pre-TTFT aborts (100% refund), partial streaming tokens, exact usage, and overage capping.
+  - Managed immutable reservation lifecycle (`idle | reserved | committed | refunded | expired`), preventing double-refund attacks, double-commit attacks, and commit-after-refund conflicts via `QuotaStateConflictError`.
+
+- **Contract & Purity Verification Suite (`src/test/contracts/state-machines-contracts.test.ts`):**
+  - Authored 23 automated tests with zero external mocks, covering full transition permutation matrices across all three reducers.
+  - Included 100% Purity Assertion test verifying zero calls to `Date.now()`, `fetch()`, or external storage APIs.
+  - Expanded project automated test baseline to 70 suites and 869 passing tests with 100% zero regressions.
+
 ## [1.33.0] - 2026-09-29 (Phase 5: Contracts Dictionary, Discriminated Storage Payloads & RFC 7807 Standardization)
 
 ### Added & Hardened - Centralized Contracts Dictionary, Strict Discriminated Storage & RFC 7807 Error Standard

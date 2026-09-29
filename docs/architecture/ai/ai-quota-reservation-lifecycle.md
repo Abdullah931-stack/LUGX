@@ -199,3 +199,43 @@ export const aiReservations = pgTable("ai_reservations", {
 
 - **Migration Trigger (When to Switch to Optimistic Post-Settlement):**
   Transitioning to optimistic post-settlement is triggered **if Postgres transaction write IOPS becomes a primary cost bottleneck AND AI model inference costs drop to near-zero commodity pricing**, where the financial cost of database write amplification exceeds the monetary risk of occasional client concurrency overdraft.
+
+---
+
+## 8. Pure Quota Settlement Reducer & Conservation Invariants (Phase 6)
+
+In Phase 6 (v1.34.0), quota difference calculations and reservation lifecycle transitions were formalized into pure functions (`src/lib/ai/quota-settlement-reducer.ts`), eliminating client-driven calculation drift (remediating LUGX-001 and LUGX-115).
+
+```mermaid
+flowchart TD
+    subgraph Inputs["Pure Inputs"]
+        R["reservedUnits: number"]
+        C["consumedUnits: number"]
+    end
+
+    subgraph Calculation["calculateQuotaSettlement()"]
+        CondZero{"consumedUnits <= 0?"}
+        CondZero -- Yes (Pre-TTFT Abort) --> ZeroCase["toCommit = 0<br/>toRefund = reservedUnits"]
+        CondZero -- No --> CondOver{"consumedUnits >= reservedUnits?"}
+        CondOver -- Yes (Overage) --> OverCase["toCommit = reservedUnits<br/>toRefund = 0<br/>isOverage = true"]
+        CondOver -- No (Partial Stream) --> PartCase["toCommit = consumedUnits<br/>toRefund = reservedUnits - consumedUnits"]
+    end
+
+    subgraph InvariantRule["Conservation Law Invariant"]
+        Inv["toCommit + toRefund === reservedUnits<br/>toCommit >= 0 && toRefund >= 0"]
+    end
+
+    Inputs --> Calculation
+    ZeroCase --> InvariantRule
+    OverCase --> InvariantRule
+    PartCase --> InvariantRule
+```
+
+### 8.1 Mathematical Conservation & Sanitation Invariants
+1. **Conservation Law:** For all non-overage scenarios (`consumedUnits <= reservedUnits`), the sum of units committed and refunded strictly matches the units reserved:
+   $$\text{toCommit} + \text{toRefund} \equiv \text{reservedUnits}$$
+2. **Deterministic Input Sanitation:** Negative, `NaN`, non-finite, and fractional inputs are quantized to safe non-negative integers via `Math.max(0, Math.floor(...))`.
+3. **Pure Reservation State Machine (`reduceQuotaReservationState`):**
+   - States: `idle | reserved | committed | refunded | expired`.
+   - Transitions from `committed` to `refunded` or from `refunded` to `committed` are forbidden and throw `QuotaStateConflictError`.
+   - Idempotent replays of identical events return the same immutable state object without secondary side-effects.

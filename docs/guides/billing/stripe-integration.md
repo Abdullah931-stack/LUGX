@@ -107,6 +107,23 @@ export function __resetProcessedEventIds(): void
 export interface HandlerResult { success: boolean; userId?: string; subscriptionId?: string; error?: string; }
 ```
 
+#### `webhook-event-reducer.ts` (Phase 6)
+Pure state machine governing subscription lifecycles and enforcing **Terminal State Protection** (remediating LUGX-025 and LUGX-135):
+
+```typescript
+export function reduceSubscriptionState(
+    currentState: SubscriptionState,
+    event: StripeWebhookEvent,
+    options?: WebhookReducerOptions
+): SubscriptionTransitionResult;
+
+export function isTerminalSubscriptionStatus(status: SubscriptionStatus): boolean;
+```
+
+**Core Invariants:**
+- **Terminal State Freeze:** Subscriptions in terminal `canceled` or `incomplete_expired` state freeze out-of-order or replayed `customer.subscription.updated` events with `action: 'ignored_stale'`.
+- **Payment Privilege Coupling:** Only genuine `active` and `trialing` statuses retain paid tiers. Unpaid checkouts fail-closed with `action: 'noop'`.
+
 ---
 
 ### 2. API Routes

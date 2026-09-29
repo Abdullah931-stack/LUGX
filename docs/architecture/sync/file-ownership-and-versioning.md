@@ -123,7 +123,7 @@ When recursively collecting descendant file/folder IDs for cascading deletion or
  - `src/test/server/import-file.test.ts`: Tests text import, 10MB payload size ceiling, title deduplication, and null-byte sanitization.
  - `src/test/parsers/parser-pdf-settings.test.ts`: Unit tests verifying local preference toggling for spatial table extraction.
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
- - Full suite execution: 69 test files, 846 tests passing (100% pass rate).
+ - Full suite execution: 70 test files, 869 tests passing (100% pass rate).
 
 ---
 
