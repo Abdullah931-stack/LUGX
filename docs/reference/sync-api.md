@@ -205,6 +205,39 @@ Error bodies are structured JSON produced by the handlers; all error responses i
 | 429 | `{ "error": "Too Many Requests", "message": "Rate limit exceeded. Please try again later.", "retryAfter": <epoch-seconds> }` | Rate limiter exhausted (`rateLimitExceededResponse`) |
 | 500 | `{ "error": "Internal server error", "correlationId": "<uuid>" }` | Unhandled server exception |
 
+### RFC 7807 Standardized Problem Details Contract
+
+As established in `src/types/problem-details.ts`, standardized API error envelopes follow RFC 7807:
+
+```json
+{
+  "type": "urn:lugx:error:sync:conflict",
+  "title": "Conflict Detected",
+  "status": 409,
+  "detail": "ETag mismatch between local revision and remote version",
+  "instance": "/api/files/123e4567-e89b-12d3-a456-426614174000",
+  "correlationId": "req-c73bcdcc-2669-4bf6-81d3-e4ae73fb11fd",
+  "retryAfterSeconds": 5
+}
+```
+
+### Discriminated Storage Payloads Contract
+
+File contents and sync payloads adhere to the discriminated union defined in `src/types/storage-payload.ts`:
+
+- **Plaintext Payload:**
+  `{ "type": "plaintext", "content": string, "isEncrypted": false, "encryptionMetadata": null }`
+- **Zero-Knowledge Encrypted Payload:**
+  `{ "type": "encrypted", "ciphertextBase64": string, "isEncrypted": true, "encryptionMetadata": FileEncryptionMetadata }`
+
+### Sync Operation Sequence Invariants
+
+Operations in `src/types/sync-contracts.ts` enforce monotonic revision tracking:
+- `localRevision`: Monotonically increasing local revision counter (integer > 0).
+- `sentRevision`: Optional revision acknowledged by the server.
+- `baseVersion`: Server version on which the operation was applied.
+
+
 ---
 
 ## Headers

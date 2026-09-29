@@ -2,6 +2,42 @@
 
 All notable changes to the LUGX project will be documented in this file.
 
+## [1.33.0] - 2026-09-29 (Phase 5: Contracts Dictionary, Discriminated Storage Payloads & RFC 7807 Standardization)
+
+### Added & Hardened - Centralized Contracts Dictionary, Strict Discriminated Storage & RFC 7807 Error Standard
+
+- **Discriminated Storage Union Architecture (`src/types/storage-payload.ts`):**
+  - Remediates audit findings `LUGX-004, LUGX-019, LUGX-048, LUGX-070, LUGX-071`.
+  - Enforced a compile-time and runtime discriminated union `DocumentStoragePayload` distinguishing between:
+    - `PlaintextStoragePayload`: `{ type: "plaintext", content: string, isEncrypted: false, encryptionMetadata: null }`
+    - `EncryptedStoragePayload`: `{ type: "encrypted", ciphertextBase64: string, isEncrypted: true, encryptionMetadata: FileEncryptionMetadata }`
+  - Eliminates the vulnerability where callers could pass `isEncrypted: true` alongside unencrypted plaintext Markdown content, or store encrypted ciphertext accompanied by `encryptionMetadata: null`.
+  - Implemented strict Zod validation schemas (`plaintextStoragePayloadSchema`, `encryptedStoragePayloadSchema`, `documentStoragePayloadSchema`) with `.strict()` to reject arbitrary injected attributes fail-closed.
+  - Provided pure type guards: `isPlaintextPayload(payload)` and `isEncryptedPayload(payload)`.
+
+- **Standardized RFC 7807 Problem Details Error Contracts (`src/types/problem-details.ts`):**
+  - Remediates audit findings `LUGX-085, LUGX-119, LUGX-174`.
+  - Standardized all API error responses against the IETF RFC 7807 specification: `type`, `title`, `status` (constrained to 100–599), `detail`, `instance`, and mandatory `correlationId`.
+  - Incorporated optional backoff guidance parameter `retryAfterSeconds` for rate limiting (429) and upstream unavailable (503) error responses.
+  - Added optional RFC 7807 validation error extension `invalidParams: Array<{ name: string; reason: string }>`.
+  - Backed by strict runtime Zod validation schema `problemDetailsSchema` and utility constructor `createProblemDetails()`.
+
+- **Explicit Synchronization Operation Contracts (`src/types/sync-contracts.ts`):**
+  - Remediates audit findings `LUGX-004, LUGX-019, LUGX-174, LUGX-175`.
+  - Standardized `SyncOperationContract` requiring monotonic sequence tracking: mandatory positive integer `localRevision`, mandatory non-negative integer `baseVersion`, optional `sentRevision`, and strict `operationType` enum.
+  - Formalized batch push contracts (`SyncPushBatchContract`) and cursor-based pull request/response contracts (`SyncPullRequestContract`, `SyncPullResponseContract`).
+  - Added matching strict runtime Zod validation schemas for all sync envelope structures.
+
+- **Cryptographic AI Request Fingerprinting & Quota Lifecycle Contracts (`src/types/ai-contracts.ts`):**
+  - Remediates audit findings `LUGX-067, LUGX-115, LUGX-116, LUGX-119`.
+  - Mandated 64-character SHA-256 hexadecimal string `requestHash` and UUID `operationId` on all AI streaming payloads (`AIRequestContract`) to prevent replay attacks and unvalidated mutations.
+  - Formalized strict schemas for the entire quota reservation lifecycle: `AIReservationContract`, `AICommitReservationContract`, `AIRefundReservationContract`, and `AIQuotaStatusContract`.
+
+- **Automated Contract & Invariant Verification Suite (`src/test/types/contracts.test.ts`):**
+  - Added 20 automated Vitest unit and contract tests verifying compile-time narrowing, invariant adherence, and runtime validation.
+  - Proves rejection of `plaintext` payloads with `isEncrypted: true`, rejection of `encrypted` payloads with `metadata: null`, rejection of out-of-bounds HTTP status codes, rejection of non-positive `localRevision`, and rejection of malformed SHA-256 hashes.
+  - Validated across the full test suite (69 suites, 846 tests passed, 0 failures, 0 regressions).
+
 ## [1.32.6] - 2026-09-29 (Documentation Governance & Historical Plans Reorganization)
 
 ### Changed & Reorganized - Roadmap Lifecycle & Governance Architecture
@@ -90,7 +126,7 @@ All notable changes to the LUGX project will be documented in this file.
     - **Windows Backslash Immunity:** Strictly rejects Windows-style backslashes (`\`) in markdown destinations to prevent OS-specific path leaks.
     - **Path Traversal Containment:** Verifies that all resolved relative destinations remain bounded within the repository root (`ROOT`).
     - **Query Parameter Sanitization:** Gracefully strips query strings (`?query`) prior to on-disk filesystem validation.
-    - **Code Span Isolation:** Completely ignores fenced code blocks (``` ``` ```) and inline code spans (``` `...` ```) to prevent code documentation snippets from triggering false positives.
+    - **Code Span Isolation:** Completely ignores fenced code blocks (` ` `) and inline code spans (` `...` ```) to prevent code documentation snippets from triggering false positives.
   - Enforced fail-closed termination (`process.exit(1)`) upon detecting any broken local link, un-normalized backslash, or path traversal.
 
 - **Tooling & CI Stage 1 Integration:**
@@ -296,7 +332,7 @@ All notable changes to the LUGX project will be documented in this file.
   - Integrated `@upstash/redis` distributed locking (`stripe:lock:${eventId}`) with 30-second TTL (`SET ... 1 NX EX 30`).
   - Concurrent duplicate webhook delivery attempts arriving within milliseconds are immediately intercepted and acknowledged with `200 OK { received: true, deduplicated: true }` before acquiring PostgreSQL database connections.
 - **Least-Cost Cache Inversion & Fast-Path Deduplication (`src/app/api/stripe/webhook/route.ts`):**
-  - Reordered the idempotency pipeline to query Redis deduplication cache (`stripe:dedup:${eventId}`) *before* issuing PostgreSQL `SELECT` queries (`isSubscriptionEventProcessed`).
+  - Reordered the idempotency pipeline to query Redis deduplication cache (`stripe:dedup:${eventId}`) _before_ issuing PostgreSQL `SELECT` queries (`isSubscriptionEventProcessed`).
   - Successfully processed events populate the Redis deduplication cache with a 24-hour TTL (86,400s), completely shielding PostgreSQL from repeat read queries on duplicate delivery attempts across serverless restarts and distributed containers.
   - Events identified in PostgreSQL durable ledger automatically backfill the Redis deduplication cache and cleanly release in-flight locks.
 - **Fast Fail-Open Resilience with Abort Timeout (`withTimeout`):**
@@ -591,7 +627,7 @@ All notable changes to the LUGX project will be documented in this file.
     - `MARKDOWN_EDITOR_MIGRATION_PLAN.md`: Complete architectural plan for the native CodeMirror 6 Markdown editor migration, confirming 100% closure of Phases 1 through 6 and elimination of legacy `@tiptap/*` dependencies.
   - Preserved untracked local roadmaps for private planning without Git exposure.
 - **Founding Divergence Register Update (`docs/foundation/DESIGN_VS_REALITY.md`):**
-  - Added the Zero-Knowledge Vault and Client-Side Hybrid Encryption subsystem to Section 1 (*Systems Added After the Founding Design*).
+  - Added the Zero-Knowledge Vault and Client-Side Hybrid Encryption subsystem to Section 1 (_Systems Added After the Founding Design_).
   - Detailed PBKDF2-SHA256 (600,000 iterations in Web Worker), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, BIP-39 12-word recovery seed, transparent local IndexedDB encryption (`LocalDeviceKey`), domain AAD binding (`vault:file:${userId}:${fileId}`), and AI safety gatekeepers.
 - **Living Documentation Corrections & Technical Debt Remediation:**
   - **Sync Protocol Parameterization (`docs/reference/SYNC_API.md`, `docs/reference/SYNC_ARCHITECTURE.md`):** Corrected outdated `?since=<number>` Unix timestamp queries to the verified `?updated_after=<ISO_8601_string>` parameter matching `src/app/api/files/sync/route.ts` and `src/lib/sync/sync-manager.ts`.
@@ -606,7 +642,7 @@ All notable changes to the LUGX project will be documented in this file.
   - **Documentation Master Index Alignment (`docs/README.md`):** Documented `docs/Plans/` directory map, added Section 2 roadmap entries, and updated test suite statistics to 53 test files and 694 passing tests.
 - **Root Repository Master Readme Parity (`README.md`):**
   - Updated Vitest badge and verification totals to **53 Suites · 694/694 Passing** (100% pass rate).
-  - Added dedicated Core Engineering Subsystem 7 (*Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem*) complete with architectural Mermaid flowchart.
+  - Added dedicated Core Engineering Subsystem 7 (_Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem_) complete with architectural Mermaid flowchart.
   - Added Zero-Knowledge client-side encryption and memory sanitization guarantees to the Security Architecture table.
   - Converted sync and AI streaming ASCII art diagrams to standard Mermaid flowcharts.
   - Aligned database migrations range to `0001–0010` and expanded project directory tree with `vault/` UI components and `workers/crypto.worker.ts`.
@@ -751,11 +787,11 @@ All notable changes to the LUGX project will be documented in this file.
   - Added 17 unit tests verifying 6-digit PIN length constraints, ciphertext byte tampering detection, IV tampering detection, AAD missing/tampered error handling, RAM zeroization (`wipeBuffer`), and `SessionKeyStore` inactivity touch and tab-isolated locking.
 - **Cross-Module Integration Test Suite (`src/test/vault-cross-module.integration.test.ts`):**
   - Added 5 end-to-end integration flow tests connecting Server Actions, Web Crypto, IndexedDB, and UI Orchestration:
-    - *Flow 1:* Complete Zero-Knowledge setup, local encryption, server persistence, and round-trip decryption.
-    - *Flow 2:* Client-side re-encrypted copy pipeline with new UUID, fresh IV, and AAD integrity validation.
-    - *Flow 3:* AI stream commit zero-knowledge plaintext rejection and atomic encrypted payload commitment.
-    - *Flow 4:* Conflict 412 double-encryption prevention invariant.
-    - *Flow 5:* Central device trust revocation and local envelope epoch invalidation.
+    - _Flow 1:_ Complete Zero-Knowledge setup, local encryption, server persistence, and round-trip decryption.
+    - _Flow 2:_ Client-side re-encrypted copy pipeline with new UUID, fresh IV, and AAD integrity validation.
+    - _Flow 3:_ AI stream commit zero-knowledge plaintext rejection and atomic encrypted payload commitment.
+    - _Flow 4:_ Conflict 412 double-encryption prevention invariant.
+    - _Flow 5:_ Central device trust revocation and local envelope epoch invalidation.
 - **Verification Evidence:**
   - Full automated suite: **148/148 tests passed (100% success rate)** across all 9 test suites.
   - TypeScript compilation: `tsc --noEmit` exited with code 0 (zero errors).

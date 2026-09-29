@@ -30,7 +30,8 @@
 | Upstash HTTP REST Protocol Emulator & Concurrency Test Harness | `src/test/infrastructure/redis-mock-server.ts`, `src/test/infrastructure/redis-live-integration.test.ts` (In-memory `node:http` wire-protocol emulator bridging CI TCP container discrepancy, Base64 decoding contract, parallel lock contention verification, and 1500ms timeout fail-open) | Absent — founding design had no automated Upstash Redis mock emulator or distributed lock contention test harness |
 | Distributed Correlation Tracing & ZK Log Sanitization | `src/lib/utils/correlation.ts`, `src/lib/sync/log-sanitizer.ts` (RFC 4122 UUID v4 `X-Correlation-ID` header propagation with CRLF sanitization, Zero-Knowledge token-boundary masking) | Absent |
 | Browser-Driven Playwright Automation & 7-Stage CI Pipeline | `e2e/specs/*`, `playwright.config.ts`, `.github/workflows/ci.yml` (14 Playwright specs covering 15 user journeys in Chromium, fail-closed isolated Neon database test branch, 7-stage CI workflow) | Absent — founding design lacked automated real-browser E2E testing or multi-stage containerized CI |
-| Centralized Modular Test Architecture & Production-Test Isolation | `src/test/*` partitioned into 9 domain subdirectories (`ai/`, `sync/`, `vault/`, `parsers/`, `editor/`, `server/`, `auth/`, `infrastructure/`, `api/`) + shared root harness (`test-db.ts`, `test-db-guard.ts`). Complete isolation with zero test code in production directories (68 suites, 826 tests passing). | Absent — founding design had no automated test architecture or directory isolation specifications |
+| Centralized Modular Test Architecture & Production-Test Isolation | `src/test/*` partitioned into 10 domain subdirectories (`ai/`, `sync/`, `vault/`, `parsers/`, `editor/`, `server/`, `auth/`, `infrastructure/`, `api/`, `types/`) + shared root harness (`test-db.ts`, `test-db-guard.ts`). Complete isolation with zero test code in production directories (69 suites, 846 tests passing). | Absent — founding design had no automated test architecture or directory isolation specifications |
+| Centralized Contracts & Discriminated Storage Dictionary | `src/types/storage-payload.ts`, `src/types/problem-details.ts`, `src/types/sync-contracts.ts`, `src/types/ai-contracts.ts`, `src/test/types/contracts.test.ts` (Discriminated storage union `DocumentStoragePayload` prohibiting unencrypted leaks under `isEncrypted: true`, RFC 7807 `ProblemDetails` error contracts, monotonic `localRevision` sync tracking, and 64-char `requestHash` AI idempotency) | Absent — founding design had no runtime contract validation, discriminated payload schemas, or RFC 7807 error standardization |
 
 ## 2. Design Elements Removed, Replaced, or Excluded
 
@@ -50,7 +51,7 @@
 | Env naming `GEMINI_KEY_1`, `GEMINI_KEY_2`, … | `GEMINI_API_KEY` + `GEMINI_API_KEY_FALLBACK_1` / `_FALLBACK_2` | README env matrix |
 | Planned file `config/ai-models.config.ts` | `src/config/models.config.json` (decoupled JSON) | `models.config.json` |
 | Planned `server/services/subscription.ts` | `src/server/actions/subscription-actions.ts` + `src/lib/stripe/` | `src/server/actions/` |
-| Top-level `src/types/` directory | Types are co-located with their modules; no `types/` directory exists | `src/` tree |
+| Top-level `src/types/` directory | Formalized in v1.33.0 (Phase 5) as the centralized contracts and discriminated types dictionary (`storage-payload.ts`, `problem-details.ts`, `sync-contracts.ts`, `ai-contracts.ts`), backed by Zod runtime schemas and compiler guards. Domain-internal types remain co-located where appropriate. | `src/types/` tree |
 | Runtime & Framework Foundation | Upgraded to Node.js 22 LTS, Next.js 16 (with Turbopack & Edge Proxy), React 19 | `package.json` |
 
 ## 3. Preserved Continuities (design → code, unchanged)

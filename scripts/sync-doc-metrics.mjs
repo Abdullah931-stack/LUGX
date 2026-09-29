@@ -321,13 +321,13 @@ function updateDocumentationFiles(metrics) {
     const original = content;
 
     content = content.replace(
-      /\*\*Unit & Contract Suite \(`npm run test`\):\*\* \*\*\d+ files \/ \d+ tests — all passed \(100% pass rate\)\*\*/g,
-      `**Unit & Contract Suite (\`npm run test\`):** **${metrics.unitSuites} files / ${metrics.unitTests} tests — all passed (100% pass rate)**`
+      /(?:\*\*Active |\*\*)Unit & Contract Suite \(`npm run test`\):\*\* \*\*\d+ files \/ \d+ tests — all passed \(100% pass rate\)\*\*/g,
+      `**Active Unit & Contract Suite (\`npm run test\`):** **${metrics.unitSuites} files / ${metrics.unitTests} tests — all passed (100% pass rate)**`
     );
 
     content = content.replace(
-      /\*\*Live Multi-System Suite \(`npm run test:live`\):\*\* \*\*\d+ registered suites \/ \d+ tests — all passed \(100% pass rate\)\*\*/g,
-      `**Live Multi-System Suite (\`npm run test:live\`):** **${metrics.liveSuites} registered suites / ${metrics.liveTests} tests — all passed (100% pass rate)**`
+      /(?:\*\*Active |\*\*)Live Multi-System Suite \(`npm run test:live`\):\*\* \*\*\d+ registered suites \/ \d+ tests — all passed \(100% pass rate\)\*\*/g,
+      `**Active Live Multi-System Suite (\`npm run test:live\`):** **${metrics.liveSuites} registered suites / ${metrics.liveTests} tests — all passed (100% pass rate)**`
     );
 
     if (content !== original) {
