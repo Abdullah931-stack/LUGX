@@ -203,7 +203,7 @@ npx vitest run src/test/api/stripe-webhook.test.ts
 
 #### Redis Live Integration & Lock Contention Tests (In-Memory REST Mock):
 ```bash
-npx vitest run src/test/infrastructure/redis-live-integration.test.ts
+npx vitest run --config vitest.live.config.mts src/test/infrastructure/redis-live-integration.test.ts
 ```
 
 #### Live Integration Tests (Isolated Neon Branch):
@@ -213,6 +213,7 @@ npx vitest run --config vitest.live.config.mts src/test/api/stripe-webhook.live.
 
 ---
 
-**Last Updated:** 2026-09-29  
-**Version:** 1.32.5  
-**Status:** ✅ Phase 4 Hardened & Closed
+**Last Updated:** 2026-09-30  
+**Version:** 1.35.1  
+**Status:** ✅ Phase 4 Hardened & Synchronized
+

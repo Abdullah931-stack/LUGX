@@ -1,6 +1,20 @@
 # Changelog - LUGX Project
 
-All notable changes to the LUGX project will be documented in this file.
+## [1.35.1] - 2026-09-30 (CI Test Partitioning Hardening & Living Documentation Sync)
+
+### Fixed & Hardened - Test Partitioning & Living Documentation Sync
+
+- **Vitest Live Suite Registration (`vitest.constants.mts`):**
+  - Registered `src/test/infrastructure/redis-live-integration.test.ts` in `LIVE_TEST_FILES`, resolving CI Stage 2 (`unit-contracts`) build failure where missing `TEST_DATABASE_URL` triggered fail-closed guard (`assertSafeTestDatabaseUrl`).
+  - Gated the suite exclusively to Stage 4 (`concurrency-and-db-isolation`) against isolated PostgreSQL and Upstash Redis containers.
+
+- **Authoritative Test Metrics Rebalancing (`docs/METRICS.json`):**
+  - Recalibrated SSOT metrics to 69 unit/contract suites (863 tests passed, 100% hermetic) and 21 live database suites (100 tests passed, 100% live verified). E2E specs preserved at 14 specs / 15 user journeys.
+
+- **Living Documentation Modernization:**
+  - Synchronized Stage 4 suite counts (21 live suites) in `docs/reference/ci-pipeline.md` and `docs/reference/test-database-isolation.md`.
+  - Updated test runner command in `docs/guides/billing/stripe-integration.md` (`--config vitest.live.config.mts`) and modernized schema references in `docs/foundation/DESIGN_VS_REALITY.md`.
+
 ## [1.35.0] - 2026-09-30 (Phase 7: PostgreSQL Schema, Migrations & Atomic Transactions)
 
 ### Added & Hardened - Modular Database Schemas, Foreign Key Cascades & Atomic Interactive Transactions

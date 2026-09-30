@@ -33,10 +33,10 @@ remain in place as a **second layer of defense**, not a substitute.
 | Command | Scope |
 |---|---|
 | `npm run test` | Unit/contract tests only (runs ONCE via `vitest run`; `test:watch` exists for watch mode). No DB, no external services. Fast, hermetic, and completely decoupled from network/cloud. |
-| `npm run test:live` | The 19 hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch. |
+| `npm run test:live` | The 21 hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch. |
 | `npm run test:all` | Both, sequentially. |
 
-LIVE suites registered in `vitest.constants.mts` (19 hermetic database suites):
+LIVE suites registered in `vitest.constants.mts` (21 hermetic database suites):
 
 1. `src/test/api/api-files-putguard.live.test.ts`
 2. `src/test/ai/ai-ops.integrity.test.ts`
@@ -57,6 +57,8 @@ LIVE suites registered in `vitest.constants.mts` (19 hermetic database suites):
 17. `src/test/vault/vault-sync.live.test.ts`
 18. `src/test/server/document-pipeline.live.test.ts`
 19. `src/test/infrastructure/multi-system-lifecycle.live.test.ts`
+20. `src/test/infrastructure/redis-live-integration.test.ts`
+21. `src/test/server/schema-atomic-transactions.live.test.ts`
 
 *(Note: The external cloud integration suite `src/test/ai/ai-live-e2e.test.ts` is explicitly isolated to Stage 7 `live-provider-smoke` and requires live provider API secrets).*
 
@@ -128,8 +130,8 @@ to a live URL; push failures surface immediately).
 
 ## 5. Evidence of isolation
 
-- **Active Unit & Contract Suite (`npm run test`):** **70 files / 869 tests — all passed (100% pass rate)**, zero LIVE files included.
-- **Active Live Multi-System Suite (`npm run test:live`):** **20 registered suites / 94 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
+- **Active Unit & Contract Suite (`npm run test`):** **69 files / 863 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 100 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
 - Mandatory identity line printed at the start of every live run:
