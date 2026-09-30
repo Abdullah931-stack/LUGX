@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as aiOps from '@/server/actions/ai-ops';
-import { db } from '@/lib/db';
+import { db } from '@/server/db';
 
 const inMemoryReservations = new Map<string, any>();
 const inMemoryUsage = new Map<string, any>();
 
-vi.mock('@/lib/db', () => ({
+vi.mock('@/server/db', () => ({
     db: {
         query: {
             users: {

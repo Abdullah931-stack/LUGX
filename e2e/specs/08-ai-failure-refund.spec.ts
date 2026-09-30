@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbReservations } from "../fixtures/test-db";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 import { eq } from "drizzle-orm";
 
 test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () => {

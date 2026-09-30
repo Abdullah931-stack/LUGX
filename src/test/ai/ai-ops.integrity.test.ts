@@ -8,7 +8,7 @@
  * (user_id, date) row — the failure mode of the old SELECT-then-INSERT
  * implementation.
  *
- * NOTE: the production module under test (@/lib/db, Neon HTTP driver)
+ * NOTE: the production module under test (@/server/db, Neon HTTP driver)
  * talks to a remote Neon instance, which is unreachable in the sandbox.
  * To keep the integrity contract verifiable locally, this test exercises
  * the SAME schema + the SAME getTodayUsage algorithm (copied as a pure
@@ -18,7 +18,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, sql, and } from "drizzle-orm";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 

@@ -20,7 +20,7 @@ import path from 'node:path';
 import {
     userVaultProfiles,
     files,
-} from '@/lib/db/schema';
+} from '@/server/db/schema';
 import {
     IDBFile,
     IDBOperation,
@@ -76,7 +76,7 @@ describe('Phase 2: Database Schema & Transparent Encrypted IndexedDB Storage', (
         });
 
         it('should verify migration file 0008_hybrid_vault_schema.sql exists and contains valid SQL', () => {
-            const migrationPath = path.resolve(process.cwd(), 'src/lib/db/migrations/0008_hybrid_vault_schema.sql');
+            const migrationPath = path.resolve(process.cwd(), 'src/server/db/migrations/0008_hybrid_vault_schema.sql');
             expect(fs.existsSync(migrationPath)).toBe(true);
 
             const sql = fs.readFileSync(migrationPath, 'utf8');

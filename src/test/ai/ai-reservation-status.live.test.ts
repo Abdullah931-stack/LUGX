@@ -13,7 +13,7 @@
 import { describe, it, expect, afterAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import {
     reserveAndUpdateUsage,
     commitAIReservation,

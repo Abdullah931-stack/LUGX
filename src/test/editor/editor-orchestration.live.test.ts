@@ -18,7 +18,7 @@ import { eq } from "drizzle-orm";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { getUser } from "@/lib/supabase/server";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER_ID })) }));

@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbFile, simulateRemoteFileUpdate } from "../fixtures/test-db";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 10: AI Concurrent Edit Collision (412 Precondition Failed)", () => {
     test("detects remote edit during stream, prevents partial overwrite on commit with 412, and preserves original text", async ({

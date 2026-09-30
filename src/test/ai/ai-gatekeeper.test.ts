@@ -33,7 +33,7 @@ const mockAiOps = vi.hoisted(() => ({
     refundUsage: vi.fn().mockResolvedValue({ success: true }),
 }));
 vi.mock('@/lib/supabase/server', () => ({ getUser: mockGetUser }));
-vi.mock('@/lib/db', () => ({
+vi.mock('@/server/db', () => ({
     db: mockDb,
     schema: {
         files: { id: 'id', userId: 'user_id', version: 'version', etag: 'etag', deletedAt: 'deleted_at', isEncrypted: 'is_encrypted', encryptionMetadata: 'encryption_metadata', content: 'content', title: 'title' },
@@ -41,7 +41,7 @@ vi.mock('@/lib/db', () => ({
         aiReservations: { id: 'id', operationId: 'operation_id', userId: 'user_id', fileId: 'file_id', status: 'status' },
     },
 }));
-vi.mock('@/lib/db/transactional', () => ({ txDb: mockTxDb }));
+vi.mock('@/server/db/transactional', () => ({ txDb: mockTxDb }));
 vi.mock('@/server/actions/ai-ops', () => mockAiOps);
 vi.mock('@/lib/ai/client', () => ({
     streamWithAI: vi.fn().mockResolvedValue(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('x')); c.close(); } })),

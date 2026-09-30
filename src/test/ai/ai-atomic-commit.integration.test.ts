@@ -17,7 +17,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
@@ -31,12 +31,12 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 // Route transactional DB client to the real PostgreSQL test database
-vi.mock("@/lib/db/transactional", () => ({
+vi.mock("@/server/db/transactional", () => ({
     txDb: testDb,
     schema,
 }));
 
-vi.mock("@/lib/db", () => ({
+vi.mock("@/server/db", () => ({
     db: testDb,
     schema,
 }));

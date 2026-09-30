@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vites
 import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import {
     createUserVaultProfile,
     updateVaultAISetting,

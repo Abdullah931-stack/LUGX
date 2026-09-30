@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { eq, and } from "drizzle-orm";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 import dotenv from "dotenv";
 import path from "path";
 

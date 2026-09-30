@@ -15,7 +15,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { importFile } from "@/server/actions/import-file";
 import { exportContent } from "@/lib/exporters";
 import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";

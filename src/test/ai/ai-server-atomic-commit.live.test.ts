@@ -10,7 +10,7 @@ import { describe, it, expect, vi, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { getUser } from "@/lib/supabase/server";
 import { commitAIFileOperation } from "@/server/actions/ai-commit";
 import { reserveAndUpdateUsage } from "@/server/actions/ai-ops";

@@ -5,14 +5,14 @@ import {
     updateVaultPassword,
     revokeAllTrustedDevices,
 } from "@/server/actions/vault-actions";
-import { db } from "@/lib/db";
+import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
 
 vi.mock("@/lib/supabase/server", () => ({
     getUser: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
+vi.mock("@/server/db", () => ({
     db: {
         query: {
             userVaultProfiles: {

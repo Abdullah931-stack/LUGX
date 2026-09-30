@@ -19,7 +19,7 @@ import { CodeMirrorEditorAdapter } from "@/components/editor/markdown/editor-ada
 import { createMarkdownExtensions } from "@/components/editor/markdown/markdown-extensions";
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { reserveAndUpdateUsage } from "@/server/actions/ai-ops";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER_ID })) }));
@@ -27,7 +27,7 @@ vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER
 // jsdom has no WebSocket, so the Neon-serverless WS pool cannot open there.
 // Route interactive transactions through the REAL pg pool against the SAME
 // isolated branch — the same precedent used by ai-atomic-commit.integration.
-vi.mock("@/lib/db/transactional", async () => {
+vi.mock("@/server/db/transactional", async () => {
     const { testDb } = await import("@/test/test-db");
     return { txDb: testDb };
 });

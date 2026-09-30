@@ -1,20 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { commitAIFileOperation } from '@/server/actions/ai-commit';
-import { db } from '@/lib/db';
-import { txDb } from '@/lib/db/transactional';
+import { db } from '@/server/db';
+import { txDb } from '@/server/db/transactional';
 import { getUser } from '@/lib/supabase/server';
 
 vi.mock('@/lib/supabase/server', () => ({
     getUser: vi.fn(),
 }));
 
-vi.mock('@/lib/db/transactional', () => ({
+vi.mock('@/server/db/transactional', () => ({
     txDb: {
         transaction: vi.fn(),
     },
 }));
 
-vi.mock('@/lib/db', () => ({
+vi.mock('@/server/db', () => ({
     db: {
         query: {
             aiReservations: {

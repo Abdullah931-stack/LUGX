@@ -88,7 +88,7 @@ export async function runMigrations() {
         const { testDb } = await import("./test-db");
         const { sql } = await import("drizzle-orm");
 
-        const migrationsDir = path.join(ROOT, "src/lib/db/migrations");
+        const migrationsDir = path.join(ROOT, "src/server/db/migrations");
         if (fs.existsSync(migrationsDir)) {
             const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith(".sql")).sort();
             for (const file of files) {

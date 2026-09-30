@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb } from "../fixtures/test-db";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 12: Vault Inactivity Auto-Lock, Multi-Modal Unlock & Device Trust", () => {
     test("asserts lock state triggers VaultUnlockModal on encrypted note and clears sensitive keys from volatile RAM", async ({

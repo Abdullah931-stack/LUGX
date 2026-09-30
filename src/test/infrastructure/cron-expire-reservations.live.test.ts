@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { eq, and } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { GET, POST } from "@/app/api/cron/expire-reservations/route";
 import { randomUUID } from "node:crypto";
 

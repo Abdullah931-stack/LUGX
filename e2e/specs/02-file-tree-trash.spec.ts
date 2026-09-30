@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbFile } from "../fixtures/test-db";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 import { eq, and, isNull, isNotNull } from "drizzle-orm";
 
 test.describe("Scenario 2: File System, Folder Tree & Trash Lifecycle", () => {

@@ -30,7 +30,7 @@ vi.mock("@/lib/supabase/server", () => ({
     })),
 }));
 
-vi.mock("@/lib/db", () => {
+vi.mock("@/server/db", () => {
     const mockDb = {
         query: {
             files: {

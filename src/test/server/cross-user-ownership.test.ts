@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
@@ -53,8 +53,8 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 // Route handler needs db pointer to be testDb for direct tests
-vi.mock("@/lib/db", async () => {
-    const original = await vi.importActual<typeof import("@/lib/db")>("@/lib/db");
+vi.mock("@/server/db", async () => {
+    const original = await vi.importActual<typeof import("@/server/db")>("@/server/db");
     return {
         ...original,
         db: testDb,

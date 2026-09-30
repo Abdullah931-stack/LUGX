@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, cleanupE2EUser } from "../fixtures/test-db";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 15: Cross-User Tenant Isolation & 404 Anti-Enumeration", () => {
     test("strictly blocks access to foreign tenant files via direct navigation and API with 404 Anti-Enumeration masking", async ({

@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbFile, simulateRemoteFileUpdate } from "../fixtures/test-db";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution", () => {
     test("simulates offline edit, remote concurrent update (412), triggers ConflictDialog, and executes Diff3 merge resolution", async ({

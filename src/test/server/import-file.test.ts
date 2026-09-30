@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { importFile } from "@/server/actions/import-file";
-import { db } from "@/lib/db";
+import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
 import { randomUUID } from "crypto";
 
@@ -21,7 +21,7 @@ vi.mock("@/lib/supabase/server", () => ({
     getUser: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => {
+vi.mock("@/server/db", () => {
     const mockDb = {
         query: {
             files: {

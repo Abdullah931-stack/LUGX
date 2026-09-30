@@ -18,7 +18,7 @@ import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import crypto, { randomUUID } from "node:crypto";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import { syncUserToDatabase } from "@/server/actions/auth-actions";
 import { importFile } from "@/server/actions/import-file";
 import {

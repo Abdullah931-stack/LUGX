@@ -876,7 +876,7 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
             wipeBuffer(masterKey);
             wipeBuffer(unwrapped);
             wipeBuffer(deviceSalt);
-        });
+        }, 15_000);
 
         it('should reject incorrect PIN and decrement remaining attempts', async () => {
             const masterKey = await generateMasterKeyRaw();

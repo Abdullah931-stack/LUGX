@@ -10,7 +10,7 @@
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { inArray, like, or } from "drizzle-orm";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import {
     assertSafeTestDatabaseUrl,
     printTestDbIdentity,

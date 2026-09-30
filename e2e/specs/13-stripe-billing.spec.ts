@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbSubscriptionEvents } from "../fixtures/test-db";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 import { eq } from "drizzle-orm";
 
 test.describe("Scenario 14: Stripe Subscription Checkout & Durable Event Ledger", () => {

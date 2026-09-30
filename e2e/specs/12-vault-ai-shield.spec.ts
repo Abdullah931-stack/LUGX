@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb } from "../fixtures/test-db";
-import * as schema from "../../src/lib/db/schema";
+import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 13: Zero-Knowledge AI Shield Gatekeeper & HTTP 403 Block", () => {
     test("verifies that encrypted documents render the ai-encrypted-badge and block AI invocation with HTTP 403", async ({

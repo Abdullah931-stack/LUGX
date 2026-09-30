@@ -15,7 +15,7 @@ import crypto from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { runMigrations } from "@/test/db.setup";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 
 const SECRET = "whsec_live_test_secret";
 

@@ -2,7 +2,7 @@
  * Migration & Schema Verification Script for CI and Local Integration.
  *
  * Verifies that the test database is accessible, applies all raw SQL migrations
- * from `src/lib/db/migrations` sequentially, and validates that all critical
+ * from `src/server/db/migrations` sequentially, and validates that all critical
  * tables, enums, indexes, and constraints exist.
  *
  * Usage:
@@ -18,13 +18,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
 
-// Load test environment (priority: shell > .env.test.local > .env.test > .env.local > .env)
-dotenvConfig({ path: path.join(ROOT, ".env.test.local"), override: true });
-dotenvConfig({ path: path.join(ROOT, ".env.test"), override: false });
-dotenvConfig({ path: path.join(ROOT, ".env.local"), override: false });
-dotenvConfig({ path: path.join(ROOT, ".env"), override: false });
+const isMain = process.argv.includes("--main") || process.argv.includes("--prod");
 
-const dbUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+// Priority: if --main, target production/dev .env.local > .env; else test environment
+if (isMain) {
+    dotenvConfig({ path: path.join(ROOT, ".env.local"), override: true });
+    dotenvConfig({ path: path.join(ROOT, ".env"), override: false });
+} else {
+    dotenvConfig({ path: path.join(ROOT, ".env.test.local"), override: true });
+    dotenvConfig({ path: path.join(ROOT, ".env.test"), override: false });
+    dotenvConfig({ path: path.join(ROOT, ".env.local"), override: false });
+    dotenvConfig({ path: path.join(ROOT, ".env"), override: false });
+}
+
+const dbUrl = isMain ? process.env.DATABASE_URL : (process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
 
 if (!dbUrl) {
     console.error("[verify-migrations] ERROR: Neither TEST_DATABASE_URL nor DATABASE_URL is defined.");
@@ -121,8 +128,8 @@ async function main() {
             );
         `);
 
-        // 3. Apply incremental migrations from src/lib/db/migrations
-        const migrationsDir = path.join(ROOT, "src/lib/db/migrations");
+        // 3. Apply incremental migrations from src/server/db/migrations
+        const migrationsDir = path.join(ROOT, "src/server/db/migrations");
         if (fs.existsSync(migrationsDir)) {
             const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort();
             console.log(`[verify-migrations] Found ${files.length} migration files in ${migrationsDir}`);
@@ -171,17 +178,33 @@ async function main() {
         const requiredIndexes = [
             "idx_files_user_parent_title_live",
             "idx_ai_reservations_user_op_period",
+            "idx_ai_reservations_user_op",
+            "idx_ai_reservations_request_hash",
             "idx_subscription_events_event_id",
             "idx_usage_user_date_unique",
+            "idx_subscriptions_stripe_id_unique",
+            "idx_subscriptions_tier",
+            "idx_users_stripe_customer_id",
+            "idx_files_parent_folder",
         ];
 
         for (const idx of requiredIndexes) {
             if (!indexNames.has(idx)) {
-                console.warn(`[verify-migrations] WARNING: Expected index '${idx}' not found in pg_indexes.`);
+                throw new Error(`[verify-migrations] Critical index missing: '${idx}'`);
             } else {
                 console.log(`[verify-migrations] Verified index: ${idx}`);
             }
         }
+
+        // 6. Verify hardened columns
+        const { rows: reqHashCol } = await pool.query(`
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'ai_reservations' AND column_name = 'request_hash'
+        `);
+        if (reqHashCol.length === 0) {
+            throw new Error("[verify-migrations] Column 'request_hash' is missing from 'ai_reservations'");
+        }
+        console.log("[verify-migrations] Verified column: ai_reservations.request_hash");
 
         console.log("[verify-migrations] SUCCESS: All migrations applied and verified without errors.");
     } catch (err) {

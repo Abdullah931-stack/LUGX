@@ -31,6 +31,7 @@ export const LIVE_TEST_FILES = [
     'src/test/vault/vault-sync.live.test.ts',
     'src/test/server/document-pipeline.live.test.ts',
     'src/test/infrastructure/multi-system-lifecycle.live.test.ts',
+    'src/test/server/schema-atomic-transactions.live.test.ts',
 ];
 
 /**

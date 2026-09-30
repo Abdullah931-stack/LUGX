@@ -17,7 +17,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import * as schema from "@/lib/db/schema";
+import * as schema from "@/server/db/schema";
 import {
     reserveAndUpdateUsage,
     commitAIReservation,

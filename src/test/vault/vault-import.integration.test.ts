@@ -22,7 +22,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { randomUUID } from "crypto";
 import { importFile } from "@/server/actions/import-file";
 import { cryptoWorkerBridge } from "@/lib/sync/crypto-worker-bridge";
-import type { FileEncryptionMetadata } from "@/lib/db/schema";
+import type { FileEncryptionMetadata } from "@/server/db/schema";
 
 const TEST_USER_ID = "15151515-1515-1515-1515-151515151515";
 
@@ -35,7 +35,7 @@ vi.mock("@/lib/supabase/server", () => ({
     })),
 }));
 
-vi.mock("@/lib/db", () => {
+vi.mock("@/server/db", () => {
     const mockDb = {
         query: {
             files: {

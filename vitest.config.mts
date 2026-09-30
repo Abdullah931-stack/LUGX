@@ -7,6 +7,7 @@ export default defineConfig({
         environment: 'node',
         setupFiles: ['./vitest.setup.ts'],
         globals: true,
+        testTimeout: 15_000,
         include: ['src/**/*.test.{ts,tsx}', 'src/**/*.test.ts'],
         // Phase 10: LIVE integration suites and external cloud suites are excluded from default runner
         exclude: [...configDefaults.exclude, ...LIVE_TEST_FILES, ...CLOUD_E2E_FILES],

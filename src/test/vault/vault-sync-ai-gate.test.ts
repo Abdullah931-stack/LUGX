@@ -94,7 +94,7 @@ vi.mock('@/lib/supabase/server', () => ({
     getUser: mockGetUser,
 }));
 
-vi.mock('@/lib/db', () => ({
+vi.mock('@/server/db', () => ({
     db: mockDb,
     schema: {
         files: {
@@ -123,7 +123,7 @@ vi.mock('@/lib/db', () => ({
     },
 }));
 
-vi.mock('@/lib/db/transactional', () => ({
+vi.mock('@/server/db/transactional', () => ({
     txDb: mockTxDb,
 }));
 

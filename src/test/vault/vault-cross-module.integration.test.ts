@@ -27,8 +27,8 @@ import {
 } from "@/server/actions/vault-actions";
 import { toggleFileEncryption, copyFile } from "@/server/actions/file-ops";
 import { commitAIFileOperation } from "@/server/actions/ai-commit";
-import { db, schema } from "@/lib/db";
-import { txDb } from "@/lib/db/transactional";
+import { db, schema } from "@/server/db";
+import { txDb } from "@/server/db/transactional";
 import { getUser } from "@/lib/supabase/server";
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -39,13 +39,13 @@ vi.mock("next/cache", () => ({
     revalidatePath: vi.fn(),
 }));
 
-vi.mock("@/lib/db/transactional", () => ({
+vi.mock("@/server/db/transactional", () => ({
     txDb: {
         transaction: vi.fn(),
     },
 }));
 
-vi.mock("@/lib/db", () => {
+vi.mock("@/server/db", () => {
     return {
         db: {
             query: {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { toggleFileEncryption, copyFile } from "@/server/actions/file-ops";
-import { db } from "@/lib/db";
+import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -11,7 +11,7 @@ vi.mock("next/cache", () => ({
     revalidatePath: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
+vi.mock("@/server/db", () => ({
     db: {
         query: {
             files: {
