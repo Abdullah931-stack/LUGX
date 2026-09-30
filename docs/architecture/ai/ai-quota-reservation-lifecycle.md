@@ -130,7 +130,7 @@ applied to the document and never treated as committed.
 
 ## 5. Database Schema (`ai_reservations`)
 
-Managed in `src/lib/db/schema.ts` and migration `0005_ai_reservations.sql`:
+Managed in `src/server/db/schema/ai-reservations.ts` and migration `src/server/db/migrations/0005_ai_reservations.sql`:
 
 ```typescript
 export const aiReservationStatusEnum = pgEnum("ai_reservation_status", [

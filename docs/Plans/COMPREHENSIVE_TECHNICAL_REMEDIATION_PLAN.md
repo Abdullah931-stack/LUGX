@@ -1,9 +1,9 @@
 # Comprehensive Technical Remediation and Hardening Plan (Unified Strategic Single-Responsibility Path)
 
-> **Status:** 🟢 Active (Phases 1–4 Closed, Phases 5–23 Planned)  
+> **Status:** 🟢 Active (Phases 1–7 Closed, Phases 8–23 Planned)  
 > **Supersedes:** [`docs/records/archive/core-hardening-pre-stage-2-plan.md`](../records/archive/core-hardening-pre-stage-2-plan.md)  
 > **Target Scope:** 100% Remediation of all 183 Audit Findings ([`docs/records/audits/unified-security-and-engineering-audit.md`](../records/audits/unified-security-and-engineering-audit.md))  
-> **Baseline Suite Integrity:** 826 unit/contract/vault tests passing, 89 live integration tests passing, zero regression tolerance.
+> **Baseline Suite Integrity:** 869 unit/contract/vault tests passing, 94 live integration tests passing, zero regression tolerance.
 
 ---
 
@@ -41,6 +41,10 @@ To prevent cross-system regressions and maintain mathematical isolation across m
    - Subscriptions are indexed by `stripe_subscription_id`, user tiers are dynamically resolved to `MAX(active_tier)`, and transient webhook processing errors return `HTTP 500 Internal Server Error` to leverage Stripe's automated exponential retry mechanism.
 8. **Retention of Existing Rollback Primitives:**
    - Retains the battle-tested rollback implementation in `src/lib/sync/rollback.ts` (304 lines) and directly connects it to the slim coordinator, eliminating redundant reimplementations.
+9. **Unified Database Architecture & Strict Anti-Dispersal Mandate:**
+   - All PostgreSQL Drizzle schema models, database client factories, ACID transaction pool drivers, and sequential DDL migrations are strictly consolidated under a single authoritative subsystem (`src/server/db/`).
+   - Scattering schemas or migrations across disparate directories (such as legacy `src/lib/db/` or multiple migration folders) is permanently prohibited.
+   - Drizzle configuration (`drizzle.config.ts`, `drizzle.config.test.ts`) and all runtime callers must bind directly to `src/server/db/schema/index.ts` and `src/server/db/migrations/`.
 
 ---
 
@@ -62,13 +66,13 @@ graph TD
     end
 
     subgraph TrackContracts ["Track 2: Contracts, Discriminated Types & Safety Net"]
-        P5["Phase 5: Contracts Dictionary & Discriminated Storage Payloads"]:::planned
-        P6["Phase 6: Pure State Reducers as Contractual Safety Nets"]:::planned
+        P5["Phase 5: Contracts Dictionary & Discriminated Storage Payloads"]:::done
+        P6["Phase 6: Pure State Reducers as Contractual Safety Nets"]:::done
         P5 --> P6
     end
 
     subgraph TrackDatabase ["Track 3: Database Schema, Ownership & Atomic Transactions"]
-        P7["Phase 7: PostgreSQL Schema, Migrations & Atomic Transactions"]:::critical
+        P7["Phase 7: PostgreSQL Schema, Migrations & Atomic Transactions"]:::done
         P8["Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection"]:::critical
         P7 --> P8
     end
@@ -200,32 +204,42 @@ Contractual regression prevention for: `LUGX-001, LUGX-003, LUGX-010, LUGX-025, 
 
 ---
 
-### [Phase 7: PostgreSQL Schema, Migrations & Atomic Transactions] — Status: ⏳ PLANNED
+### [Phase 7: PostgreSQL Schema, Migrations & Atomic Transactions] — Status: ✅ COMPLETED
 > **Execution Origin:** Independent Remediation Plan - Group 2  
-> **Single Responsibility (SRP):** Harden PostgreSQL schemas and Drizzle definitions, enforce unique constraints, and mandate interactive transactions for multi-row mutations.
+> **Single Responsibility (SRP):** Unify database architecture strictly under `src/server/db/`, harden PostgreSQL modular schemas, enforce unique constraints, mandate interactive transactions for multi-row mutations, and completely purge the legacy `src/lib/db/` directory.
 
 #### Technical Objective
-Establish the database as the sole source of truth for financial transactions, quotas, and document metadata, executing related mutations within atomic `db.transaction()` blocks to eliminate split-brain states.
+Consolidate all database schemas, client factories, transactional drivers, and migrations into a single cohesive subsystem under `src/server/db/`, eliminating scattered database locations across `src/lib/db`. Establish the database as the sole source of truth for financial transactions, quotas, and document metadata, executing related mutations within atomic `db.transaction()` blocks to eliminate split-brain states.
 
 #### Audit Findings Remediated
 `LUGX-025, LUGX-026, LUGX-027, LUGX-030, LUGX-031, LUGX-068, LUGX-069, LUGX-072, LUGX-073, LUGX-074, LUGX-075, LUGX-076, LUGX-135, LUGX-141, LUGX-142, LUGX-143, LUGX-144, LUGX-146, LUGX-148, LUGX-149`
 
-#### Targeted Files
-- `src/server/db/schema/subscriptions.ts`
-- `src/server/db/schema/ai-reservations.ts`
-- `src/server/db/schema/files.ts`
+#### Targeted Files (`src/server/db/` Exclusively)
+- `src/server/db/schema/*` (`subscriptions.ts`, `ai-reservations.ts`, `files.ts`, `users.ts`, `usage.ts`, `subscription-events.ts`, `vault.ts`, `index.ts`)
+- `src/server/db/client.ts`
+- `src/server/db/transactional.ts`
 - `src/server/db/index.ts`
-- Drizzle migrations in `drizzle/*`
+- Drizzle migrations in `src/server/db/migrations/*` (11 DDL migrations)
 
 #### Direct Implementation Actions
-1. **Subscriptions Schema Hardening:** Shift uniqueness from `userId` to `stripe_subscription_id`, add foreign key cascade to `users(id)`, and index `tier`.
-2. **AI Reservations Schema Hardening:** Add composite unique constraint `UNIQUE (user_id, operation_id)` and add `request_hash varchar(64) NOT NULL`.
-3. **Interactive Atomic Transactions:** Wrap reservation creation, quota deduction, and balance updates within `await db.transaction(async (tx) => { ... })`.
-4. **Deterministic Migration Generation:** Run `drizzle-kit generate` and verify schema equality without using `--force`.
+1. **Architectural Unification, Schema/Migration Consolidation & Legacy Purge:**
+   - Consolidate all database components strictly under `src/server/db/` to permanently eliminate schema and migration scattering across the codebase:
+     - Modular schemas consolidated in `src/server/db/schema/` (8 modules: `users.ts`, `subscriptions.ts`, `files.ts`, `ai-reservations.ts`, `usage.ts`, `subscription-events.ts`, `vault.ts`, and barrel `index.ts`).
+     - All 11 sequential DDL migrations consolidated under `src/server/db/migrations/` (`0001_add_sync_fields.sql` through `0011_schema_hardening_and_indexes.sql`).
+     - Database clients and drivers unified in `src/server/db/client.ts`, `src/server/db/transactional.ts`, and authoritative barrel `src/server/db/index.ts`.
+     - Drizzle configurations (`drizzle.config.ts`, `drizzle.config.test.ts`) bound directly to `src/server/db/schema/index.ts` and `src/server/db/migrations/`.
+   - Completely purge legacy `src/lib/db/` from disk and git tracking, redirecting all 48 caller modules to `@/server/db` and `@/server/db/schema`. Extract shared storage types (`FileEncryptionMetadata`) to `src/types/storage-payload.ts` ensuring clean server/client boundary separation.
+2. **Subscriptions Schema Hardening:** Shift uniqueness from `userId` to `stripe_subscription_id`, add foreign key cascade to `users(id)`, and index `tier`, `status`, and `user_id`.
+3. **AI Reservations Schema Hardening:** Add composite unique constraint `UNIQUE (user_id, operation_id)` and add `request_hash varchar(64) NOT NULL`.
+4. **Interactive Atomic Transactions:** Wrap reservation creation, quota deduction, and balance updates within `await targetDb.transaction(async (tx) => { ... })`.
+5. **Deterministic Migration Application:** Execute sequential raw SQL migrations (0001 through 0011) and verify schema equality across both main and test Neon databases via `node scripts/verify-migrations.mjs [--main]`.
 
 #### Acceptance Criteria
+- Complete absence of `src/lib/db/` on disk and zero remaining imports of `@/lib/db`.
+- All schema definitions reside strictly under `src/server/db/schema/` and all migrations strictly under `src/server/db/migrations/` with zero dispersion.
 - Inserting duplicate reservations with identical `(user_id, operation_id)` fails with unique constraint violation.
 - Simulated transaction exceptions trigger a complete rollback with zero partial writes.
+- 100% of migrations (0001 to 0011) applied and verified on both test and main database branches.
 
 ---
 
@@ -303,7 +317,7 @@ Block data leakage of encrypted documents by making `fileId` mandatory on AI str
 - `src/app/api/ai/stream/route.ts`
 - `src/components/export/export-warning-modal.tsx` (new)
 - `src/lib/export/export-service.ts`
-- `src/server/db/schema/vault-profiles.ts`
+- `src/server/db/schema/vault.ts`
 
 #### Direct Implementation Actions
 1. **Mandatory `fileId` on AI Streaming:** Require `fileId` in request body; reject missing fields with `400 Bad Request` and code `MISSING_FILE_ID`.

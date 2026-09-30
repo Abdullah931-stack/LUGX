@@ -76,10 +76,10 @@ branch live twins were added and registered in `vitest.constants.mts`:
 ### Smart Hybrid Database Client (`db` & `txDb`)
 
 Database operations across the application and testing harness utilize an intelligent dual-driver architecture:
-- **Standard Client (`db` in `src/lib/db/index.ts`):** Dynamically detects environment hosts:
+- **Standard Client (`db` in `src/server/db/client.ts` & `src/server/db/index.ts`):** Dynamically detects environment hosts:
   - **Neon Cloud (`neon.tech`):** Uses `@neondatabase/serverless` (`neon-http`) with `drizzle-orm/neon-http` for low-latency serverless HTTP execution.
   - **Local & CI PostgreSQL Containers (`localhost` / `127.0.0.1` on port 5432):** Automatically connects via `pg.Pool` (`node-postgres`) with `drizzle-orm/node-postgres`, eliminating `ECONNREFUSED ::1:443` port conflicts in Docker and CI runners.
-- **Interactive Transactional Client (`txDb` in `src/lib/db/transactional.ts`):**
+- **Interactive Transactional Client (`txDb` in `src/server/db/transactional.ts`):**
   - **Local & CI PostgreSQL (TCP):** Executes interactive ACID transactions (`BEGIN`, `COMMIT`, `ROLLBACK`) with zero WebSocket overhead.
   - **Neon Cloud (WebSocket):** Uses `@neondatabase/serverless` WebSocket Pool and `drizzle-orm/neon-serverless`.
   - **Dynamic Lazy Resolution:** `txDb` evaluates the active `DATABASE_URL` via a lazy proxy singleton, ensuring dynamic binding to `TEST_DATABASE_URL` during test execution without stale module-load bindings.
@@ -117,7 +117,7 @@ neonctl connection-string <BRANCH_ID> --project-id <PROJECT_ID> --pooled
 #   TEST_DATABASE_URL=postgresql://...neon.tech/neondb?sslmode=require
 ```
 
-Schema application — re-run after EVERY change under `src/lib/db`:
+Schema application — re-run after EVERY change under `src/server/db`:
 
 ```bash
 npx drizzle-kit push --config drizzle.config.test.ts --force
@@ -129,7 +129,7 @@ to a live URL; push failures surface immediately).
 ## 5. Evidence of isolation
 
 - **Active Unit & Contract Suite (`npm run test`):** **70 files / 869 tests — all passed (100% pass rate)**, zero LIVE files included.
-- **Active Live Multi-System Suite (`npm run test:live`):** **19 registered suites / 89 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
+- **Active Live Multi-System Suite (`npm run test:live`):** **20 registered suites / 94 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
 - Mandatory identity line printed at the start of every live run:

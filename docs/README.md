@@ -40,7 +40,7 @@ docs/
 │   └── ui-streaming-requirements.md
 │
 ├── Plans/                             ← active official technical execution roadmaps (English)
-│   └── COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md ← unified technical remediation & hardening plan (Active: Phases 1–6 closed, 7–23 planned)
+│   └── COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md ← unified technical remediation & hardening plan (Active: Phases 1–7 closed, 8–23 planned)
 │
 ├── records/                           ← engineering records, incidents, audits, closures & plans archive
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md)
@@ -51,7 +51,7 @@ docs/
 │   │   ├── phase-16-vault-encryption/
 │   │   ├── phase-17-to-20-production-readiness/
 │   │   ├── extensions/                ← pdf worker extraction & vault import closure
-│   │   └── core-hardening/            ← core hardening dossiers (Phase 1: metrics, Phase 2: link audit, Phase 3: skipped tests, Phase 4: Redis, Phase 5: contracts dictionary, Phase 6: pure state reducers)
+│   │   └── core-hardening/            ← core hardening dossiers (Phase 1: metrics, Phase 2: link audit, Phase 3: skipped tests, Phase 4: Redis, Phase 5: contracts dictionary, Phase 6: pure state reducers, Phase 7: PostgreSQL schema & atomic transactions)
 │   ├── plans/                         ← completed historical execution plans (technical-execution, hybrid-vault, markdown-editor, M6)
 │   └── archive/                       ← superseded, halted, or abandoned specs & plans (core-hardening-pre-stage-2, legacy snapshots)
 │
@@ -163,7 +163,7 @@ docs/
 
 | Document | Scope | Status |
 | :--- | :--- | :--- |
-| [COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md](./Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) | Unified technical remediation & hardening plan (23 isolated SRP phases, 100% audit findings closure) | 🟢 Active (Phases 1–6 Closed, 7–23 Planned) |
+| [COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md](./Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) | Unified technical remediation & hardening plan (23 isolated SRP phases, 100% audit findings closure) | 🟢 Active (Phases 1–7 Closed, 8–23 Planned) |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -193,7 +193,7 @@ docs/
 | [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
 | [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
 | [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report |
-| [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), and Phase 6 (pure state reducers & contractual safety nets) |
+| [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), Phase 6 (pure state reducers & contractual safety nets), and Phase 7 (PostgreSQL schema hardening, migrations & atomic interactive transactions) |
 
 #### Completed Plans (`records/plans/`)
 
@@ -256,7 +256,7 @@ npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertio
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
 npm run test            # pure unit, contract, and vault cryptographic test suites (70 files, 869 tests via vitest.config.mts)
-npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (19 files, 89 tests via vitest.live.config.mts)
+npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (20 files, 94 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation

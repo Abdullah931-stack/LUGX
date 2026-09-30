@@ -14,7 +14,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 
 | Gate | Specification | Implementation File(s) | Status |
 | :--- | :--- | :--- | :--- |
-| **G1** | Idempotent reservation record (`ai_reservations`) with unique `operationId` constraint and conditional state transitions. | `src/lib/db/schema.ts`<br>`src/lib/db/migrations/0005_ai_reservations.sql`<br>`src/server/actions/ai-ops.ts` | **Implemented** |
+| **G1** | Idempotent reservation record (`ai_reservations`) with unique `operationId` constraint and conditional state transitions. | `src/server/db/schema/ai-reservations.ts`<br>`src/server/db/migrations/0005_ai_reservations.sql`<br>`src/server/actions/ai-ops.ts` | **Implemented** |
 | **G2** | Server atomic commit endpoint/action combining file update and reservation settlement with version lock. | `src/server/actions/ai-commit.ts` | **Implemented** |
 | **G3** | Dual-Side Inversion Stop Protocol (TD-05): Instant client abort (< 50ms), reader cleanup, server-side pre-TTFT refund and post-TTFT autonomous commit. | `src/hooks/use-ai-stream.ts`<br>`src/lib/ai/stream-handler.ts`<br>`src/app/api/ai/stream/route.ts`<br>`src/test/ai/ai-stream-abort-latency.test.ts` | **Implemented & Hardened (v1.29.2)** |
 | **G4** | Deterministic UTC-based `periodKey` (`UTC_YYYY-MM-DD`) assigned at reservation time and preserved across transitions. | `src/server/actions/ai-ops.ts` | **Implemented** |

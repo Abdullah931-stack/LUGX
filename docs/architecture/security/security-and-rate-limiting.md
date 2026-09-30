@@ -162,7 +162,7 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 - **Seamless Legacy Migration**: In-place fallback that transparently reads legacy unencrypted records and upgrades them to ciphertext on subsequent writes.
 - **Offline Profile & Device Trust Storage**: Manages cached cloud vault profiles (`saveCachedVaultProfile`) and PIN-wrapped envelopes (`saveDeviceTrustEnvelope`, `getDeviceTrustEnvelope`, `clearDeviceTrustEnvelope`) in `sync_metadata`.
 
-### 4.7 Cloud Vault Schema & Migrations (`src/lib/db/schema.ts`, `0008_hybrid_vault_schema.sql`, `0009_add_device_trust_epoch.sql`)
+### 4.7 Cloud Vault Schema & Migrations (`src/server/db/schema/vault.ts`, `src/server/db/migrations/0008_hybrid_vault_schema.sql`, `src/server/db/migrations/0009_add_device_trust_epoch.sql`)
 
 - **`user_vault_profiles` Table**: Persists dual-wrapped master keys (`encrypted_master_key` via password KEK, `recovery_encrypted_master_key` via BIP-39 seed KEK), independent salts (`key_salt`, `recovery_salt`), PBKDF2 iteration configurations (600,000), and `device_trust_epoch` (integer default 1).
 - **Migration 0009 (`0009_add_device_trust_epoch.sql`)**: Synchronizes the PostgreSQL cloud database with the `device_trust_epoch` counter, ensuring persistent state for remote device trust invalidation across all user devices.

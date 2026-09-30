@@ -83,8 +83,8 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
 
 ## TD-08 — Database Driver Protocol Mismatch in CI Containers — ✅ RESOLVED (2026-08-29)
 
-- **Debt:** `src/lib/db/index.ts` was hardcoded to `@neondatabase/serverless` (`neon-http`), which dispatches queries over HTTPS port 443. When running inside GitHub Actions CI service containers or local Docker (`postgres:16-alpine`), connections failed with `ECONNREFUSED ::1:443`.
-- **Resolution:** Replaced with a Smart Hybrid Database Client in `src/lib/db/index.ts` that dynamically detects the target host: uses `neon-http` for Neon Cloud and standard `pg.Pool` (`drizzle-orm/node-postgres`) over TCP on port 5432 for local Docker and CI containers. All 7 stages of the CI pipeline (including Stage 6 Playwright E2E browser testing) pass deterministically.
+- **Debt:** Legacy `src/lib/db/index.ts` was hardcoded to `@neondatabase/serverless` (`neon-http`), which dispatches queries over HTTPS port 443. When running inside GitHub Actions CI service containers or local Docker (`postgres:16-alpine`), connections failed with `ECONNREFUSED ::1:443`.
+- **Resolution:** Replaced with a Smart Hybrid Database Client in `src/server/db/client.ts` (re-exported via `src/server/db/index.ts`) that dynamically detects the target host: uses `neon-http` for Neon Cloud and standard `pg.Pool` (`drizzle-orm/node-postgres`) over TCP on port 5432 for local Docker and CI containers. All 7 stages of the CI pipeline (including Stage 6 Playwright E2E browser testing) pass deterministically.
 
 ## TD-09 — Rollup Mixed Exports and Vite ConfigLoader Native Deprecation Warnings — ✅ RESOLVED (2026-09-05)
 
@@ -94,7 +94,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
 - **Resolution:**
   - Extracted shared test suite arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated Single Source of Truth (`vitest.constants.mts`), restricting config files strictly to default exports (`export default defineConfig(...)`).
   - Migrated configuration files to Native ESM (`vitest.config.mts` and `vitest.live.config.mts`), replaced CommonJS `__dirname` with standard `import.meta.dirname`, and specified explicit `.mjs` import extensions for TypeScript module resolution.
-  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 70 test files and 869 tests via vitest.config.mts, plus 19 live files via vitest.live.config.mts).
+  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 70 test files and 869 tests via vitest.config.mts, plus 20 live files via vitest.live.config.mts).
 
 ## TD-10 — Offline Extraction of IndexedDB Device Trust Envelope (Accepted Risk for PIN / Mitigated via WebAuthn PRF)
 
@@ -114,7 +114,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Strongly typed all cryptographic worker RPC action payloads (`CryptoWorkerResponsePayloads`), indexedDB vault profiles (`UserVaultProfile`), and database encryption metadata (`FileEncryptionMetadata`).
   - Pruned all unused imports, variables, and dead mocks across server actions, sync engines, UI modals, and test suites.
   - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
-  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 70 unit test suites with 869 tests green, plus 19 live integration suites with 89 tests green).
+  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 70 unit test suites with 869 tests green, plus 20 live integration suites with 94 tests green).
 
 ## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session — ✅ RESOLVED (2026-09-19)
 

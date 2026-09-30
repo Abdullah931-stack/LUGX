@@ -26,7 +26,7 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
    - Conflict responses return minimal metadata (`version`, `etag`, `updatedAt`) without leaking full document payloads across the network.
 
 4. **Adaptive Multi-Driver Transaction Client & Connection Pool Bounds**:
-   - The transactional client (`src/lib/db/transactional.ts`) adaptively selects the appropriate driver based on the target `DATABASE_URL`:
+   - The transactional client (`src/server/db/transactional.ts`) adaptively selects the appropriate driver based on the target `DATABASE_URL`:
      - **Neon Cloud (`neon.tech`)**: Uses `@neondatabase/serverless` WebSocket Pool with bounded resource limits (`max: 5`, `connectionTimeoutMillis: 10_000`, `idleTimeoutMillis: 30_000`) to prevent orphaned transactions under cloud network latency.
      - **Local & CI PostgreSQL**: Uses `pg.Pool` (`node-postgres`) to execute native ACID transactions without WebSocket overhead or artificial mocks.
    - Evaluated dynamically via a lazy proxy singleton to support test-environment binding (`TEST_DATABASE_URL`).
@@ -102,7 +102,7 @@ The atomic commit guarantees are verified across the following automated test su
 ## 5. Technical Debt & Future Considerations
 
 1. **Transaction Pool Scaling**:
-   - The current `max: 5` Pool configuration in `src/lib/db/transactional.ts` is sized for serverless container instances. Under future horizontal serverless scaling with high concurrency per instance, connection pooling may need PgBouncer / Neon connection pooling proxy integration.
+   - The current `max: 5` Pool configuration in `src/server/db/transactional.ts` is sized for serverless container instances. Under future horizontal serverless scaling with high concurrency per instance, connection pooling may need PgBouncer / Neon connection pooling proxy integration.
 2. **Conflict UI Differentiation**:
    - The conflict response intentionally omits `content` to optimize network bandwidth and prevent data leaks. If a three-way merge dialog is designed specifically for AI conflicts in the future (similar to `useSync` conflict modal), a dedicated comparison endpoint should be created rather than transmitting document payloads in all conflict error states.
 3. **Driver-Level Unit Test Mocking**:

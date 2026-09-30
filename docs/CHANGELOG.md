@@ -1,6 +1,35 @@
 # Changelog - LUGX Project
 
 All notable changes to the LUGX project will be documented in this file.
+## [1.35.0] - 2026-09-30 (Phase 7: PostgreSQL Schema, Migrations & Atomic Transactions)
+
+### Added & Hardened - Modular Database Schemas, Foreign Key Cascades & Atomic Interactive Transactions
+
+- **Unified Server Database Architecture (`src/server/db/*`) & Legacy Purge:**
+  - Remediates audit findings `LUGX-025, LUGX-026, LUGX-027, LUGX-030, LUGX-031, LUGX-068, LUGX-069, LUGX-072, LUGX-073, LUGX-074, LUGX-075, LUGX-076, LUGX-135, LUGX-141, LUGX-142, LUGX-143, LUGX-144, LUGX-146, LUGX-148, LUGX-149`.
+  - Unified all database schemas, client factories, transactional drivers, and migrations under `src/server/db/` using `git mv` (`src/server/db/client.ts`, `src/server/db/transactional.ts`, `src/server/db/migrations/`, `src/server/db/schema/*`, and barrel export `src/server/db/index.ts`).
+  - Completely purged the legacy `src/lib/db/` directory, refactoring all 48 production and test caller files to `@/server/db` and `@/server/db/schema`.
+  - Extracted shared client types (`FileEncryptionMetadata`) to `src/types/storage-payload.ts` ensuring clean server/client boundary separation with zero client hook leakage.
+
+- **Subscriptions Schema Hardening (LUGX-027, LUGX-068, LUGX-135, LUGX-141):**
+  - Shifted uniqueness constraint from `userId` to `stripe_subscription_id` (`idx_subscriptions_stripe_id_unique`), enabling 1:N multi-subscription lifecycle per user.
+  - Added indexed `tier` column (`idx_subscriptions_tier`), explicit `user_id` index (`idx_subscriptions_user_id`), and `status` index (`idx_subscriptions_status`).
+  - Added explicit foreign key cascade: `FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`.
+  - Added B-tree index on `users.stripe_customer_id` (`idx_users_stripe_customer_id`) for $O(\log n)$ webhook subscriber lookups.
+
+- **AI Reservations Hardening & Replay Guard (LUGX-030, LUGX-031):**
+  - Enforced composite unique constraint `UNIQUE (user_id, operation_id)` (`idx_ai_reservations_user_op`), preventing duplicate reservation insertion races at database engine level.
+  - Added `request_hash varchar(64) NOT NULL DEFAULT ''` to `ai_reservations` to prevent replay attacks and text tampering.
+  - Added index on `parent_folder_id` in `files` table (`idx_files_parent_folder`) optimizing hierarchical folder queries.
+
+- **Interactive ACID Transactions & Engine-Level Rollback (`src/server/actions/ai-ops.ts`):**
+  - Wrapped `reserveAndUpdateUsage`, `refundAIReservation`, and `expireStaleReservations` within interactive `targetDb.transaction(async (tx) => { ... })` blocks.
+  - Guaranteed zero partial writes: any concurrent duplicate reservation attempt fails closed with a PostgreSQL unique constraint violation (`23505`), triggering complete engine rollback with zero balance corruption.
+
+- **Migration & Live Verification Matrix (`src/test/server/schema-atomic-transactions.live.test.ts`):**
+  - Generated deterministic migration `0011_schema_hardening_and_indexes.sql` and verified 100% equality via `scripts/verify-migrations.mjs`.
+  - Authored 5 automated live database tests validating composite unique constraints, 1:N multi-subscriptions, transaction error rollback, `request_hash` integrity, and atomic refund balance preservation against live Neon PostgreSQL.
+  - Expanded live integration test suite to 20 suites and 94 passing tests.
 
 ## [1.34.0] - 2026-09-29 (Phase 6: Pure State Reducers as Contractual Safety Nets)
 

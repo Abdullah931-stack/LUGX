@@ -132,7 +132,7 @@ When recursively collecting descendant file/folder IDs for cascading deletion or
 ### Decision TR-11: PostgreSQL Direct BYTEA/TEXT Storage vs. External Object Storage (S3 / Cloudflare R2)
 
 - **Context:** Storing user Markdown notes and encrypted zero-knowledge ciphertexts in the cloud backend.
-- **Chosen Architecture:** Direct persistence in the primary PostgreSQL `files` table (`src/lib/db/schema.ts`) using the `content` column (`text` / binary-safe string), co-located with version metadata, ETag, and encryption parameters.
+- **Chosen Architecture:** Direct persistence in the primary PostgreSQL `files` table (`src/server/db/schema/files.ts`) using the `content` column (`text` / binary-safe string), co-located with version metadata, ETag, and encryption parameters.
 - **Rejected Alternatives:**
   1. **External S3 / Cloudflare R2 Object Storage:** Storing content blobs in S3 buckets and referencing URLs in Postgres.
   2. **Supabase Storage:** Third-party storage abstraction (formally evaluated and dropped; see [`docs/foundation/DESIGN_VS_REALITY.md`](../../foundation/DESIGN_VS_REALITY.md)).
