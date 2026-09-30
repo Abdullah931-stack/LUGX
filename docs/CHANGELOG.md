@@ -1,5 +1,40 @@
 # Changelog - LUGX Project
 
+## [1.32.4] - 2026-09-30 (Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection)
+
+### Added & Hardened - Identity Barriers, Folder Tree Cycle Detection & Concurrency Locking
+
+- **Server-Authoritative Guard Primitives (`src/server/auth/session.ts`):**
+  - Remediates audit findings `LUGX-006, LUGX-031, LUGX-063, LUGX-067, LUGX-068, LUGX-070, LUGX-071, LUGX-072, LUGX-073, LUGX-074, LUGX-077, LUGX-085, LUGX-115, LUGX-134, LUGX-136, LUGX-137, LUGX-138, LUGX-139, LUGX-140`.
+  - Implemented `requireAuthenticatedUser()` strictly resolving user identity from server sessions, throwing `AuthenticationRequiredError` (401) on missing sessions.
+  - Implemented `requireOwnedFile(fileId, userId)` with UUID validation, enforcing uniform `ResourceNotFoundError` (404) for foreign or deleted records to eliminate resource enumeration vectors.
+
+- **Modular File & Folder Action Architecture (`src/server/actions/*`):**
+  - Modularized `src/server/actions/files.ts` (file lifecycle, mutations, zero-knowledge encryption toggling) and `src/server/actions/folders.ts` (hierarchical traversal, cycle prevention).
+  - Maintained `src/server/actions/file-ops.ts` as a unified facade re-exporting all symbols for 100% backward compatibility across all existing callers.
+
+- **Infinite Cycle Detection & Recursion Hardening (`moveFile`, `copyFile`):**
+  - Replaced the legacy 50-hop cap in `moveFile` (LUGX-073) with unbounded cycle traversal, rejecting self-moves and descendant moves with 409 Conflict.
+  - Clamped `depth` in `copyFile` (LUGX-072) to non-negative bounds and prohibited copying a folder into itself or any of its descendants.
+
+- **Optimistic Concurrency Control on Deletions (`files.ts` & `src/app/api/files/[id]/route.ts`):**
+  - Added support for `expectedVersion` in `deleteFile` server action, rejecting stale mutations with 412 Conflict.
+  - Implemented `DELETE /api/files/[id]` requiring `If-Match` or `expectedVersion` (428 Precondition Required), verifying version matches before cascading tombstones.
+
+- **Test Route Production Isolation (`src/app/api/test/e2e-auth/route.ts` - LUGX-077):**
+  - Hardened test authentication endpoints to unconditionally return 404 in `production` environments even if `PLAYWRIGHT=1` is provided.
+
+- **Ancillary Cluster Remediation:**
+  - **LUGX-067 / LUGX-139:** Hardened `updateUserProfile` with strict allowlists preventing mass assignment of sensitive columns, and preserved existing `displayName` during OAuth upsert in `syncUserToDatabase`.
+  - **LUGX-136:** Replaced non-constant-time bearer secret equality checks with `crypto.timingSafeEqual` in `expire-reservations` and `purge-deleted` cron routes.
+  - **LUGX-137:** Implemented safe JSON parsing in `create-checkout` route returning 400 on malformed payloads with error detail redaction.
+  - **LUGX-138:** Truncated generated copy and restored titles to `<= 500` characters in `src/lib/utils/file-naming.ts` to prevent PostgreSQL `varchar(500)` overflows.
+  - **LUGX-140:** Restricted OAuth `?code=` query parameter interception in `src/proxy.ts` strictly to root and login paths.
+
+- **Live & Unit Test Verification:**
+  - Authored comprehensive test suite `src/test/server/phase-08-ownership-and-cycles.test.ts` (18/18 passing).
+  - 100% test pass rate across repository: 70 unit suites (881 tests passed) and 21 live suites (100 tests passed).
+
 ## [1.35.1] - 2026-09-30 (CI Test Partitioning Hardening & Living Documentation Sync)
 
 ### Fixed & Hardened - Test Partitioning & Living Documentation Sync

@@ -1,6 +1,6 @@
 # Comprehensive Technical Remediation and Hardening Plan (Unified Strategic Single-Responsibility Path)
 
-> **Status:** 🟢 Active (Phases 1–7 Closed, Phases 8–23 Planned)  
+> **Status:** 🟢 Active (Phases 1–8 Closed, Phases 9–23 Planned)  
 > **Supersedes:** [`docs/records/archive/core-hardening-pre-stage-2-plan.md`](../records/archive/core-hardening-pre-stage-2-plan.md)  
 > **Target Scope:** 100% Remediation of all 183 Audit Findings ([`docs/records/audits/unified-security-and-engineering-audit.md`](../records/audits/unified-security-and-engineering-audit.md))  
 > **Baseline Suite Integrity:** 869 unit/contract/vault tests passing, 94 live integration tests passing, zero regression tolerance.
@@ -73,7 +73,7 @@ graph TD
 
     subgraph TrackDatabase ["Track 3: Database Schema, Ownership & Atomic Transactions"]
         P7["Phase 7: PostgreSQL Schema, Migrations & Atomic Transactions"]:::done
-        P8["Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection"]:::critical
+        P8["Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection"]:::done
         P7 --> P8
     end
 
@@ -125,9 +125,9 @@ graph TD
 
 ---
 
-## 4. Officially Completed and Closed Phases Register (Phases 1–4: COMPLETED ✅)
+## 4. Officially Completed and Closed Phases Register (Phases 1–8: COMPLETED ✅)
 
-The first four foundational phases of the core hardening initiative have been executed, verified, and officially closed with permanent dossiers:
+The foundational and core hardening phases of the initiative have been executed, verified, and officially closed with permanent dossiers:
 
 | Phase | Core Responsibility & Architectural Deliverables | Authoritative Dossier / Verification Anchors | Status |
 | :--- | :--- | :--- | :---: |
@@ -135,6 +135,10 @@ The first four foundational phases of the core hardening initiative have been ex
 | **Phase 2: Internal Link Audit & CI Link Checker** | Audited all Markdown links, fixed 11 broken relative paths, replaced URL-encoded anchors with standard kebab-case, and integrated link validation in CI Stage 1. | [`scripts/check-markdown-links.mjs`](../../scripts/check-markdown-links.mjs)<br>CI Stage 1 Quality Gate | ✅ COMPLETED |
 | **Phase 3: CI Skipped Tests Transparency & Fail-Closed** | Implemented transparent reporting of skipped tests via `$GITHUB_STEP_SUMMARY` and enforced strict `Fail-Closed: exit 1` release gates when secrets are missing. | [`docs/records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md`](../records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md) | ✅ COMPLETED |
 | **Phase 4: Upstash REST Emulator & Lock Contention** | Built an in-memory `node:http` Upstash REST emulator for tests, validated concurrent lock contention, simulated high latency (>1500ms), and verified PostgreSQL ledger fail-open fallback. | [`docs/records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md`](../records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md) | ✅ COMPLETED |
+| **Phase 5: Contracts Dictionary & Discriminated Storage** | Standardized runtime contracts, RFC 7807 problem details, and discriminated storage union `DocumentStoragePayload` preventing unencrypted content leaks. | [`docs/records/closures/core-hardening/phase-05-contracts-dictionary-and-discriminated-storage-closure.md`](../records/closures/core-hardening/phase-05-contracts-dictionary-and-discriminated-storage-closure.md) | ✅ COMPLETED |
+| **Phase 6: Pure State Reducers as Contractual Safety Nets** | Isolated state transition logic across sync, webhooks, and AI quotas into side-effect-free pure reducers with deterministic transition matrices. | [`docs/records/closures/core-hardening/phase-06-pure-state-reducers-closure.md`](../records/closures/core-hardening/phase-06-pure-state-reducers-closure.md) | ✅ COMPLETED |
+| **Phase 7: PostgreSQL Schema, Migrations & Transactions** | Unified database architecture strictly under `src/server/db/`, eliminated legacy `src/lib/db/`, applied migrations 0001–0011, and enforced interactive transactions. | [`docs/records/closures/core-hardening/phase-07-schema-migrations-and-atomic-transactions-closure.md`](../records/closures/core-hardening/phase-07-schema-migrations-and-atomic-transactions-closure.md) | ✅ COMPLETED |
+| **Phase 8: Identity Boundaries, Ownership & Cycle Detection** | Server-authoritative session guards (`requireAuthenticatedUser`, `requireOwnedFile`), unbounded cycle detection in `moveFile`, copy depth limits, optimistic locking on deletions, and test route shield. | [`docs/records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md`](../records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md) | ✅ COMPLETED |
 
 ---
 
@@ -243,7 +247,7 @@ Consolidate all database schemas, client factories, transactional drivers, and m
 
 ---
 
-### [Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection] — Status: ⏳ PLANNED
+### [Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection] — Status: ✅ COMPLETED
 > **Execution Origin:** Independent Remediation Plan - Group 3  
 > **Single Responsibility (SRP):** Enforce server-authoritative authentication and resource ownership, secure folder hierarchies against cycles, and isolate test endpoints.
 

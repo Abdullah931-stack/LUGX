@@ -20,7 +20,7 @@ The Next.js 16 Edge proxy runs on every route except static assets (see its
 | Cookie Preservation (TD-12) | Redirect responses (307) and API 401 JSON responses preserve all `Set-Cookie` headers via `copyCookiesAndRedirect`, ensuring cookie deletion and session rotation directives reach the browser |
 | Server Actions & API routes | Under protected paths, an unauthenticated request receives a **JSON `401 Unauthorized`** instead of an HTML redirect (an HTML redirect breaks the Server Action client runtime) |
 | Logged-in access control | Authenticated users hitting `/login` are redirected to `/dashboard` |
-| OAuth code interception | Any request carrying an OAuth `code` query param is redirected to `/auth/callback`, unless it already targets that path |
+| OAuth code interception (LUGX-140) | Any request carrying an OAuth `code` query param strictly targeting root (`/`) or login (`/login`) is redirected to `/auth/callback`, preventing parameter interception on arbitrary application sub-paths |
 | Session refresh & Sign-Out | The proxy refreshes the Supabase session cookie on matched requests. When signing out (`signOut()` in `src/server/actions/auth-actions.ts`), `revalidatePath("/", "layout")` purges client router cache and all `sb-*` auth cookies are proactively cleared |
 
 ### 1.1. Open Redirect & Host Header Injection Hardening (`src/lib/auth/safe-redirect.ts`)
@@ -36,7 +36,7 @@ All redirect parameters entering the authentication pipeline are strictly valida
 
 ### 1.2. Cross-User Resource Isolation & Anti-Enumeration (404 vs 403)
 
-To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `file-ops.ts`, `import-file.ts`, and `stream/route.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed.
+To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `file-ops.ts`, `import-file.ts`, and `stream/route.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
 
 Defense-in-depth note: proxy gating complements — never replaces — the
 per-route `getUser()` checks performed inside every API route and server action
@@ -51,7 +51,7 @@ A per-user **sliding-window counter** backed by Upstash Redis. Configuration:
 ```ts
 export const RATE_LIMITS = {
     SYNC_API:  { limit: 100, windowSeconds: 15 * 60 }, // sync endpoint
-    FILE_API:  { limit: 200, windowSeconds: 15 * 60 }, // single-file GET/PUT
+    FILE_API:  { limit: 200, windowSeconds: 15 * 60 }, // single-file GET/PUT/DELETE
     GENERAL:   { limit: 300, windowSeconds: 15 * 60 },
     AUTH:      { limit: 20,  windowSeconds: 15 * 60 }, // sign-in/sign-up brute-force guard
     AI_STREAM: { limit: 30,  windowSeconds: 60 },      // AI streaming burst protection
@@ -63,7 +63,7 @@ Exported limiter instances and their consumers:
 | Instance | Key prefix | Used by |
 | :--- | :--- | :--- |
 | `syncApiRateLimiter` | `sync` | `GET /api/files/sync` |
-| `fileApiRateLimiter` | `file` | `GET` / `PUT /api/files/[id]` |
+| `fileApiRateLimiter` | `file` | `GET` / `PUT` / `DELETE /api/files/[id]` |
 | `authRateLimiter` | `auth` | authentication endpoints |
 | `aiStreamRateLimiter` | `ai-stream` | `POST /api/ai/stream` |
 
@@ -205,7 +205,7 @@ Permanent purge of soft-delete tombstones past retention:
 | Property | Value |
 | :--- | :--- |
 | Retention window | 30 days (`RETENTION_DAYS`) after `deleted_at` |
-| Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; fails closed with 401 when `CRON_SECRET` is unset or mismatched |
+| Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; verified via constant-time `crypto.timingSafeEqual` comparison (LUGX-136), failing closed with 401 when unset, mismatched, or malformed |
 | Bounded batches | Deletes at most **500 rows per run** via a `WITH doomed AS (… LIMIT 500) DELETE … USING` CTE (Drizzle's builder has no `.limit()`) |
 | Idempotency | Re-running only deletes rows already past the cutoff |
 | Scheduling | Invoked externally (GitHub Actions daily workflow `.github/workflows/cron.yml`); failures never break the CI pipeline |
@@ -223,7 +223,7 @@ Automated expiration of leaked or orphaned in-flight AI quota reservations:
 | Stale threshold | 5 minutes (`STALE_THRESHOLD_MS = 5 * 60 * 1000`) past reservation timestamp |
 | Target status | Records with status `'reserved'` in `ai_usage_history` |
 | Transition | Updated atomically to status `'expired'` via `expireStaleReservations` |
-| Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; fails closed with 401 when `CRON_SECRET` is unset or mismatched |
+| Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; verified via constant-time `crypto.timingSafeEqual` comparison (LUGX-136), failing closed with 401 when unset, mismatched, or malformed |
 | Idempotency | Strictly idempotent; only transitions matching unfinalized reservations |
 | Scheduling | Invoked externally via GitHub Actions scheduled workflow `.github/workflows/cron.yml` |
 | Response format | JSON `{ success: true, count: number, message: string }` with HTTP 200 |

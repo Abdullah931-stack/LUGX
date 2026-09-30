@@ -188,6 +188,41 @@ ETag: "server-etag"
 
 ---
 
+### 4. DELETE /api/files/:id
+
+Soft-delete a file or folder with optimistic concurrency control and recursive descendant cascading.
+
+#### Request
+```http
+DELETE /api/files/abc123?expectedVersion=5
+Authorization: Bearer <token>
+If-Match: "current-etag"
+```
+
+#### Precondition Requirements (LUGX-074)
+- **Mandatory Precondition:** Requires either the `If-Match` header containing the current file ETag or the `expectedVersion` query parameter.
+- **Missing Precondition (428):** Returns `428 Precondition Required` if neither is provided.
+- **Mismatch (412):** Returns `412 Precondition Failed` with current `serverVersion` if the database ETag or version has diverged.
+
+#### Response (200 OK)
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: private, must-revalidate, max-age=0
+
+{
+  "success": true,
+  "id": "abc123",
+  "version": 6,
+  "deletedAt": "2026-09-30T16:00:00.000Z"
+}
+```
+
+#### Cascade Invariant
+If the deleted resource is a folder (`isFolder === true`), `getDescendantIds` traverses all child documents and subfolders, marking them with `deletedAt: now` in a single operation.
+
+---
+
 ## Error Responses
 
 Error bodies are structured JSON produced by the handlers; all error responses include a standardized `correlationId` property for distributed tracing. Shapes below are taken directly from the route sources (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`, `src/lib/rate-limit.ts`):
@@ -198,10 +233,10 @@ Error bodies are structured JSON produced by the handlers; all error responses i
 | 400 | `{ "error": "<validation message>", "correlationId": "<uuid>" }` | Invalid request parameters or updating a folder's content |
 | 401 | `{ "error": "Authentication required", "correlationId": "<uuid>" }` | Missing/expired server session |
 | 403 | `{ "error": "<forbidden message>", "correlationId": "<uuid>" }` | Not authorized |
-| 404 | `{ "error": "File not found", "correlationId": "<uuid>" }` | File missing or soft-deleted |
-| 409 | `{ "error": "<conflict message>", "correlationId": "<uuid>" }` | Semantic conflict |
-| 412 | `{ "error": "Precondition Failed: version mismatch", "correlationId": "<uuid>", "serverVersion": { etag, version, content, isEncrypted, encryptionMetadata, updatedAt } }` | Stale ETag/version on PUT |
-| 428 | `{ "error": "Precondition Required: If-Match header or expectedVersion is required for file updates", "correlationId": "<uuid>" }` | Missing precondition on PUT |
+| 404 | `{ "error": "File not found", "correlationId": "<uuid>" }` | File missing, foreign tenant, or soft-deleted |
+| 409 | `{ "error": "<conflict message>", "correlationId": "<uuid>" }` | Semantic conflict or folder hierarchy cycle |
+| 412 | `{ "error": "Precondition Failed: version mismatch", "correlationId": "<uuid>", "serverVersion": { etag, version, content, isEncrypted, encryptionMetadata, updatedAt } }` | Stale ETag or version on PUT or DELETE |
+| 428 | `{ "error": "Precondition Required: If-Match header or expectedVersion is required for file updates/deletions", "correlationId": "<uuid>" }` | Missing precondition on PUT or DELETE |
 | 429 | `{ "error": "Too Many Requests", "message": "Rate limit exceeded. Please try again later.", "retryAfter": <epoch-seconds> }` | Rate limiter exhausted (`rateLimitExceededResponse`) |
 | 500 | `{ "error": "Internal server error", "correlationId": "<uuid>" }` | Unhandled server exception |
 
@@ -385,7 +420,7 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 
 ## Zero-Knowledge Vault Server Actions & Endpoints
 
-### 1. `toggleFileEncryption` (`src/server/actions/file-ops.ts`)
+### 1. `toggleFileEncryption` (`src/server/actions/files.ts`, re-exported via `file-ops.ts`)
 Converts a file between plaintext and encrypted states:
 - **Signature:**
   ```typescript
@@ -406,11 +441,17 @@ Converts a file between plaintext and encrypted states:
   ```
 - **Invariants:** Folders cannot be encrypted (`isFolder === false`). Preconditions `expectedVersion` and `expectedETag` are verified optimistically; returns 412 with `serverVersion` on conflict.
 
-### 2. `copyFile` with Encrypted Override (`src/server/actions/file-ops.ts` / AUD-02)
+### 2. `copyFile` with Encrypted Override (`src/server/actions/files.ts`, re-exported via `file-ops.ts` / AUD-02)
 Creates a copy of a document or folder:
 - **Encrypted File Invariant:** If `original.isEncrypted` is true, `copyFile` strictly requires an `encryptedOverride` containing `{ newFileId, content, encryptionMetadata }` re-encrypted on the client with unique AAD. Server-side blind copy is rejected.
+- **Copy Depth Clamping (LUGX-072):** Clamps `depth` via `Math.max(0, depth)` with a maximum depth limit of 20 and blocks copying into self/subfolder.
 
-### 3. Vault Profile Server Actions (`src/server/actions/vault-actions.ts`)
+### 3. Server-Authoritative Identity & Ownership Guards (`src/server/auth/session.ts`)
+Server-side guard primitives eliminating client-supplied `userId` parameters:
+- `requireAuthenticatedUser()`: Extracts user strictly from verified server session, throwing `AuthenticationRequiredError` (401) on missing sessions.
+- `requireOwnedFile(fileId, userId, options)`: Enforces UUID syntax check (preventing PostgreSQL `22P02` exceptions) and asserts ownership. Returns `ResourceNotFoundError` (404) on foreign or deleted records, eliminating resource enumeration.
+
+### 4. Vault Profile Server Actions (`src/server/actions/vault-actions.ts`)
 Atomic server actions managing zero-knowledge profiles:
 - `getUserVaultProfile()`: Retrieves user's profile (`userVaultProfiles`) or `null`.
 - `createUserVaultProfile(input)`: Atomically inserts dual-wrapped master keys (`encryptedMasterKey` and `recoveryEncryptedMasterKey`) with 409 conflict guard.
