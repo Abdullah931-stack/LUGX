@@ -4,8 +4,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { db, schema } from "@/server/db";
-import { createClient, getUser } from "@/lib/supabase/server";
-import { eq } from "drizzle-orm";
+import { createClient } from "@/lib/supabase/server";
+import { requireAuthenticatedUser } from "@/server/auth/session";
+import { eq, sql } from "drizzle-orm";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 
 /**
@@ -58,32 +59,36 @@ export async function signOut() {
 }
 
 /**
- * Sync user to database after OAuth login
- * Called from auth callback
+ * Sync user to database after OAuth login.
+ * Remediates LUGX-139: Preserves existing custom display name, synchronizes email changes,
+ * and maintains atomic upsert integrity.
  */
 export async function syncUserToDatabase(): Promise<{ success: boolean; error?: string }> {
     try {
-        const user = await getUser();
-        if (!user) {
+        let user;
+        try {
+            user = await requireAuthenticatedUser();
+        } catch {
             return { success: false, error: "No authenticated user" };
         }
 
         const userEmail = user.email || `${user.id}@auth.local`;
-        const displayName = user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
+        const defaultDisplayName = user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
         const avatarUrl = user.user_metadata?.avatar_url || null;
 
-        // Atomic UPSERT: insert new user or update profile metadata without read-modify-write race
+        // Atomic UPSERT: preserves custom displayName using COALESCE and updates email
         await db.insert(schema.users).values({
             id: user.id,
             email: userEmail,
-            displayName,
+            displayName: defaultDisplayName,
             avatarUrl,
             tier: "free",
         }).onConflictDoUpdate({
             target: schema.users.id,
             set: {
-                displayName,
-                avatarUrl,
+                email: userEmail,
+                displayName: sql`COALESCE(${schema.users.displayName}, ${defaultDisplayName})`,
+                avatarUrl: avatarUrl ? avatarUrl : schema.users.avatarUrl,
                 updatedAt: new Date(),
             },
         });
@@ -113,8 +118,10 @@ export async function getUserProfile(): Promise<{
     error?: string;
 }> {
     try {
-        const user = await getUser();
-        if (!user) {
+        let user;
+        try {
+            user = await requireAuthenticatedUser();
+        } catch {
             return { success: false, error: "Not authenticated" };
         }
 
@@ -136,21 +143,34 @@ export async function getUserProfile(): Promise<{
 
 /**
  * Update user profile
+ * Remediates LUGX-067: Strict allowlist construction preventing mass assignment
+ * of sensitive columns (tier, stripeCustomerId, email).
  */
 export async function updateUserProfile(
     data: { displayName?: string }
 ): Promise<{ success: boolean; error?: string }> {
     try {
-        const user = await getUser();
-        if (!user) {
+        let user;
+        try {
+            user = await requireAuthenticatedUser();
+        } catch {
             return { success: false, error: "Not authenticated" };
         }
 
+        const updatePayload: { displayName?: string; updatedAt: Date } = {
+            updatedAt: new Date(),
+        };
+
+        // Strict allowlist: only extract and sanitize displayName
+        if (data && typeof data.displayName === "string") {
+            const sanitized = data.displayName.trim().slice(0, 100);
+            if (sanitized.length > 0) {
+                updatePayload.displayName = sanitized;
+            }
+        }
+
         await db.update(schema.users)
-            .set({
-                ...data,
-                updatedAt: new Date(),
-            })
+            .set(updatePayload)
             .where(eq(schema.users.id, user.id));
 
         return { success: true };

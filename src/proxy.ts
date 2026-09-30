@@ -37,8 +37,9 @@ export async function proxy(request: NextRequest) {
         }
     );
 
-    // Intercept OAuth callback codes if they land on root or other pages
-    if (request.nextUrl.searchParams.has("code") && request.nextUrl.pathname !== "/auth/callback") {
+    // Intercept OAuth callback codes strictly if they land on root or login landing paths (LUGX-140)
+    const isOAuthLandingCandidate = request.nextUrl.pathname === "/" || request.nextUrl.pathname === "/login";
+    if (request.nextUrl.searchParams.has("code") && isOAuthLandingCandidate) {
         const url = request.nextUrl.clone();
         url.pathname = "/auth/callback";
         return copyCookiesAndRedirect(url, supabaseResponse);

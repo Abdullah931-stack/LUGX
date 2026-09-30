@@ -5,7 +5,10 @@ import { db, schema } from "@/server/db";
 
 export const dynamic = "force-dynamic";
 
-function isTestEnvironment(): boolean {
+function isAllowedEnvironment(): boolean {
+    if (process.env.NODE_ENV === "production") {
+        return false;
+    }
     return process.env.NODE_ENV === "test" || process.env.PLAYWRIGHT === "1";
 }
 
@@ -14,8 +17,8 @@ function isTestEnvironment(): boolean {
  * Establishes an authentic Supabase test session and syncs the user to the isolated Neon database.
  */
 export async function POST(request: NextRequest) {
-    if (!isTestEnvironment()) {
-        return NextResponse.json({ error: "Access denied. Test environment only." }, { status: 403 });
+    if (!isAllowedEnvironment()) {
+        return NextResponse.json({ error: "Not Found" }, { status: 404 });
     }
 
     try {
@@ -155,8 +158,8 @@ export async function POST(request: NextRequest) {
  * Signs out and clears all Supabase session cookies.
  */
 export async function DELETE(request: NextRequest) {
-    if (!isTestEnvironment()) {
-        return NextResponse.json({ error: "Access denied. Test environment only." }, { status: 403 });
+    if (!isAllowedEnvironment()) {
+        return NextResponse.json({ error: "Not Found" }, { status: 404 });
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
