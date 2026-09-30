@@ -5,10 +5,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, schema, type FileEncryptionMetadata } from '@/server/db';
 import { getUser } from '@/lib/supabase/server';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { generateETagSync, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from '@/lib/sync/etag-generator';
 import { fileApiRateLimiter, addRateLimitHeaders, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { getOrGenerateCorrelationId, addCorrelationHeader } from '@/lib/utils/correlation';
+import { getDescendantIds } from '@/server/actions/folders';
 
 export const dynamic = 'force-dynamic';
 
@@ -312,3 +313,150 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         return res;
     }
 }
+
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
+    const correlationId = getOrGenerateCorrelationId(request);
+    try {
+        const { id: fileId } = await params;
+        const user = await getUser();
+        if (!user) {
+            const res = NextResponse.json({ error: 'Authentication required', correlationId }, { status: 401 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
+
+        const rateLimitResult = await fileApiRateLimiter.limit(user.id);
+        if (!rateLimitResult.success) {
+            const res = rateLimitExceededResponse(rateLimitResult);
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
+
+        const ifMatch = parseETagHeader(request.headers.get('If-Match'));
+        const searchParams = request.nextUrl.searchParams;
+        const expectedVersionParam = searchParams.get('expectedVersion');
+        let expectedVersion: number | undefined;
+        if (expectedVersionParam !== null) {
+            const parsed = parseInt(expectedVersionParam, 10);
+            if (!Number.isNaN(parsed)) expectedVersion = parsed;
+        }
+
+        // PHASE 3 & PHASE 8: Mandatory If-Match or expectedVersion on file mutations
+        if (!ifMatch && expectedVersion === undefined) {
+            const headers = new Headers({ 'Content-Type': 'application/json' });
+            addRateLimitHeaders(headers, rateLimitResult);
+            addCorrelationHeader(headers, correlationId);
+            return new Response(JSON.stringify({
+                error: 'Precondition Required: If-Match header or expectedVersion is required for file deletion',
+                correlationId,
+            }), { status: 428, headers });
+        }
+
+        const currentFile = await db.query.files.findFirst({
+            where: and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id),
+                isNull(schema.files.deletedAt)
+            ),
+        });
+
+        if (!currentFile) {
+            const res = NextResponse.json({ error: 'File not found', correlationId }, { status: 404 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
+
+        // Check If-Match condition
+        if (ifMatch && currentFile.etag && ifMatch !== currentFile.etag) {
+            const headers = new Headers({ 'Content-Type': 'application/json' });
+            if (currentFile.etag) headers.set('ETag', formatETagHeader(currentFile.etag));
+            addRateLimitHeaders(headers, rateLimitResult);
+            addCorrelationHeader(headers, correlationId);
+            return new Response(JSON.stringify({
+                error: 'Precondition Failed: ETag mismatch',
+                correlationId,
+                serverVersion: {
+                    etag: currentFile.etag,
+                    version: currentFile.version,
+                    updatedAt: currentFile.updatedAt.toISOString(),
+                },
+            }), { status: 412, headers });
+        }
+
+        // Check expectedVersion condition
+        if (expectedVersion !== undefined && currentFile.version !== expectedVersion) {
+            const headers = new Headers({ 'Content-Type': 'application/json' });
+            if (currentFile.etag) headers.set('ETag', formatETagHeader(currentFile.etag));
+            addRateLimitHeaders(headers, rateLimitResult);
+            addCorrelationHeader(headers, correlationId);
+            return new Response(JSON.stringify({
+                error: 'Precondition Failed: version mismatch',
+                correlationId,
+                serverVersion: {
+                    etag: currentFile.etag,
+                    version: currentFile.version,
+                    updatedAt: currentFile.updatedAt.toISOString(),
+                },
+            }), { status: 412, headers });
+        }
+
+        const now = new Date();
+        const currentVersion = currentFile.version || 0;
+        const newVersion = currentVersion + 1;
+
+        const [deletedFile] = await db.update(schema.files)
+            .set({
+                deletedAt: now,
+                updatedAt: now,
+                version: newVersion,
+            })
+            .where(and(
+                eq(schema.files.id, fileId),
+                eq(schema.files.userId, user.id),
+                eq(schema.files.version, currentVersion),
+                isNull(schema.files.deletedAt)
+            ))
+            .returning();
+
+        if (!deletedFile) {
+            const res = NextResponse.json({ error: 'Conflict: file was modified concurrently', correlationId }, { status: 412 });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
+
+        if (currentFile.isFolder) {
+            const descendantIds = await getDescendantIds(fileId, user.id);
+            if (descendantIds.length > 0) {
+                await db.update(schema.files)
+                    .set({
+                        deletedAt: now,
+                        updatedAt: now,
+                    })
+                    .where(and(
+                        eq(schema.files.userId, user.id),
+                        inArray(schema.files.id, descendantIds)
+                    ));
+            }
+        }
+
+        const headers = new Headers({
+            'Content-Type': 'application/json',
+            'Cache-Control': 'private, must-revalidate, max-age=0',
+        });
+        addRateLimitHeaders(headers, rateLimitResult);
+        addCorrelationHeader(headers, correlationId);
+
+        return new Response(JSON.stringify({
+            success: true,
+            id: fileId,
+            version: newVersion,
+            deletedAt: now.toISOString(),
+        }), { status: 200, headers });
+    } catch (error) {
+        console.error('[File API DELETE] Error:', error);
+        const res = NextResponse.json({ error: 'Internal server error', correlationId }, { status: 500 });
+        addCorrelationHeader(res.headers, correlationId);
+        return res;
+    }
+}
+
