@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 import { fileEncryptionMetadataSchema } from './storage-payload';
-import type { FileEncryptionMetadata } from '@/lib/db/schema';
+import type { FileEncryptionMetadata } from '@/server/db';
 
 /**
  * Permissible operation types in the synchronization log

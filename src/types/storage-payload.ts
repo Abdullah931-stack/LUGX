@@ -8,7 +8,8 @@
  */
 
 import { z } from 'zod';
-import type { FileEncryptionMetadata } from '@/lib/db/schema';
+import type { FileEncryptionMetadata } from '@/server/db';
+export type { FileEncryptionMetadata };
 
 /**
  * Strict schema for FileEncryptionMetadata

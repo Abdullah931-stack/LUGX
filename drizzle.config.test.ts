@@ -12,8 +12,8 @@ dotenvConfig({
 dotenvConfig({ path: path.resolve(process.cwd(), ".env.test"), override: false });
 
 export default defineConfig({
-    schema: "./src/lib/db/schema.ts",
-    out: "./drizzle/migrations-test",
+    schema: "./src/server/db/schema/index.ts",
+    out: "./src/server/db/migrations",
     dialect: "postgresql",
     dbCredentials: {
         url: process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL!,
