@@ -17,11 +17,19 @@ import { expireStaleReservations } from "@/server/actions/ai-ops";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+import { timingSafeEqual } from "crypto";
+
 function authorized(request: NextRequest): boolean {
     const secret = process.env.CRON_SECRET;
     if (!secret) return false;
     const header = request.headers.get("Authorization") ?? "";
-    return header === `Bearer ${secret}`;
+    const expected = `Bearer ${secret}`;
+    const headerBuf = Buffer.from(header);
+    const expectedBuf = Buffer.from(expected);
+    if (headerBuf.length !== expectedBuf.length) {
+        return false;
+    }
+    return timingSafeEqual(headerBuf, expectedBuf);
 }
 
 export async function GET(request: NextRequest) {

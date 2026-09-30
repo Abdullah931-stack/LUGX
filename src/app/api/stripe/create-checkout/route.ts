@@ -25,9 +25,24 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // 2. Parse request body
-        const body = await request.json();
-        const { tier } = body;
+        // 2. Parse request body safely
+        let body: Record<string, unknown>;
+        try {
+            body = await request.json();
+            if (!body || typeof body !== "object") {
+                return NextResponse.json(
+                    { error: "Invalid JSON body. Expected object." },
+                    { status: 400 }
+                );
+            }
+        } catch {
+            return NextResponse.json(
+                { error: "Malformed JSON payload." },
+                { status: 400 }
+            );
+        }
+
+        const tier = body.tier as string | undefined;
 
         // 3. Validate tier
         if (!tier || !isValidStripeTier(tier)) {
@@ -97,17 +112,8 @@ export async function POST(request: NextRequest) {
 
     } catch (error) {
         console.error('Error in create-checkout API:', error);
-
-        // Return user-friendly error message
-        const errorMessage = error instanceof Error
-            ? error.message
-            : 'An unexpected error occurred';
-
         return NextResponse.json(
-            {
-                error: 'Failed to create checkout session',
-                details: errorMessage
-            },
+            { error: 'Failed to create checkout session' },
             { status: 500 }
         );
     }
