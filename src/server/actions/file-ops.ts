@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db, schema } from "@/lib/db";
-import type { FileEncryptionMetadata } from "@/lib/db/schema";
+import { db } from "@/server/db";
+import * as schema from "@/server/db/schema";
+import type { FileEncryptionMetadata } from "@/server/db/schema";
 import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull, isNotNull, inArray } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";

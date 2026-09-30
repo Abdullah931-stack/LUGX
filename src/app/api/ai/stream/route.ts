@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/supabase/server";
-import { db, schema } from "@/lib/db";
+import { db, schema } from "@/server/db";
 import { eq, and, isNull } from "drizzle-orm";
 import {
     getUserTier,

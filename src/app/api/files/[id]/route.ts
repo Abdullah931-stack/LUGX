@@ -3,8 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, schema } from '@/lib/db';
-import type { FileEncryptionMetadata } from '@/lib/db/schema';
+import { db, schema, type FileEncryptionMetadata } from '@/server/db';
 import { getUser } from '@/lib/supabase/server';
 import { eq, and, isNull } from 'drizzle-orm';
 import { generateETagSync, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from '@/lib/sync/etag-generator';

@@ -21,7 +21,7 @@ import {
     clearPendingAIOperation,
     listPendingAIOperations,
 } from '@/lib/ai/pending-operation-store';
-import type { FileEncryptionMetadata } from '@/lib/db/schema';
+import type { FileEncryptionMetadata } from '@/types/storage-payload';
 
 export interface UseAIStreamOptions {
     onStreamStart?: () => void;

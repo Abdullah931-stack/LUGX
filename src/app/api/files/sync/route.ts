@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, schema } from '@/lib/db';
+import { db, schema } from '@/server/db';
 import { getUser } from '@/lib/supabase/server';
 import { eq, and, gt, isNull, or } from 'drizzle-orm';
 import {

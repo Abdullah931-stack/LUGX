@@ -8,7 +8,8 @@
  * Zero plaintext or master keys ever touch this layer.
  */
 
-import { db, schema } from "@/lib/db";
+import { db } from "@/server/db";
+import * as schema from "@/server/db/schema";
 import { getUser } from "@/lib/supabase/server";
 import { eq } from "drizzle-orm";
 

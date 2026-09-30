@@ -4,9 +4,9 @@
  * Handles database operations for user subscriptions and durable webhook event idempotency.
  */
 
-import { db } from '@/lib/db';
-import { txDb } from '@/lib/db/transactional';
-import { users, subscriptions, subscriptionEvents } from '@/lib/db/schema';
+import { db } from '@/server/db';
+import { txDb } from '@/server/db/transactional';
+import { users, subscriptions, subscriptionEvents } from '@/server/db/schema';
 import { eq } from 'drizzle-orm';
 import type { TierName } from '@/config/tiers.config';
 
@@ -193,24 +193,30 @@ export async function upsertSubscription(
 ): Promise<{ success: boolean; error?: string }> {
     const targetDb = client || db;
     try {
-        // Check if subscription exists
-        const existing = await targetDb
-            .select()
-            .from(subscriptions)
-            .where(eq(subscriptions.userId, userId))
-            .limit(1);
+        // Check if subscription exists by stripeSubscriptionId first, fallback to userId
+        const existing = subscriptionData.stripeSubscriptionId
+            ? await targetDb
+                .select()
+                .from(subscriptions)
+                .where(eq(subscriptions.stripeSubscriptionId, subscriptionData.stripeSubscriptionId))
+                .limit(1)
+            : await targetDb
+                .select()
+                .from(subscriptions)
+                .where(eq(subscriptions.userId, userId))
+                .limit(1);
 
         if (existing.length > 0) {
-            // Update existing subscription
+            // Update existing subscription by unique primary key
             await targetDb
                 .update(subscriptions)
                 .set({
                     ...subscriptionData,
                     updatedAt: new Date(),
                 })
-                .where(eq(subscriptions.userId, userId));
+                .where(eq(subscriptions.id, existing[0].id));
         } else {
-            // Create new subscription
+            // Create new subscription record
             await targetDb.insert(subscriptions).values({
                 userId,
                 ...subscriptionData,

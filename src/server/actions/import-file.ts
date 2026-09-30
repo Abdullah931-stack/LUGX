@@ -7,8 +7,8 @@
  */
 
 import { getUser } from "@/lib/supabase/server";
-import { db } from "@/lib/db";
-import { files, type FileEncryptionMetadata } from "@/lib/db/schema";
+import { db } from "@/server/db";
+import { files, type FileEncryptionMetadata } from "@/server/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { randomUUID } from "crypto";

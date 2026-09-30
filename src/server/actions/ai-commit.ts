@@ -1,7 +1,8 @@
 "use server";
 
-import { db, schema } from "@/lib/db";
-import { txDb } from "@/lib/db/transactional";
+import { db } from "@/server/db";
+import { txDb } from "@/server/db/transactional";
+import * as schema from "@/server/db/schema";
 import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";

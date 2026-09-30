@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
-import { db, schema } from "@/lib/db";
+import { db, schema } from "@/server/db";
 import { createClient, getUser } from "@/lib/supabase/server";
 import { eq } from "drizzle-orm";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
