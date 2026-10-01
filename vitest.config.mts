@@ -11,15 +11,10 @@ export default defineConfig({
         include: ['src/**/*.test.{ts,tsx}', 'src/**/*.test.ts'],
         // Phase 10: LIVE integration suites and external cloud suites are excluded from default runner
         exclude: [...configDefaults.exclude, ...LIVE_TEST_FILES, ...CLOUD_E2E_FILES],
-        // Postgres integration tests share one local database. Running test
-        // files in parallel lets their setup/cleanup interfere with each
-        // other (flaky failures from rows leaking between files), so files
-        // are serialized into a single worker — per-test parallelism inside
-        // each file is preserved by default.
+        // Pure unit and contract tests are completely hermetic (zero DB / network).
+        // Each test file runs in an isolated fork worker, preventing V8 heap
+        // accumulation and environment switching segfaults across mixed jsdom/node suites.
         pool: 'forks',
-        // @ts-expect-error -- singleFork serializes test files to protect the
-        // shared local Postgres database from cross-file setup/cleanup races.
-        singleFork: true,
         coverage: {
             provider: 'v8',
             reporter: ['text', 'html'],

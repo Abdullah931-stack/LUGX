@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
@@ -42,18 +42,17 @@ import {
     deleteFile,
     copyFile,
     getFile,
-    renameFile,
 } from "@/server/actions/files";
 
-import { moveFile, getFolderChildren } from "@/server/actions/folders";
+import { moveFile } from "@/server/actions/folders";
 import { updateUserProfile } from "@/server/actions/auth-actions";
 import { generateCopyTitle, generateRestoredTitle, MAX_TITLE_LENGTH } from "@/lib/utils/file-naming";
 import { DELETE as fileApiDELETE } from "@/app/api/files/[id]/route";
 import { POST as testAuthPOST, DELETE as testAuthDELETE } from "@/app/api/test/e2e-auth/route";
 import { NextRequest } from "next/server";
 
-const USER_A = "88888888-8888-8888-8888-888888888888";
-const USER_B = "99999999-9999-9999-9999-999999999999";
+const USER_A = "08080808-0808-0808-0808-080808080808";
+const USER_B = "08090809-0809-0809-0809-080908090809";
 
 let currentSessionUser: { id: string; email: string; user_metadata?: { full_name?: string } } | null = {
     id: USER_A,
@@ -101,13 +100,20 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
         }
     });
 
-    beforeEach((ctx) => {
+    beforeEach(async (ctx) => {
         currentSessionUser = {
             id: USER_A,
             email: "user-a-phase08@example.com",
         };
         if (!dbAvailable && ctx.task.name.startsWith("[DB]")) {
             ctx.skip();
+            return;
+        }
+        if (dbAvailable) {
+            await testDb.insert(schema.users).values([
+                { id: USER_A, email: "user-a-phase08@example.com", tier: "free", displayName: "User A" },
+                { id: USER_B, email: "user-b-phase08@example.com", tier: "free", displayName: "User B" },
+            ]).onConflictDoNothing();
         }
     });
 

@@ -103,7 +103,7 @@ async function main() {
 
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 stripe_subscription_id VARCHAR(255),
                 tier tier NOT NULL DEFAULT 'free',
                 status subscription_status NOT NULL DEFAULT 'active',

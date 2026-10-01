@@ -6,17 +6,25 @@
 -- 4. Indexing users.stripe_customer_id and files.parent_folder_id
 
 DO $$
+DECLARE
+    r RECORD;
 BEGIN
-    -- 1. Subscriptions: Drop single-subscription unique constraint on user_id if present
-    IF EXISTS (
-        SELECT 1 FROM information_schema.table_constraints
-        WHERE constraint_name = 'subscriptions_user_id_unique'
-          AND table_name = 'subscriptions'
-    ) THEN
-        ALTER TABLE subscriptions DROP CONSTRAINT subscriptions_user_id_unique;
-    END IF;
+    -- 1. Subscriptions: Drop any single-subscription unique constraint on user_id if present
+    FOR r IN (
+        SELECT tc.constraint_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+        WHERE tc.table_name = 'subscriptions'
+          AND tc.constraint_type = 'UNIQUE'
+          AND kcu.column_name = 'user_id'
+    ) LOOP
+        EXECUTE 'ALTER TABLE subscriptions DROP CONSTRAINT ' || quote_ident(r.constraint_name);
+    END LOOP;
 END $$;
 
+DROP INDEX IF EXISTS subscriptions_user_id_key;
 DROP INDEX IF EXISTS subscriptions_user_id_unique;
 DROP INDEX IF EXISTS idx_subscriptions_user_id_unique;
 

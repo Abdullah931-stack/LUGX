@@ -57,7 +57,7 @@ const USERS = {
     healthy: "41414141-4141-4141-4141-414141414141",
     contention: "42424242-4242-4242-4242-424242424242",
     timeout: "43434343-4343-4343-4343-434343434343",
-    outage: "44444444-4444-4444-4444-444444444444",
+    outage: "45454545-4545-4545-4545-454545454545",
 };
 
 const TEST_EVENTS = [
@@ -130,6 +130,9 @@ describe("Upstash Redis Live Integration, Lock Contention & Fail-Open Suite (Pha
             await testDb
                 .delete(schema.subscriptionEvents)
                 .where(inArray(schema.subscriptionEvents.eventId, TEST_EVENTS));
+            await testDb
+                .delete(schema.subscriptions)
+                .where(inArray(schema.subscriptions.userId, Object.values(USERS)));
         } catch {
             // best effort
         }

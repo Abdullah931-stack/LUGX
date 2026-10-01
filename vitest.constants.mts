@@ -21,7 +21,6 @@ export const LIVE_TEST_FILES = [
     'src/test/sync/conflict-resolution.integration.test.ts',
     // Live twins of previously fully-mocked suites:
     'src/test/ai/ai-quota-idempotency.live.test.ts',
-    'src/test/ai/ai-server-atomic-commit.live.test.ts',
     'src/test/editor/editor-orchestration.live.test.ts',
     'src/test/ai/ai-preview-decision.live.test.ts',
     'src/test/ai/ai-reservation-status.live.test.ts',
@@ -33,6 +32,7 @@ export const LIVE_TEST_FILES = [
     'src/test/infrastructure/multi-system-lifecycle.live.test.ts',
     'src/test/infrastructure/redis-live-integration.test.ts',
     'src/test/server/schema-atomic-transactions.live.test.ts',
+    'src/test/server/phase-08-ownership-and-cycles.test.ts',
 ];
 
 /**

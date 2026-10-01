@@ -15,11 +15,9 @@ export default defineConfig({
         // External providers (Gemini) can legitimately take >30s under load;
         // 60s removes provider-latency flakiness without hiding real hangs.
         testTimeout: 60_000,
-        // Serialized against the shared isolated branch (same rationale as
-        // the default config's singleFork).
+        // Serialized against the shared isolated branch (strict sequential execution).
         pool: 'forks',
-        // @ts-expect-error -- singleFork serializes test files.
-        singleFork: true,
+        fileParallelism: false,
     },
     resolve: {
         alias: {

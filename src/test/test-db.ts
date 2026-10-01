@@ -81,13 +81,10 @@ export function assertPlaceholderUserIds(ids: readonly string[]): void {
 /**
  * Deletes ONLY the given test accounts from the users table.
  *
- * IMPORTANT: always pass EXACTLY the ids seeded by *this* test file. Suites
- * run in parallel workers against the live database — deleting another
- * suite's ids here would yank its data mid-run.
- *
- * Schema FKs (`files`, `usage`, `ai_reservations`) reference users.id with
- * ON DELETE CASCADE, so all dependent rows of those accounts are removed in
- * the same statement. Real users are untouched by construction.
+ * To avoid PostgreSQL cascading lock deadlocks (40P01) across foreign keys,
+ * dependent rows in child tables (subscriptions, ai_reservations, files, usage,
+ * user_vault_profiles) are deleted explicitly first before deleting from users.
+ * A resilient retry loop with exponential backoff guards against transient lock contention.
  */
 export async function cleanupTestUsers(
     ids: readonly string[],
@@ -95,12 +92,37 @@ export async function cleanupTestUsers(
 ): Promise<void> {
     assertPlaceholderUserIds(ids);
 
-    const conditions = [inArray(schema.users.id, [...ids])];
+    const userIds = [...ids];
+    const conditions = [inArray(schema.users.id, userIds)];
     if (options?.emailPattern) {
-        // Only suites that mint random per-run accounts (emails under the
-        // RFC-reserved `.test` domain) may use the email-pattern branch.
         conditions.push(like(schema.users.email, options.emailPattern));
     }
 
-    await testDb.delete(schema.users).where(or(...conditions));
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            // 1. Explicitly clear dependent child rows to prevent reverse-order lock acquisition
+            if (userIds.length > 0) {
+                await testDb.delete(schema.subscriptions).where(inArray(schema.subscriptions.userId, userIds));
+                await testDb.delete(schema.aiReservations).where(inArray(schema.aiReservations.userId, userIds));
+                await testDb.delete(schema.files).where(inArray(schema.files.userId, userIds));
+                await testDb.delete(schema.usage).where(inArray(schema.usage.userId, userIds));
+                await testDb.delete(schema.userVaultProfiles).where(inArray(schema.userVaultProfiles.userId, userIds));
+            }
+
+            // 2. Clear parent user rows
+            await testDb.delete(schema.users).where(or(...conditions));
+            return;
+        } catch (err: unknown) {
+            const errObj = err as { code?: string; cause?: { code?: string } } | null;
+            const errCode = errObj?.code || errObj?.cause?.code;
+            const isDeadlockOrLockError = errCode === "40P01" || errCode === "55P03";
+
+            if (isDeadlockOrLockError && attempt < maxRetries) {
+                await new Promise((resolve) => setTimeout(resolve, attempt * 100));
+                continue;
+            }
+            throw err;
+        }
+    }
 }
