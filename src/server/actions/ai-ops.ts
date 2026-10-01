@@ -48,7 +48,7 @@ export async function getUserTier(userId: string): Promise<TierName> {
  * (user_id, date) makes the whole upsert atomic, so concurrent callers can
  * never produce more than one row per day.
  */
-async function getTodayUsage(userId: string) {
+export async function getTodayUsage(userId: string) {
     const today = getToday();
 
     // Guard against foreign key violation: ensure user exists in 'users' before attempting insert into 'usage'
@@ -272,9 +272,7 @@ export interface ReservationResult {
  * Guarantees zero partial writes: unique constraint violations or errors trigger complete engine-level rollbacks.
  */
 function getActiveDb() {
-    const isTxDbMocked = typeof (txDb?.transaction as { mock?: unknown } | undefined)?.mock !== "undefined";
-    const isDbMocked = typeof (db.insert as { mock?: unknown } | undefined)?.mock !== "undefined";
-    return (isTxDbMocked || !isDbMocked) && txDb && typeof txDb.transaction === "function" ? txDb : db;
+    return txDb && typeof txDb.transaction === "function" ? txDb : db;
 }
 
 export async function reserveAndUpdateUsage(

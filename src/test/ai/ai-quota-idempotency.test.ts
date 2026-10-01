@@ -1,250 +1,265 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as aiOps from '@/server/actions/ai-ops';
-import { db } from '@/server/db';
+import { describe, it, expect } from 'vitest';
+import {
+    calculateQuotaSettlement,
+    reduceQuotaReservationState,
+    QuotaStateConflictError,
+    QuotaReservationState,
+} from '@/lib/ai/quota-settlement-reducer';
 
-const inMemoryReservations = new Map<string, any>();
-const inMemoryUsage = new Map<string, any>();
-
-vi.mock('@/server/db', () => ({
-    db: {
-        query: {
-            users: {
-                findFirst: vi.fn().mockResolvedValue({ tier: 'pro' }),
-            },
-            usage: {
-                findFirst: vi.fn().mockImplementation(({ where: _where }: any) => {
-                    return Promise.resolve(inMemoryUsage.get('user_usage') || {
-                        id: 'usage-1',
-                        userId: '00000000-0000-0000-0000-000000000001',
-                        date: new Date().toISOString().split('T')[0],
-                        correctWords: 0,
-                        improveWords: 0,
-                        translateWords: 0,
-                        summarizeCount: 0,
-                        toPromptCount: 0,
-                    });
-                }),
-            },
-            aiReservations: {
-                findFirst: vi.fn().mockImplementation(({ where: _where }: any) => {
-                    for (const res of inMemoryReservations.values()) {
-                        return Promise.resolve(res);
-                    }
-                    return Promise.resolve(undefined);
-                }),
-                findMany: vi.fn().mockImplementation(() => {
-                    return Promise.resolve(Array.from(inMemoryReservations.values()));
-                }),
-            },
-        },
-        insert: vi.fn().mockImplementation((_table?: any) => ({
-            values: (val: any) => ({
-                onConflictDoNothing: () => Promise.resolve(),
-                returning: () => {
-                    const row = { id: `id_${Math.random()}`, ...val };
-                    if (val.operationId) {
-                        inMemoryReservations.set(val.operationId, row);
-                    }
-                    return Promise.resolve([row]);
-                },
-            }),
-        })),
-        update: vi.fn().mockImplementation((_table?: any) => ({
-            set: (_setVal?: any) => ({
-                where: (_whereClause?: any) => ({
-                    returning: () => {
-                        return Promise.resolve([{ id: 'updated-1' }]);
-                    },
-                }),
-            }),
-        })),
-        select: vi.fn().mockImplementation(() => ({
-            from: () => ({
-                where: () => Promise.resolve([{ total: 0 }]),
-            }),
-        })),
-    },
-    schema: {
-        users: { id: 'id', tier: 'tier' },
-        usage: { id: 'id', userId: 'user_id', date: 'date' },
-        aiReservations: {
-            id: 'id',
-            operationId: 'operation_id',
-            userId: 'user_id',
-            status: 'status',
-            reservedUnits: 'reserved_units',
-            committedUnits: 'committed_units',
-            refundedUnits: 'refunded_units',
-            periodKey: 'period_key',
-            expiresAt: 'expires_at',
-        },
-    },
-}));
-
-describe('AI Quota Reservation & Idempotency Invariants (Phase 5 - Gates G1 & G4)', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-        inMemoryReservations.clear();
-        inMemoryUsage.clear();
-    });
-
-    describe('Idempotent Reservation Lifecycle', () => {
-        it('should generate a unique reservationId and attach the UTC periodKey', async () => {
-            const operationId = 'test-op-101';
-            const res = await aiOps.reserveAndUpdateUsage(
-                '00000000-0000-0000-0000-000000000001',
-                'improve',
-                150,
-                'pro',
-                { operationId }
-            );
-
-            expect(res.reserved).toBe(true);
-            expect(res.periodKey).toBeDefined();
-            // Period key must be strictly UTC YYYY-MM-DD
-            expect(res.periodKey).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-        });
-
-        it('should preserve the exact reservation on repeated reserve call with same operationId (Idempotent Retry)', async () => {
-            const operationId = 'test-op-replay-102';
-
-            // First call creates reservation
-            const first = await aiOps.reserveAndUpdateUsage(
-                '00000000-0000-0000-0000-000000000001',
-                'correct',
-                50,
-                'pro',
-                { operationId }
-            );
-
-            // Mock DB findFirst returning the existing reservation
-            vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
-                id: first.reservationId || 'res-1',
-                operationId,
-                userId: '00000000-0000-0000-0000-000000000001',
-                status: 'reserved',
-                periodKey: first.periodKey,
-                reservedUnits: 50,
-            } as any);
-
-            const replay = await aiOps.reserveAndUpdateUsage(
-                '00000000-0000-0000-0000-000000000001',
-                'correct',
-                50,
-                'pro',
-                { operationId }
-            );
-
-            expect(first.reserved).toBe(true);
-            expect(replay.reserved).toBe(true);
-            expect(replay.operationId).toBe(operationId);
-        });
-    });
-
-    describe('Idempotent Refund & State Machine Guarding', () => {
-        it('should safely refund a reserved operation once', async () => {
-            const operationId = 'test-op-refund-201';
-
-            vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
-                id: 'res-refund-1',
-                operationId,
-                userId: '00000000-0000-0000-0000-000000000001',
-                status: 'reserved',
-                operation: 'translate',
+describe('AI Quota Settlement & Reservation State Machine (Phase 5 / 6 Invariants)', () => {
+    describe('calculateQuotaSettlement (Mathematical & Conservation Invariants)', () => {
+        it('preserves conservation law (toCommit + toRefund === reserved) on partial consumption', () => {
+            const decision = calculateQuotaSettlement({
                 reservedUnits: 200,
-                periodKey: '2026-08-17',
-            } as any);
+                consumedUnits: 120,
+            });
 
-            const refundResult = await aiOps.refundAIReservation(operationId, 'test_failure');
-            expect(refundResult.refunded).toBe(true);
+            expect(decision.toCommit).toBe(120);
+            expect(decision.toRefund).toBe(80);
+            expect(decision.toCommit + decision.toRefund).toBe(200);
+            expect(decision.isOverage).toBe(false);
+            expect(decision.unusedUnits).toBe(80);
         });
 
-        it('should reject second refund attempt for already refunded operation (Idempotent No-Op)', async () => {
-            const operationId = 'test-op-double-refund-202';
+        it('allocates full refund when operation produces zero consumed units', () => {
+            const decision = calculateQuotaSettlement({
+                reservedUnits: 150,
+                consumedUnits: 0,
+            });
 
-            vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
-                id: 'res-refund-2',
-                operationId,
-                userId: '00000000-0000-0000-0000-000000000001',
-                status: 'refunded',
-                operation: 'summarize',
+            expect(decision.toCommit).toBe(0);
+            expect(decision.toRefund).toBe(150);
+            expect(decision.unusedUnits).toBe(150);
+            expect(decision.isOverage).toBe(false);
+        });
+
+        it('caps commitment at reservation ceiling on overage without negative refund', () => {
+            const decision = calculateQuotaSettlement({
                 reservedUnits: 100,
-                periodKey: '2026-08-17',
-            } as any);
+                consumedUnits: 140,
+            });
 
-            const refundAttempt = await aiOps.refundAIReservation(operationId, 'duplicate_call');
-            expect(refundAttempt.refunded).toBe(false);
-            expect(refundAttempt.reason).toBe('already_refunded');
+            expect(decision.toCommit).toBe(100);
+            expect(decision.toRefund).toBe(0);
+            expect(decision.isOverage).toBe(true);
+            expect(decision.unusedUnits).toBe(0);
         });
 
-        it('should strictly forbid refunding an already committed reservation', async () => {
-            const operationId = 'test-op-commit-guard-203';
+        it('handles zero reservation gracefully', () => {
+            const decision = calculateQuotaSettlement({
+                reservedUnits: 0,
+                consumedUnits: 50,
+            });
 
-            vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
-                id: 'res-commit-1',
-                operationId,
-                userId: '00000000-0000-0000-0000-000000000001',
-                status: 'committed',
-                operation: 'improve',
-                reservedUnits: 80,
-                periodKey: '2026-08-17',
-            } as any);
+            expect(decision.toCommit).toBe(0);
+            expect(decision.toRefund).toBe(0);
+            expect(decision.isOverage).toBe(true);
+        });
 
-            const refundAttempt = await aiOps.refundAIReservation(operationId, 'illegal_refund');
-            expect(refundAttempt.refunded).toBe(false);
-            expect(refundAttempt.reason).toBe('already_committed');
+        it('sanitizes and quantizes non-finite, negative, and floating point inputs', () => {
+            const decision = calculateQuotaSettlement({
+                reservedUnits: -50,
+                consumedUnits: NaN,
+            });
+
+            expect(decision.reservedUnits).toBe(0);
+            expect(decision.consumedUnits).toBe(0);
+            expect(decision.toCommit).toBe(0);
+            expect(decision.toRefund).toBe(0);
+
+            const floatDecision = calculateQuotaSettlement({
+                reservedUnits: 100.8,
+                consumedUnits: 45.3,
+            });
+
+            expect(floatDecision.reservedUnits).toBe(100);
+            expect(floatDecision.consumedUnits).toBe(45);
+            expect(floatDecision.toCommit).toBe(45);
+            expect(floatDecision.toRefund).toBe(55);
         });
     });
 
-    describe('State Transition Guarding: commit and expiration', () => {
-        it('should transition reserved -> committed idempotently', async () => {
-            const operationId = 'test-op-commit-301';
+    describe('reduceQuotaReservationState (Lifecycle & State Transitions)', () => {
+        const baseReservation = {
+            reservationId: 'res-101',
+            operationId: 'op-101',
+            userId: 'user-101',
+            reservedUnits: 250,
+            expiresAt: Date.now() + 300_000,
+            timestamp: Date.now(),
+        };
 
-            vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
-                id: 'res-commit-301',
-                operationId,
-                userId: '00000000-0000-0000-0000-000000000001',
+        it('transitions from idle to reserved on RESERVE event', () => {
+            const idleState: QuotaReservationState = { status: 'idle' };
+            const nextState = reduceQuotaReservationState(idleState, {
+                type: 'RESERVE',
+                ...baseReservation,
+            });
+
+            expect(nextState.status).toBe('reserved');
+            if (nextState.status === 'reserved') {
+                expect(nextState.reservationId).toBe('res-101');
+                expect(nextState.operationId).toBe('op-101');
+                expect(nextState.reservedUnits).toBe(250);
+            }
+        });
+
+        it('transitions from reserved to committed with partial refund settlement', () => {
+            const reservedState: QuotaReservationState = {
                 status: 'reserved',
-                reservedUnits: 120,
-            } as any);
+                reservationId: 'res-101',
+                operationId: 'op-101',
+                userId: 'user-101',
+                reservedUnits: 200,
+                expiresAt: Date.now() + 300_000,
+            };
 
-            const result = await aiOps.commitAIReservation(operationId);
-            expect(result.committed).toBe(true);
+            const commitTimestamp = Date.now();
+            const nextState = reduceQuotaReservationState(reservedState, {
+                type: 'COMMIT',
+                consumedUnits: 150,
+                timestamp: commitTimestamp,
+            });
+
+            expect(nextState.status).toBe('committed');
+            if (nextState.status === 'committed') {
+                expect(nextState.committedUnits).toBe(150);
+                expect(nextState.refundedUnits).toBe(50);
+                expect(nextState.settledAt).toBe(commitTimestamp);
+            }
         });
 
-        it('should recognize already_committed when commit is called repeatedly', async () => {
-            const operationId = 'test-op-commit-302';
+        it('transitions from reserved to refunded on REFUND event', () => {
+            const reservedState: QuotaReservationState = {
+                status: 'reserved',
+                reservationId: 'res-101',
+                operationId: 'op-101',
+                userId: 'user-101',
+                reservedUnits: 180,
+                expiresAt: Date.now() + 300_000,
+            };
 
-            vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
-                id: 'res-commit-302',
-                operationId,
-                userId: '00000000-0000-0000-0000-000000000001',
+            const refundTimestamp = Date.now();
+            const nextState = reduceQuotaReservationState(reservedState, {
+                type: 'REFUND',
+                timestamp: refundTimestamp,
+            });
+
+            expect(nextState.status).toBe('refunded');
+            if (nextState.status === 'refunded') {
+                expect(nextState.refundedUnits).toBe(180);
+                expect(nextState.refundedAt).toBe(refundTimestamp);
+            }
+        });
+
+        it('transitions from reserved to expired on EXPIRE event', () => {
+            const reservedState: QuotaReservationState = {
+                status: 'reserved',
+                reservationId: 'res-101',
+                operationId: 'op-101',
+                userId: 'user-101',
+                reservedUnits: 100,
+                expiresAt: Date.now() - 1000,
+            };
+
+            const expireTimestamp = Date.now();
+            const nextState = reduceQuotaReservationState(reservedState, {
+                type: 'EXPIRE',
+                timestamp: expireTimestamp,
+            });
+
+            expect(nextState.status).toBe('expired');
+            if (nextState.status === 'expired') {
+                expect(nextState.expiredAt).toBe(expireTimestamp);
+            }
+        });
+
+        it('handles idempotent replays without mutation for committed and refunded states', () => {
+            const committedState: QuotaReservationState = {
                 status: 'committed',
-                reservedUnits: 120,
-            } as any);
+                reservationId: 'res-101',
+                operationId: 'op-101',
+                userId: 'user-101',
+                committedUnits: 100,
+                refundedUnits: 0,
+                settledAt: 1000,
+            };
 
-            const result = await aiOps.commitAIReservation(operationId);
-            expect(result.committed).toBe(true);
-            expect(result.reason).toBe('already_committed');
+            const replayCommit = reduceQuotaReservationState(committedState, {
+                type: 'COMMIT',
+                timestamp: 2000,
+            });
+            expect(replayCommit).toBe(committedState);
+
+            const refundedState: QuotaReservationState = {
+                status: 'refunded',
+                reservationId: 'res-102',
+                operationId: 'op-102',
+                userId: 'user-101',
+                refundedUnits: 100,
+                refundedAt: 1000,
+            };
+
+            const replayRefund = reduceQuotaReservationState(refundedState, {
+                type: 'REFUND',
+                timestamp: 2000,
+            });
+            expect(replayRefund).toBe(refundedState);
         });
 
-        it('should sweep and expire stale reservations restoring usage counters', async () => {
-            vi.mocked(db.query.aiReservations.findMany).mockResolvedValueOnce([
-                {
-                    id: 'res-stale-1',
-                    operationId: 'op-stale-1',
-                    userId: '00000000-0000-0000-0000-000000000001',
-                    status: 'reserved',
-                    operation: 'correct',
-                    reservedUnits: 75,
-                    periodKey: '2026-08-20',
-                    expiresAt: new Date(Date.now() - 60000),
-                },
-            ] as any);
+        it('throws QuotaStateConflictError on invalid state transitions in strict mode', () => {
+            const committedState: QuotaReservationState = {
+                status: 'committed',
+                reservationId: 'res-101',
+                operationId: 'op-101',
+                userId: 'user-101',
+                committedUnits: 100,
+                refundedUnits: 0,
+                settledAt: 1000,
+            };
 
-            const expiredCount = await aiOps.expireStaleReservations();
-            expect(expiredCount).toBe(1);
+            expect(() =>
+                reduceQuotaReservationState(committedState, {
+                    type: 'REFUND',
+                    timestamp: Date.now(),
+                })
+            ).toThrow(QuotaStateConflictError);
+
+            const refundedState: QuotaReservationState = {
+                status: 'refunded',
+                reservationId: 'res-102',
+                operationId: 'op-102',
+                userId: 'user-101',
+                refundedUnits: 100,
+                refundedAt: 1000,
+            };
+
+            expect(() =>
+                reduceQuotaReservationState(refundedState, {
+                    type: 'COMMIT',
+                    timestamp: Date.now(),
+                })
+            ).toThrow(QuotaStateConflictError);
+        });
+
+        it('returns previous state without throwing when strict is false', () => {
+            const committedState: QuotaReservationState = {
+                status: 'committed',
+                reservationId: 'res-101',
+                operationId: 'op-101',
+                userId: 'user-101',
+                committedUnits: 100,
+                refundedUnits: 0,
+                settledAt: 1000,
+            };
+
+            const nonStrictResult = reduceQuotaReservationState(
+                committedState,
+                { type: 'REFUND', timestamp: Date.now() },
+                { strict: false }
+            );
+
+            expect(nonStrictResult).toBe(committedState);
         });
     });
 });
-

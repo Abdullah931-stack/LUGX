@@ -452,4 +452,57 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
         expect(dbReservation?.status).toBe("refunded");
         expect(dbReservation?.refundedUnits).toBe(150);
     });
+
+    it("should refuse unauthenticated commits with zero mutation", async () => {
+        vi.mocked(getUser).mockResolvedValueOnce(null as never);
+        const fileId = randomUUID();
+        const operationId = `op_unauth_${randomUUID()}`;
+
+        await testDb.insert(schema.files).values({
+            id: fileId,
+            userId: TEST_USER_ID,
+            title: "Unauth Test Doc",
+            content: "<p>Original pristine</p>",
+            version: 1,
+            etag: "etag-unauth",
+            updatedAt: new Date(),
+        });
+
+        await testDb.insert(schema.aiReservations).values({
+            id: randomUUID(),
+            operationId,
+            userId: TEST_USER_ID,
+            fileId,
+            status: "reserved",
+            operation: "improve",
+            reservedUnits: 100,
+            committedUnits: 0,
+            refundedUnits: 0,
+            periodKey: "2026-08-21",
+            expiresAt: new Date(Date.now() + 600000),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        });
+
+        const res = await commitAIFileOperation({
+            operationId,
+            fileId,
+            expectedVersion: 1,
+            resultContent: "<p>Should never be written</p>",
+        });
+
+        expect(res.success).toBe(false);
+        expect(res.status).toBe("unauthorized");
+
+        const row = await testDb.query.files.findFirst({
+            where: eq(schema.files.id, fileId),
+        });
+        expect(row?.version).toBe(1);
+        expect(row?.content).toBe("<p>Original pristine</p>");
+
+        const resRow = await testDb.query.aiReservations.findFirst({
+            where: eq(schema.aiReservations.operationId, operationId),
+        });
+        expect(resRow?.status).toBe("reserved");
+    });
 });

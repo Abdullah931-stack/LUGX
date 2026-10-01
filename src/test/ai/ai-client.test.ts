@@ -483,6 +483,28 @@ describe('AI Client (Robust & Fault-Tolerant Execution)', () => {
 
             await expect(streamWithAI('correct', 'Test input', 'free', controller.signal)).rejects.toThrow('Stream aborted before initialization');
         });
+
+        it('forwards the downstream AbortSignal into generateContentStream request options', async () => {
+            const controller = new AbortController();
+            mocks.generateContentStream.mockResolvedValueOnce({
+                stream: (async function* () {
+                    yield { text: () => 'chunk-1' };
+                })(),
+                response: Promise.resolve({ candidates: [] }),
+            });
+
+            const stream = await streamWithAI('correct', 'input text', 'free', controller.signal);
+
+            const reader = stream.getReader();
+            while (!(await reader.read()).done) {
+                /* drain */
+            }
+
+            expect(mocks.generateContentStream).toHaveBeenCalledWith(
+                expect.anything(),
+                { signal: controller.signal }
+            );
+        });
     });
 
     // =========================================

@@ -18,9 +18,16 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eq, sql, and } from "drizzle-orm";
+import crypto from "node:crypto";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
+import {
+    getTodayUsage,
+    reserveAndUpdateUsage,
+    refundAIReservation,
+    commitAIReservation,
+} from "@/server/actions/ai-ops";
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
 let dbAvailable = false;
@@ -71,29 +78,6 @@ function today(): string {
     return new Date().toISOString().split("T")[0];
 }
 
-/**
- * Local copy of the FIXED getTodayUsage upsert logic. The production
- * implementation in @/server/actions/ai-ops uses the identical SQL
- * (INSERT ... ON CONFLICT (user_id, date) DO NOTHING) — only the db client
- * differs (Neon HTTP vs pg). We deliberately test the algorithm against the
- * real DB instead of importing the server action, because the server action
- * requires Supabase auth and a remote Neon endpoint.
- */
-async function upsertTodayUsage(userId: string): Promise<schema.Usage> {
-    const t = today();
-    await testDb
-        .insert(schema.usage)
-        .values({ userId, date: t })
-        .onConflictDoNothing({
-            target: [schema.usage.userId, schema.usage.date],
-        });
-    const usage = await testDb.query.usage.findFirst({
-        where: eq(schema.usage.userId, userId),
-    });
-    if (!usage) throw new Error(`usage row not found for ${userId}`);
-    return usage;
-}
-
 describe("usage table integrity under concurrency", () => {
     it("unique index on (user_id, date) exists and rejects duplicates", async () => {
         const t = today();
@@ -111,7 +95,7 @@ describe("usage table integrity under concurrency", () => {
         ).rejects.toThrow();
     });
 
-    it("concurrent upsertTodayUsage calls produce exactly one row (race test)", async () => {
+    it("concurrent getTodayUsage calls produce exactly one row (race test)", async () => {
         const t = today();
         const userId = crypto.randomUUID();
 
@@ -122,11 +106,11 @@ describe("usage table integrity under concurrency", () => {
             .onConflictDoNothing();
 
         const calls = await Promise.allSettled(
-            Array.from({ length: 50 }, () => upsertTodayUsage(userId))
+            Array.from({ length: 50 }, () => getTodayUsage(userId))
         );
 
         const resolved = calls.filter(
-            (c): c is PromiseFulfilledResult<schema.Usage> =>
+            (c): c is PromiseFulfilledResult<Awaited<ReturnType<typeof getTodayUsage>>> =>
                 c.status === "fulfilled"
         );
         expect(resolved.length).toBe(50);
@@ -184,68 +168,26 @@ describe("usage table integrity under concurrency", () => {
         const userId = crypto.randomUUID();
         const operationId = `op_race_${crypto.randomUUID()}`;
         const WORDS = 75;
+        const requestHash = crypto.createHash("sha256").update(`${userId}:correct:${WORDS}:${operationId}`).digest("hex");
 
-        // Seed user
+        // Seed user with pro tier
         await testDb
             .insert(schema.users)
-            .values({ id: userId, email: `${userId}@race.test` })
+            .values({ id: userId, email: `${userId}@race.test`, tier: "pro" })
             .onConflictDoNothing();
 
-        // 20 concurrent requests with the SAME operationId
-        const runDuplicateOp = async () => {
-            // 1. Ensure row exists
-            await testDb
-                .insert(schema.usage)
-                .values({ userId, date: t, correctWords: 0 })
-                .onConflictDoNothing({ target: [schema.usage.userId, schema.usage.date] });
-
-            // 2. Increment usage
-            await testDb
-                .update(schema.usage)
-                .set({ correctWords: sql`COALESCE(correct_words, 0) + ${WORDS}` })
-                .where(and(eq(schema.usage.userId, userId), eq(schema.usage.date, t)));
-
-            // 3. Insert reservation (protected by unique index on operation_id)
-            try {
-                const [res] = await testDb
-                    .insert(schema.aiReservations)
-                    .values({
-                        operationId,
-                        userId,
-                        operation: "correct",
-                        reservedUnits: WORDS,
-                        committedUnits: 0,
-                        refundedUnits: 0,
-                        periodKey: t,
-                        status: "reserved",
-                        expiresAt: new Date(Date.now() + 300000),
-                    })
-                    .returning();
-                return { reserved: true, id: res.id, winner: true };
-            } catch {
-                // Duplicate collision -> Revert speculative increment
-                await testDb
-                    .update(schema.usage)
-                    .set({ correctWords: sql`GREATEST(correct_words - ${WORDS}, 0)` })
-                    .where(and(eq(schema.usage.userId, userId), eq(schema.usage.date, t)));
-
-                const existing = await testDb.query.aiReservations.findFirst({
-                    where: eq(schema.aiReservations.operationId, operationId),
-                });
-                return { reserved: true, id: existing?.id, winner: false };
-            }
-        };
-
+        // 20 concurrent requests with the SAME operationId using real production reserveAndUpdateUsage
         const results = await Promise.all(
-            Array.from({ length: 20 }, () => runDuplicateOp())
+            Array.from({ length: 20 }, () =>
+                reserveAndUpdateUsage(userId, "correct", WORDS, "pro", {
+                    operationId,
+                    requestHash,
+                })
+            )
         );
 
         // All 20 requests returned reserved: true
         expect(results.every((r) => r.reserved)).toBe(true);
-
-        // Exactly ONE request won the database insert
-        const winners = results.filter((r) => r.winner);
-        expect(winners.length).toBe(1);
 
         // Check real database usage row: ONLY charged 75 words, NOT 20 * 75 = 1500 words!
         const usageRow = await testDb.query.usage.findFirst({
@@ -271,7 +213,7 @@ describe("usage table integrity under concurrency", () => {
 
         await testDb
             .insert(schema.users)
-            .values({ id: userId, email: `${userId}@midnight.test` })
+            .values({ id: userId, email: `${userId}@midnight.test`, tier: "pro" })
             .onConflictDoNothing();
 
         // Seed old day usage with 200 words
@@ -299,24 +241,16 @@ describe("usage table integrity under concurrency", () => {
                 expiresAt: new Date(Date.now() + 300000),
             });
 
-        // Execute conditional refund on oldPeriodKey
-        const [refundedRes] = await testDb
-            .update(schema.aiReservations)
-            .set({ status: "refunded", refundedUnits: WORDS, updatedAt: new Date() })
-            .where(
-                and(
-                    eq(schema.aiReservations.operationId, operationId),
-                    eq(schema.aiReservations.status, "reserved")
-                )
-            )
-            .returning();
-        expect(refundedRes).toBeDefined();
+        // Execute real production refundAIReservation on oldPeriodKey
+        const refundResult = await refundAIReservation(operationId, "midnight_test");
+        expect(refundResult.refunded).toBe(true);
 
-        // Revert usage on the persisted periodKey
-        await testDb
-            .update(schema.usage)
-            .set({ correctWords: sql`GREATEST(correct_words - ${WORDS}, 0)` })
-            .where(and(eq(schema.usage.userId, userId), eq(schema.usage.date, oldPeriodKey)));
+        // Verify in DB that reservation is marked refunded
+        const resRow = await testDb.query.aiReservations.findFirst({
+            where: eq(schema.aiReservations.operationId, operationId),
+        });
+        expect(resRow?.status).toBe("refunded");
+        expect(resRow?.refundedUnits).toBe(WORDS);
 
         // Verify old day is decremented from 200 to 80
         const oldUsage = await testDb.query.usage.findFirst({
@@ -339,7 +273,7 @@ describe("usage table integrity under concurrency", () => {
 
         await testDb
             .insert(schema.users)
-            .values({ id: userId, email: `${userId}@commitguard.test` })
+            .values({ id: userId, email: `${userId}@commitguard.test`, tier: "pro" })
             .onConflictDoNothing();
 
         await testDb
@@ -361,25 +295,50 @@ describe("usage table integrity under concurrency", () => {
                 expiresAt: new Date(Date.now() + 300000),
             });
 
-        // Attempt conditional refund (where status == 'reserved')
-        const [updated] = await testDb
-            .update(schema.aiReservations)
-            .set({ status: "refunded", refundedUnits: WORDS })
-            .where(
-                and(
-                    eq(schema.aiReservations.operationId, operationId),
-                    eq(schema.aiReservations.status, "reserved")
-                )
-            )
-            .returning();
-
-        // Must NOT update any row
-        expect(updated).toBeUndefined();
+        // Attempt real refundAIReservation on committed reservation
+        const refundResult = await refundAIReservation(operationId, "test_attempt");
+        expect(refundResult.refunded).toBe(false);
+        expect(refundResult.reason).toBe("already_committed");
 
         // Usage remains 90
         const usage = await testDb.query.usage.findFirst({
             where: and(eq(schema.usage.userId, userId), eq(schema.usage.date, t)),
         });
         expect(usage?.correctWords).toBe(90);
+    });
+
+    it("commitAIReservation transitions reservation from reserved to committed", async () => {
+        const userId = crypto.randomUUID();
+        const t = today();
+        const operationId = `op_commit_test_${crypto.randomUUID()}`;
+        const WORDS = 50;
+
+        await testDb
+            .insert(schema.users)
+            .values({ id: userId, email: `${userId}@committest.test`, tier: "pro" })
+            .onConflictDoNothing();
+
+        await testDb
+            .insert(schema.aiReservations)
+            .values({
+                operationId,
+                userId,
+                operation: "correct",
+                reservedUnits: WORDS,
+                committedUnits: 0,
+                refundedUnits: 0,
+                periodKey: t,
+                status: "reserved",
+                expiresAt: new Date(Date.now() + 300000),
+            });
+
+        const commitRes = await commitAIReservation(operationId);
+        expect(commitRes.committed).toBe(true);
+
+        const resRow = await testDb.query.aiReservations.findFirst({
+            where: eq(schema.aiReservations.operationId, operationId),
+        });
+        expect(resRow?.status).toBe("committed");
+        expect(resRow?.committedUnits).toBe(WORDS);
     });
 });

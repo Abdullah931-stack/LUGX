@@ -16,12 +16,14 @@
  * identical SQL.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
+import crypto from "node:crypto";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { AIOperation } from "@/lib/ai/prompts";
 import { TIER_LIMITS } from "@/config/tiers.config";
+import { reserveAndUpdateUsage, refundAIReservation } from "@/server/actions/ai-ops";
 
 const TEST_USER_ID = "12121212-1212-1212-1212-121212121212"; // unique per suite — NOT shared with softdelete tests (parallel workers)
 const TIER = "pro";
@@ -59,85 +61,23 @@ function today(): string {
     return new Date().toISOString().split("T")[0];
 }
 
-/**
- * Local copy of the production conditional-reservation SQL shape from
- * ai-ops.ts `reserveAndUpdateUsage` (identical algorithm, pg client).
- */
-async function reserveTodayUsage(
+async function reserve(
     userId: string,
     operation: AIOperation,
-    wordCount: number
-): Promise<boolean> {
-    const t = today();
-    await testDb
-        .insert(schema.usage)
-        .values({ userId, date: t })
-        .onConflictDoNothing({
-            target: [schema.usage.userId, schema.usage.date],
-        });
-
-    let quotaGuard = sql`TRUE`;
-    const updateFields: Record<string, unknown> = {};
-
-    switch (operation) {
-        case "correct":
-            updateFields.correctWords = sql`correct_words + ${wordCount}`;
-            quotaGuard = sql`COALESCE(correct_words, 0) + ${wordCount} <= ${TIER_LIMITS[TIER].correctImproveTranslate.words}`;
-            break;
-        case "summarize":
-            updateFields.summarizeCount = sql`summarize_count + 1`;
-            updateFields.summarizeWords = sql`summarize_words + ${wordCount}`;
-            quotaGuard = sql`COALESCE(summarize_count, 0) + 1 <= ${TIER_LIMITS[TIER].summarize.dailyLimit}`;
-            break;
-        case "toPrompt":
-            updateFields.toPromptCount = sql`to_prompt_count + 1`;
-            quotaGuard = sql`COALESCE(to_prompt_count, 0) + 1 <= ${TIER_LIMITS[TIER].toPrompt!.dailyLimit}`;
-            break;
-        default:
-            break;
-    }
-
-    const [updated] = await testDb
-        .update(schema.usage)
-        .set(updateFields)
-        .where(and(eq(schema.usage.userId, userId), eq(schema.usage.date, t), quotaGuard))
-        .returning({ id: schema.usage.id });
-
-    return Boolean(updated);
+    wordCount: number,
+    operationId: string = `op_${crypto.randomUUID()}`
+): Promise<{ reserved: boolean; operationId: string }> {
+    const requestHash = crypto.createHash("sha256").update(`${userId}:${operation}:${wordCount}:${operationId}`).digest("hex");
+    const result = await reserveAndUpdateUsage(userId, operation, wordCount, TIER, {
+        operationId,
+        requestHash,
+    });
+    return { reserved: result.reserved, operationId };
 }
 
-/**
- * Local copy of the W1 `refundUsage` production algorithm (identical SQL):
- * bounded subtraction — GREATEST(col - N, 0) — so refunds can never
- * underflow counters below zero.
- */
-async function refundTodayUsage(
-    userId: string,
-    operation: AIOperation,
-    wordCount: number
-): Promise<void> {
-    const t = today();
-    const undoFields: Record<string, unknown> = {};
-
-    switch (operation) {
-        case "correct":
-            undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
-            break;
-        case "summarize":
-            undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-            undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
-            break;
-        case "toPrompt":
-            undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
-            break;
-        default:
-            break;
-    }
-
-    await testDb
-        .update(schema.usage)
-        .set(undoFields)
-        .where(and(eq(schema.usage.userId, userId), eq(schema.usage.date, t)));
+async function refund(operationId: string): Promise<boolean> {
+    const result = await refundAIReservation(operationId, "stream_failed");
+    return result.refunded;
 }
 
 async function snapshotUsage(userId: string) {
@@ -154,12 +94,13 @@ describe("quota refund after AI failure (W1)", () => {
         const beforeWords = before?.correctWords ?? 0;
 
         const WORDS = 120;
-        const reserved = await reserveTodayUsage(TEST_USER_ID, "correct", WORDS);
+        const { reserved, operationId } = await reserve(TEST_USER_ID, "correct", WORDS);
         expect(reserved).toBe(true);
 
         // Simulate AI provider failure AFTER reservation (the old bug:
         // the reservation would stand forever — quota permanently lost).
-        await refundTodayUsage(TEST_USER_ID, "correct", WORDS);
+        const refunded = await refund(operationId);
+        expect(refunded).toBe(true);
 
         const after = await snapshotUsage(TEST_USER_ID);
         expect(after?.correctWords).toBe(beforeWords);
@@ -171,10 +112,11 @@ describe("quota refund after AI failure (W1)", () => {
         const beforeWords = before?.summarizeWords ?? 0;
 
         const WORDS = 45;
-        const reserved = await reserveTodayUsage(TEST_USER_ID, "summarize", WORDS);
+        const { reserved, operationId } = await reserve(TEST_USER_ID, "summarize", WORDS);
         expect(reserved).toBe(true);
 
-        await refundTodayUsage(TEST_USER_ID, "summarize", WORDS);
+        const refunded = await refund(operationId);
+        expect(refunded).toBe(true);
 
         const after = await snapshotUsage(TEST_USER_ID);
         expect(after?.summarizeCount).toBe(beforeCount);
@@ -186,15 +128,16 @@ describe("quota refund after AI failure (W1)", () => {
         const beforeWords = before?.correctWords ?? 0;
 
         const WORDS = 30;
-        await reserveTodayUsage(TEST_USER_ID, "correct", WORDS);
+        const { reserved, operationId } = await reserve(TEST_USER_ID, "correct", WORDS);
+        expect(reserved).toBe(true);
+
         // A bug-triggered DOUBLE refund (e.g. retry handler fires twice):
-        await refundTodayUsage(TEST_USER_ID, "correct", WORDS);
-        await refundTodayUsage(TEST_USER_ID, "correct", WORDS);
+        const firstRefund = await refund(operationId);
+        expect(firstRefund).toBe(true);
+        const secondRefund = await refund(operationId);
+        expect(secondRefund).toBe(false);
 
         const after = await snapshotUsage(TEST_USER_ID);
-        // GREATEST(..., 0) guarantees the counter can never go negative,
-        // and can never fall below the pre-reservation value minus one
-        // reservation's worth of words.
         expect(after!.correctWords).toBeGreaterThanOrEqual(0);
         expect(after!.correctWords).toBeGreaterThanOrEqual(beforeWords - WORDS);
     });
@@ -207,13 +150,15 @@ describe("quota refund after AI failure (W1)", () => {
         const beforeWords = before?.correctWords ?? 0;
 
         const WORDS = 50;
-        const reserved = await reserveTodayUsage(TEST_USER_ID, "correct", WORDS);
-        expect(reserved).toBe(true);
+        const { reserved: res1, operationId: op1 } = await reserve(TEST_USER_ID, "correct", WORDS);
+        expect(res1).toBe(true);
 
         // A concurrent successful request from the same user:
-        await reserveTodayUsage(TEST_USER_ID, "correct", 40);
+        const { reserved: res2 } = await reserve(TEST_USER_ID, "correct", 40);
+        expect(res2).toBe(true);
 
-        await refundTodayUsage(TEST_USER_ID, "correct", WORDS);
+        const refunded = await refund(op1);
+        expect(refunded).toBe(true);
 
         const after = await snapshotUsage(TEST_USER_ID);
         // Net effect = +40 from the successful request only.
@@ -230,10 +175,10 @@ describe("quota refund after AI failure (W1)", () => {
         // Exhaust the whole limit at once if space allows:
         const spare = LIMIT - beforeWords;
         if (spare >= 10) {
-            const reserved = await reserveTodayUsage(TEST_USER_ID, "correct", spare);
+            const { reserved } = await reserve(TEST_USER_ID, "correct", spare);
             expect(reserved).toBe(true);
             // One more word must be rejected:
-            const rejected = await reserveTodayUsage(TEST_USER_ID, "correct", 1);
+            const { reserved: rejected } = await reserve(TEST_USER_ID, "correct", 1);
             expect(rejected).toBe(false);
         }
         // Either way counters must be deterministic; nothing here depends
