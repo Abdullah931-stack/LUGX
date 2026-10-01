@@ -24,7 +24,7 @@ remain in place as a **second layer of defense**, not a substitute.
 | `src/test/test-db.ts` | Calls the guard BEFORE creating the pg Pool and prints the branch identity line. |
 | `drizzle.config.test.ts` | `drizzle-kit push` target resolved from `TEST_DATABASE_URL ?? DATABASE_URL`. |
 | `vitest.constants.mts` | Defines `LIVE_TEST_FILES` — the single source of truth for suites requiring real environments (isolated Neon branch / live AI keys). |
-| `vitest.live.config.mts` | LIVE suite config importing `LIVE_TEST_FILES`. |
+| `vitest.live.config.mts` | LIVE suite config importing `LIVE_TEST_FILES`, enforcing strict sequential execution via `fileParallelism: false` to eliminate cross-suite database deadlocks. |
 | `vitest.live.global-setup.ts` | Fail-closed gate for `test:live`: verifies guard rules AND branch reachability up front; refuses to start otherwise (no silent skips). |
 | `vitest.config.mts` | Default config — excludes every `LIVE_TEST_FILES` entry, so plain `npm run test` can structurally never touch a real environment. |
 
@@ -47,7 +47,7 @@ LIVE suites registered in `vitest.constants.mts` (21 hermetic database suites):
 7. `src/test/ai/ai-atomic-commit.integration.test.ts`
 8. `src/test/sync/conflict-resolution.integration.test.ts`
 9. `src/test/ai/ai-quota-idempotency.live.test.ts`
-10. `src/test/ai/ai-server-atomic-commit.live.test.ts`
+10. `src/test/server/phase-08-ownership-and-cycles.test.ts`
 11. `src/test/editor/editor-orchestration.live.test.ts`
 12. `src/test/ai/ai-preview-decision.live.test.ts`
 13. `src/test/ai/ai-reservation-status.live.test.ts`
@@ -64,13 +64,13 @@ LIVE suites registered in `vitest.constants.mts` (21 hermetic database suites):
 
 ### Formerly-mocked suites — LIVE twins now implemented (post Phase 10 follow-up)
 
-The five suites below had fully-mocked persistence when inventoried; real-
+The suites below had fully-mocked persistence when inventoried; real-
 branch live twins were added and registered in `vitest.constants.mts`:
 
-| Mocked contract suite | LIVE twin (added 2026-08-24) |
+| Mocked contract suite | LIVE twin |
 |---|---|
 | `src/test/ai/ai-quota-idempotency.test.ts` | `src/test/ai/ai-quota-idempotency.live.test.ts` — incl. concurrent same-operationId race on real rows |
-| `src/test/ai/ai-server-atomic-commit.test.ts` | `src/test/ai/ai-server-atomic-commit.live.test.ts` — only `getUser` mocked; real tx row-level assertions |
+| `src/test/ai/ai-server-atomic-commit.test.ts` | `src/test/ai/ai-atomic-commit.integration.test.ts` — real interactive transactions, live ACID rollbacks, and unauthenticated route isolation |
 | `src/test/editor/editor-orchestration.integration.test.ts` | `src/test/editor/editor-orchestration.live.test.ts` — real file-ops actions; real 412 vs sibling write + merge resolution |
 | `src/test/ai/ai-preview-decision.test.ts` | `src/test/ai/ai-preview-decision.live.test.ts` — hook-generated operationId settled against real reservation rows |
 | `src/test/api/stripe-webhook.test.ts` | `src/test/api/stripe-webhook.live.test.ts` — REAL HMAC signature verification + persisted tier/subscription rows (durable-ledger dedupe deferred to Phase 13) |
@@ -88,8 +88,10 @@ Database operations across the application and testing harness utilize an intell
 
 ### Deterministic Namespaced User IDs & Concurrency Isolation
 
-To guarantee 100% isolation when integration test suites run in parallel against a shared test database:
-- Every suite is allocated a deterministic, non-overlapping placeholder UUID range matching `/^(\d{4})\1-\1-\1-\1-\1{3}$/` (e.g. `1111...` for `ai-ops.integrity`, `1313...`/`1414...` for `cross-user-ownership`, `1515...` for `editor-orchestration`, `1616...` for `ai-server-atomic-commit`, `2323...`/`2424...`/`2525...` for `stripe/webhook`).
+To guarantee 100% isolation when integration test suites run against a shared test database:
+- Strict Sequential Suite Execution: Enforced via `fileParallelism: false` in `vitest.live.config.mts`, eliminating concurrent transaction interleaving and PostgreSQL cascading foreign key deadlocks (`40P01`).
+- Deterministic Placeholder UUID Namespaces: Every suite is allocated a deterministic, non-overlapping placeholder UUID range matching `/^(\d{4})\1-\1-\1-\1-\1{3}$/` (e.g. `1111...` for `ai-ops.integrity`, `1313...`/`1414...` for `cross-user-ownership`, `1515...` for `editor-orchestration`, `1616...` for `ai-server-atomic-commit`, `2323...`/`2424...`/`2525...` for `stripe/webhook`).
+- Resilient Hierarchical Cleanup: `cleanupTestUsers` in `src/test/test-db.ts` explicitly deletes dependent child rows (`subscriptions`, `ai_reservations`, `files`, `usage`, `user_vault_profiles`) prior to removing user records, and guards against transient lock contention with an exponential backoff retry loop.
 - Suites seed their test user rows in `beforeEach` with `onConflictDoNothing()`, preventing cross-suite `CASCADE` deletions when sibling test suites tear down.
 
 The Pool is never created unless **all** of the following hold:
@@ -130,8 +132,8 @@ to a live URL; push failures surface immediately).
 
 ## 5. Evidence of isolation
 
-- **Active Unit & Contract Suite (`npm run test`):** **70 files / 881 tests — all passed (100% pass rate)**, zero LIVE files included.
-- **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 100 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
+- **Active Unit & Contract Suite (`npm run test`):** **68 files / 873 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 118 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
 - Mandatory identity line printed at the start of every live run:

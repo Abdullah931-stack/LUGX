@@ -1,6 +1,27 @@
 # Changelog - LUGX Project
 
-## [1.32.4] - 2026-09-30 (Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection)
+## [1.36.1] - 2026-10-01 (Ad-Hoc Milestone: Automated Test & CI Ecosystem Harmonization)
+
+### Hardened & Harmonized - Automated Test Suite Modernization, Zero Mock Clones & Docker Container Verification
+
+- **Production-Test Architectural Harmonization:**
+  - Resolved structural discrepancies between hardened Phase 8 production code and legacy automated test suites across all 6 functional domains.
+  - Purged duplicate local SQL helper functions from [`src/test/ai/ai-ops.integrity.test.ts`](../src/test/ai/ai-ops.integrity.test.ts) and [`src/test/ai/ai-ops.refund.test.ts`](../src/test/ai/ai-ops.refund.test.ts), migrating them to invoke real production server actions against the isolated test database.
+  - Refactored [`src/test/ai/ai-quota-idempotency.test.ts`](../src/test/ai/ai-quota-idempotency.test.ts) into pure, deterministic unit tests of `quota-settlement-reducer.ts` verifying mathematical quota conservation ($U_{final} + R_{active} \equiv \text{constant}$) in $<20\text{ms}$.
+  - Merged redundant live/unit duplicate test files: `ai-server-atomic-commit.live.test.ts` merged into `ai-atomic-commit.integration.test.ts` (7/7 passed), and `ai-client-abort-propagation.test.ts` merged into `ai-client.test.ts` (24/24 passed).
+  - Relocated domain-mismatched test `src/test/parsers/file-conversion.test.ts` to `src/test/sync/file-vault-conversion.test.ts`.
+
+- **Production Scope Boundary Enforcement:**
+  - Enforced strict single-phase lifecycle rules: reverted all algorithmic changes to production code (`subscription-actions.ts`, `arabic-normalizer.ts`, `conflict-resolver.ts`), preserving system runtime stability.
+  - Preserved only minimal additive test-enablement additions: `export getTodayUsage` in `ai-ops.ts` and `DocumentStoragePayload` conversion helpers in `idb-types.ts`.
+  - Mapped discovered production code deficiencies directly to their authoritative phases in `COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md` (Phases 11, 12, 15, and 20).
+
+- **Dual-Environment Test & CI Verification:**
+  - Verified 100% test pass rate in local Vitest engine: 68 unit/contract suites (873 tests passed, 0 failures) and 21 live database suites (118 tests passed, 0 failures).
+  - Verified 100% containerized pipeline in Docker via `act push`: Stage 1 Quality Gate (`EXIT 0`) and Stage 2 Unit Contracts (`EXIT 0`).
+  - Audited documentation SSOT metrics (68 unit suites, 873 tests) and link validity (85 files, 220 links, 0 broken).
+
+## [1.36.0] - 2026-09-30 (Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection)
 
 ### Added & Hardened - Identity Barriers, Folder Tree Cycle Detection & Concurrency Locking
 

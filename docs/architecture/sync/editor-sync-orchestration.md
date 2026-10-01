@@ -413,7 +413,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 ## 7. Verification Proof
 
 - **Automated Test Execution Evidence:**
-  - `src/test/sync/sync-conflict-resolver.test.ts` (32/32 passing)
+  - `src/test/sync/sync-conflict-resolver.test.ts` (39/39 passing)
   - `src/test/sync/sync-manager.test.ts` (36/36 passing)
   - `src/test/editor/editor-orchestration.integration.test.ts` (18/18 passing)
   - `src/test/sync/use-sync.test.ts` (14/14 passing)
@@ -429,15 +429,15 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
     - `src/test/vault/vault-crypto.test.ts` (40/40 passing - W3C chunking, timeout & circuit-breaker queue draining, cross-tab volatile RAM purge & auto-lock synchronization)
     - `src/test/vault/vault-storage.test.ts` (15/15 passing - transparent IndexedDB encryption & raw store inspection)
     - `src/test/vault/vault-orchestration.test.ts` (29/29 passing - dual wrapping, seed recovery, 6-digit PIN, AAD re-encryption, double-encryption guards)
-    - `src/test/vault/vault-actions.unit.test.ts` (20/20 passing - server actions CRUD, validation, 401/404/409 guards, device trust revocation)
+    - `src/test/vault/vault-actions.unit.test.ts` (25/25 passing - server actions CRUD, validation, 401/404/409 guards, device trust revocation, AI toggle settings)
     - `src/test/vault/file-ops-vault.unit.test.ts` (10/10 passing - encryption toggle, optimistic concurrency, copy with re-encrypted override)
     - `src/test/vault/vault-crypto-resilience.unit.test.ts` (17/17 passing - 6-digit PIN, tampering detection, RAM wipeBuffer, SessionKeyStore auto-lock & touch)
     - `src/test/vault/vault-cross-module.integration.test.ts` (5/5 passing - E2E zero-knowledge lifecycle, re-encrypted copy, AI commit, conflict 412, epoch invalidation)
     - `src/test/vault/vault-sync-ai-gate.test.ts` (28/28 passing - dual-layer AI safety barriers, non-blocking sync with CONFLICT_LOCKED quarantine, Markdown syntax validator)
     - `src/test/sync/sync-crypto-gateway.test.ts` (5/5 passing - transparent inbound decryption gateway, fresh outbound CSPRNG IV re-encryption, vault-lock quarantine)
     - `src/test/sync/encrypted-conflict-decryption.integration.test.ts` (4/4 passing - end-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution)
-  - **Vault Subsystem Total:** 10/10 test files, 173/173 tests passing (100% success rate).
-  - **Project Full Test Suite:** 70/70 test files, 881/881 tests passing (100% success rate) via `vitest.config.mts`.
+  - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
+  - **Project Full Test Suite:** 68/68 test files, 873/873 tests passing (100% success rate) via `vitest.config.mts`.
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).
 
 

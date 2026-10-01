@@ -192,7 +192,7 @@ docs/
 | [phase-11-to-15-core-infrastructure/](./records/closures/phase-11-to-15-core-infrastructure/) | Phase 11 to Phase 15 closure dossiers: editor orchestration, auth ownership, Stripe webhooks, Supabase storage purge, and file sanitization |
 | [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
 | [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
-| [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report |
+| [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report; [ad-hoc automated test & CI ecosystem harmonization closure](./records/closures/extensions/ad-hoc-test-and-ci-ecosystem-alignment-closure.md) |
 | [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), Phase 6 (pure state reducers & contractual safety nets), Phase 7 (PostgreSQL schema hardening, migrations & atomic interactive transactions), and Phase 8 (server-authoritative identity, resource ownership guards, cycle detection & optimistic concurrency on deletions: [phase-08 closure dossier](./records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md)) |
 
 #### Completed Plans (`records/plans/`)
@@ -255,8 +255,8 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (70 files, 881 tests via vitest.config.mts)
-npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 100 tests via vitest.live.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (68 files, 873 tests via vitest.config.mts)
+npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 118 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation

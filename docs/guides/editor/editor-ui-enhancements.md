@@ -47,7 +47,7 @@
   - Window-level key listener with `e.repeat` throttling allowing instant circular mode switching (`auto` ➔ `rtl` ➔ `ltr` ➔ `auto`).
 - **Unified Typography & Weight Consistency:**
   - Integrated font stack combining `IBM Plex Sans Arabic` and `Geist Sans` (`var(--font-ibm-plex-arabic), var(--font-geist-sans)`).
-  - Explicit `fontWeight: "400"`, `fontSynthesis: "none"`, and `unicodeBidi: "isolate"` ensuring identical, crisp stroke weights across all direction modes with zero weight jumping.
+  - Explicit `fontWeight: "400"` and `unicodeBidi: "isolate"` ensuring identical, crisp stroke weights across all direction modes with zero weight jumping.
 
 ## Key Files
 - `src/components/editor/direction-menu.tsx`: Direction settings dropdown component.

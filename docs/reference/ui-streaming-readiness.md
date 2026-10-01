@@ -142,7 +142,7 @@ preview and a perceived infinite send/receive deadlock (full root-cause matrix i
   growing it quadratically).
 
 New verification suites: `src/test/ai/ai-stream-completion-terminality.test.ts` (terminality,
-watchdog fail-closed) and `src/test/ai/ai-client-abort-propagation.test.ts` (signal reaches
+watchdog fail-closed) and `src/test/ai/ai-client.test.ts` (signal reaches
 SDK request options).
 
 ---
