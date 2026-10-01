@@ -10,6 +10,9 @@
  */
 export type MarkdownSource = string;
 
+import type { DocumentStoragePayload, PlaintextStoragePayload, EncryptedStoragePayload } from '@/types/storage-payload';
+export type { DocumentStoragePayload, PlaintextStoragePayload, EncryptedStoragePayload };
+
 /**
  * Metadata for end-to-end encrypted envelopes (Zero-Knowledge Vault)
  */
@@ -95,6 +98,8 @@ export interface IDBOperation {
     fileId: string;
     /** Base version expected for optimistic concurrency control */
     baseVersion?: number;
+    /** Monotonically increasing local revision within the client session */
+    localRevision?: number;
     /** Current lifecycle status of the operation */
     status?: OperationStatus;
     /** Number of sync attempts executed */
@@ -256,4 +261,43 @@ export function getDatabaseName(userId?: string): string {
     }
     return `${IDB_CONFIG.DB_NAME_PREFIX}_${userId.trim()}`;
 }
+
+/**
+ * Converts an IDBFile to a compliant DocumentStoragePayload (discriminated union)
+ */
+export function idbFileToStoragePayload(file: IDBFile): DocumentStoragePayload {
+    if (file.isEncrypted && file.encryptionMetadata) {
+        return {
+            type: 'encrypted',
+            ciphertextBase64: file.content,
+            isEncrypted: true,
+            encryptionMetadata: file.encryptionMetadata,
+        };
+    }
+    return {
+        type: 'plaintext',
+        content: file.content,
+        isEncrypted: false,
+        encryptionMetadata: null,
+    };
+}
+
+/**
+ * Converts a DocumentStoragePayload to partial IDBFile fields
+ */
+export function storagePayloadToIDBFile(payload: DocumentStoragePayload): Pick<IDBFile, 'content' | 'isEncrypted' | 'encryptionMetadata'> {
+    if (payload.type === 'encrypted') {
+        return {
+            content: payload.ciphertextBase64,
+            isEncrypted: true,
+            encryptionMetadata: payload.encryptionMetadata,
+        };
+    }
+    return {
+        content: payload.content,
+        isEncrypted: false,
+        encryptionMetadata: null,
+    };
+}
+
 

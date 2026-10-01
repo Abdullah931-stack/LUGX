@@ -733,34 +733,40 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             sessionKeyStore.storeMasterKeyRaw(rawMasterKey, 3600);
             expect(sessionKeyStore.isVaultUnlocked()).toBe(true);
 
-            const validIvBase64 = Buffer.from(new Uint8Array(12).fill(1)).toString('base64');
+            const userId = syncManager['config']?.userId || '';
+            const aad = `vault:file:${userId}:${encryptedFileId}`;
 
-            // Mock cryptoWorkerBridge decrypt/encrypt
-            vi.spyOn(cryptoWorkerBridge, 'decryptAESGCM').mockImplementation(async (_key, ciphertext) => {
-                if (ciphertext === 'cipher-base') return '# Base Document\n\nSection 1 original\n\nSection 2 original\n';
-                if (ciphertext === 'cipher-local') return '# Base Document\n\nSection 1 local edit\n\nSection 2 original\n';
-                if (ciphertext === 'cipher-remote') return '# Base Document\n\nSection 1 original\n\nSection 2 remote edit\n';
-                if (ciphertext === 'merged-reencrypted-ciphertext') return 'merged-reencrypted-ciphertext';
-                return ciphertext;
-            });
+            const basePlaintext = '# Base Document\n\nSection 1 original\n\nSection 2 original\n';
+            const localPlaintext = '# Base Document\n\nSection 1 local edit\n\nSection 2 original\n';
+            const remotePlaintext = '# Base Document\n\nSection 1 original\n\nSection 2 remote edit\n';
 
-            vi.spyOn(cryptoWorkerBridge, 'generateRandomBytes').mockImplementation(async (len: number = 12) => new Uint8Array(len).fill(1));
-            vi.spyOn(cryptoWorkerBridge, 'encryptAESGCM').mockResolvedValue({
-                ciphertextBase64: 'merged-reencrypted-ciphertext',
-                ivBase64: validIvBase64,
-            });
+            const iv1 = crypto.getRandomValues(new Uint8Array(12));
+            const iv2 = crypto.getRandomValues(new Uint8Array(12));
+            const iv3 = crypto.getRandomValues(new Uint8Array(12));
 
-            // Setup initial local file in IndexedDB
+            const encBase = await cryptoWorkerBridge.encryptAESGCM(rawMasterKey, basePlaintext, iv1, aad);
+            const encLocal = await cryptoWorkerBridge.encryptAESGCM(rawMasterKey, localPlaintext, iv2, aad);
+            const encRemote = await cryptoWorkerBridge.encryptAESGCM(rawMasterKey, remotePlaintext, iv3, aad);
+
+            // Setup initial local file in IndexedDB with real encrypted local payload
             await syncManager['idb'].saveFile({
                 id: encryptedFileId,
                 title: 'enc-doc.md',
                 parentFolderId: null,
                 isFolder: false,
-                content: 'cipher-local',
+                content: encLocal.ciphertextBase64,
                 etag: 'etag-old',
                 version: 1,
                 isDirty: true,
                 isEncrypted: true,
+                encryptionMetadata: {
+                    version: 1,
+                    algorithm: 'AES-GCM-256',
+                    keyId: 'master-v1',
+                    salt: '',
+                    iv: encLocal.ivBase64,
+                    kdfIterations: 600000,
+                },
                 lastModified: Date.now(),
                 lastSyncedAt: Date.now(),
             });
@@ -772,12 +778,12 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             });
             global.fetch = globalFetchMock;
 
-            // Set up pending conflict with valid base64 IVs
+            // Set up pending conflict with real encrypted envelopes
             syncManager['pendingEncryptedConflicts'].set(encryptedFileId, {
                 fileId: encryptedFileId,
-                remoteEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: validIvBase64, salt: '', ciphertext: 'cipher-remote', kdfIterations: 600000 },
-                baseEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: validIvBase64, salt: '', ciphertext: 'cipher-base', kdfIterations: 600000 },
-                localEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: validIvBase64, salt: '', ciphertext: 'cipher-local', kdfIterations: 600000 },
+                remoteEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: encRemote.ivBase64, salt: '', ciphertext: encRemote.ciphertextBase64, kdfIterations: 600000 },
+                baseEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: encBase.ivBase64, salt: '', ciphertext: encBase.ciphertextBase64, kdfIterations: 600000 },
+                localEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: encLocal.ivBase64, salt: '', ciphertext: encLocal.ciphertextBase64, kdfIterations: 600000 },
                 remoteEtag: 'etag-server-412',
                 detectedAt: new Date(),
             });
@@ -799,11 +805,17 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
 
             // Verify local IndexedDB was updated with merged ciphertext, metadata, and marked clean
             const persistedFile = await syncManager['idb'].getFile(encryptedFileId);
-            expect(persistedFile?.content).toBe('merged-reencrypted-ciphertext');
             expect(persistedFile?.isDirty).toBe(false);
             expect(persistedFile?.etag).toBe('etag-merged-success');
             expect(persistedFile?.version).toBe(2);
-            expect(persistedFile?.encryptionMetadata?.iv).toBe(validIvBase64);
+            expect(persistedFile?.isEncrypted).toBe(true);
+            expect(persistedFile?.encryptionMetadata?.iv).toBeDefined();
+
+            // Decrypt the persisted merged ciphertext and verify Diff3 3-way merge correctly merged local and remote edits!
+            const mergedIv = Buffer.from(persistedFile!.encryptionMetadata!.iv, 'base64');
+            const mergedPlaintext = await cryptoWorkerBridge.decryptAESGCM(rawMasterKey, persistedFile!.content, mergedIv, aad);
+            expect(mergedPlaintext).toContain('Section 1 local edit');
+            expect(mergedPlaintext).toContain('Section 2 remote edit');
         });
 
         it('should clear pending encrypted conflicts and listeners upon destroy()', () => {

@@ -4,6 +4,7 @@ import {
     createUserVaultProfile,
     updateVaultPassword,
     revokeAllTrustedDevices,
+    updateVaultAISetting,
 } from "@/server/actions/vault-actions";
 import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
@@ -360,6 +361,82 @@ describe("Vault Server Actions (Unit Tests)", () => {
             expect(res.success).toBe(false);
             expect(res.status).toBe("error");
             expect(res.error).toBe("Failed to revoke trusted devices");
+        });
+    });
+
+    describe("updateVaultAISetting", () => {
+        it("should require an authenticated user session", async () => {
+            vi.mocked(getUser).mockResolvedValueOnce(null);
+
+            const res = await updateVaultAISetting(true);
+            expect(res.success).toBe(false);
+            expect(res.status).toBe("unauthorized");
+            expect(res.error).toBe("Authentication required");
+        });
+
+        it("should return not_found when user has no existing vault profile", async () => {
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            vi.mocked(db.query.userVaultProfiles.findFirst).mockResolvedValueOnce(undefined);
+
+            const res = await updateVaultAISetting(true);
+            expect(res.success).toBe(false);
+            expect(res.status).toBe("not_found");
+            expect(res.error).toBe("Vault profile not found");
+        });
+
+        it("should update allowAIOnEncryptedFiles to true successfully", async () => {
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            vi.mocked(db.query.userVaultProfiles.findFirst).mockResolvedValueOnce({
+                userId: mockUser.id,
+                allowAIOnEncryptedFiles: false,
+            } as any);
+
+            const mockWhere = vi.fn().mockResolvedValueOnce(undefined);
+            const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
+            vi.mocked(db.update).mockReturnValue({ set: mockSet } as any);
+
+            const res = await updateVaultAISetting(true);
+            expect(res.success).toBe(true);
+            expect(res.data).toEqual({ allowAIOnEncryptedFiles: true });
+            expect(mockSet).toHaveBeenCalledWith(
+                expect.objectContaining({ allowAIOnEncryptedFiles: true })
+            );
+        });
+
+        it("should update allowAIOnEncryptedFiles to false successfully", async () => {
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            vi.mocked(db.query.userVaultProfiles.findFirst).mockResolvedValueOnce({
+                userId: mockUser.id,
+                allowAIOnEncryptedFiles: true,
+            } as any);
+
+            const mockWhere = vi.fn().mockResolvedValueOnce(undefined);
+            const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
+            vi.mocked(db.update).mockReturnValue({ set: mockSet } as any);
+
+            const res = await updateVaultAISetting(false);
+            expect(res.success).toBe(true);
+            expect(res.data).toEqual({ allowAIOnEncryptedFiles: false });
+            expect(mockSet).toHaveBeenCalledWith(
+                expect.objectContaining({ allowAIOnEncryptedFiles: false })
+            );
+        });
+
+        it("should handle database update errors gracefully", async () => {
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            vi.mocked(db.query.userVaultProfiles.findFirst).mockResolvedValueOnce({
+                userId: mockUser.id,
+                allowAIOnEncryptedFiles: false,
+            } as any);
+
+            vi.mocked(db.update).mockImplementationOnce(() => {
+                throw new Error("Neon connection failed");
+            });
+
+            const res = await updateVaultAISetting(true);
+            expect(res.success).toBe(false);
+            expect(res.status).toBe("error");
+            expect(res.error).toBe("Failed to update vault AI setting");
         });
     });
 });
