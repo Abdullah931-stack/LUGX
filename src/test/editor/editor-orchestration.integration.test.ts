@@ -783,21 +783,29 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         });
 
         it("should lock editor UI, disable editing, and transition hydration when sibling tab broadcasts vault_locked", async () => {
+            const mockEncryptionMetadata = {
+                version: 1,
+                algorithm: "AES-GCM-256",
+                keyId: "vault-key-1",
+                salt: "0123456789abcdef0123456789abcdef",
+                iv: "0123456789ab",
+            };
             mockLocalDb[fileId] = {
                 id: fileId,
                 title: "Encrypted Note",
-                content: "Secret content",
+                content: "U2VjcmV0IGNvbnRlbnQ=",
                 version: 1,
                 etag: "etag-v1",
                 isDirty: false,
                 isEncrypted: true,
+                encryptionMetadata: mockEncryptionMetadata,
             };
             vi.mocked(fileOps.getFile).mockResolvedValue({
                 success: true,
                 data: {
                     id: fileId,
                     title: "Encrypted Note",
-                    content: "Secret content",
+                    content: "U2VjcmV0IGNvbnRlbnQ=",
                     version: 1,
                     etag: "etag-v1",
                     createdAt: new Date(),
@@ -806,7 +814,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
                     parentFolderId: null,
                     isFolder: false,
                     isEncrypted: true,
-                    encryptionMetadata: null,
+                    encryptionMetadata: mockEncryptionMetadata,
                     deletedAt: null,
                 },
             });
@@ -840,21 +848,29 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         });
 
         it("should lock editor UI, disable editing, and cancel pending auto-save when local SessionKeyStore locks", async () => {
+            const mockEncryptionMetadata = {
+                version: 1,
+                algorithm: "AES-GCM-256",
+                keyId: "vault-key-1",
+                salt: "0123456789abcdef0123456789abcdef",
+                iv: "0123456789ab",
+            };
             mockLocalDb[fileId] = {
                 id: fileId,
                 title: "Encrypted Note Local Lock",
-                content: "Secret content",
+                content: "U2VjcmV0IGNvbnRlbnQ=",
                 version: 1,
                 etag: "etag-v1",
                 isDirty: false,
                 isEncrypted: true,
+                encryptionMetadata: mockEncryptionMetadata,
             };
             vi.mocked(fileOps.getFile).mockResolvedValue({
                 success: true,
                 data: {
                     id: fileId,
                     title: "Encrypted Note Local Lock",
-                    content: "Secret content",
+                    content: "U2VjcmV0IGNvbnRlbnQ=",
                     version: 1,
                     etag: "etag-v1",
                     createdAt: new Date(),
@@ -863,7 +879,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
                     parentFolderId: null,
                     isFolder: false,
                     isEncrypted: true,
-                    encryptionMetadata: null,
+                    encryptionMetadata: mockEncryptionMetadata,
                     deletedAt: null,
                 },
             });

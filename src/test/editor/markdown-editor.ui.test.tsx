@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
 import { createRef } from "react";
-import { describe, it, expect, vi } from "vitest";
-import { render, act, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, act, waitFor, cleanup } from "@testing-library/react";
 import { MarkdownEditor } from "@/components/editor/markdown/markdown-editor";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 
 describe("MarkdownEditor React Component", () => {
+    afterEach(() => {
+        cleanup();
+        const head = document.head;
+        while (head.firstChild) {
+            head.removeChild(head.firstChild);
+        }
+    });
     it("renders properly with default props", async () => {
         const { container } = render(
             <MarkdownEditor defaultValue="# Initial Title\n\nSome body text." />

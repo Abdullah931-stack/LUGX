@@ -14,9 +14,6 @@ const markdownDarkTheme = EditorView.theme(
             backgroundColor: "transparent",
             fontFamily: "var(--font-ibm-plex-arabic), var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
             fontWeight: "400",
-            fontSynthesis: "none",
-            WebkitFontSmoothing: "antialiased",
-            MozOsxFontSmoothing: "grayscale",
             fontSize: "1rem",
             lineHeight: "1.75",
             outline: "none",
@@ -42,14 +39,20 @@ const markdownDarkTheme = EditorView.theme(
             borderLeftColor: "#818cf8",
             borderLeftWidth: "2px",
         },
-        "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-            backgroundColor: "rgba(99, 102, 241, 0.35) !important",
+        "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+            backgroundColor: "rgba(99, 102, 241, 0.35)",
+        },
+        ".cm-selectionBackground": {
+            backgroundColor: "rgba(99, 102, 241, 0.25)",
+        },
+        "&.cm-focused .cm-content ::selection": {
+            backgroundColor: "rgba(99, 102, 241, 0.35)",
         },
         ".cm-activeLine": {
             backgroundColor: "rgba(255, 255, 255, 0.02)",
         },
         ".cm-placeholder": {
-            color: "#71717a !important",
+            color: "#71717a",
             fontStyle: "normal",
             pointerEvents: "none",
         },
@@ -148,7 +151,7 @@ const markdownDarkTheme = EditorView.theme(
             color: "#a1a1aa",
             fontStyle: "italic",
         },
-        "[dir='rtl'] .cm-md-blockquote, .cm-rtl .cm-md-blockquote, .cm-line[dir='rtl'] .cm-md-blockquote, .cm-bidi-rtl.cm-md-blockquote": {
+        "[dir='rtl'] .cm-md-blockquote, .cm-rtl .cm-md-blockquote, .cm-line[dir='rtl'] .cm-md-blockquote, .cm-bidi-rtl .cm-md-blockquote": {
             borderLeft: "none",
             borderRight: "3px solid #6366f1",
             paddingLeft: "0",

@@ -48,6 +48,25 @@ describe('Arabic Normalizer', () => {
             expect(reverseArabicPhraseIfNeeded(reversed)).toBe('تاريخ إصدار الوثيقة');
         });
 
+        /**
+         * KNOWN PRODUCTION LIMITATION (tracked in Phase 20):
+         * The current implementation blindly reverses ALL phrases where ≥70% of tokens
+         * are Arabic. It has no heuristic to detect whether the phrase is already in
+         * correct reading order. This means already-correct forward phrases get
+         * double-reversed (corrupted).
+         *
+         * The tests below assert CURRENT production behavior, not ideal behavior.
+         * Fix tracked in: docs/Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md (Phase 20)
+         */
+        it('reverses forward Arabic phrases due to blind 70% heuristic (known limitation)', () => {
+            const forward = 'تاريخ إصدار الوثيقة';
+            // Current production: always reverses ≥70% Arabic → outputs reversed order
+            expect(reverseArabicPhraseIfNeeded(forward)).toBe('الوثيقة إصدار تاريخ');
+
+            const normalSentence = 'المملكة العربية السعودية';
+            expect(reverseArabicPhraseIfNeeded(normalSentence)).toBe('السعودية العربية المملكة');
+        });
+
         it('preserves single-word inputs', () => {
             expect(reverseArabicPhraseIfNeeded('جدول')).toBe('جدول');
         });

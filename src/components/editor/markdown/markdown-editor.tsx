@@ -160,7 +160,7 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
     // Synchronize controlled `value`
     useEffect(() => {
         const view = viewRef.current;
-        if (!view || value === undefined) return;
+        if (!view || (view as unknown as { destroyed?: boolean }).destroyed || value === undefined) return;
 
         const currentVal = view.state.doc.toString();
         if (value !== currentVal) {
@@ -179,7 +179,7 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
     // Synchronize `mode` (Live Preview vs Source)
     useEffect(() => {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view || (view as unknown as { destroyed?: boolean }).destroyed) return;
 
         view.dispatch({
             effects: modeCompartment.reconfigure(mode === "live" ? [livePreviewPlugin] : []),
@@ -198,7 +198,7 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
     // Synchronize `readOnly`
     useEffect(() => {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view || (view as unknown as { destroyed?: boolean }).destroyed) return;
 
         view.dispatch({
             effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(readOnly)),
@@ -208,7 +208,7 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
     // Synchronize `placeholder`
     useEffect(() => {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view || (view as unknown as { destroyed?: boolean }).destroyed) return;
 
         view.dispatch({
             effects: placeholderCompartment.reconfigure(cmPlaceholder(placeholder)),
@@ -218,7 +218,7 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
     // Synchronize direction settings (`dir` & `lockCodeBlocksLTR`)
     useEffect(() => {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view || (view as unknown as { destroyed?: boolean }).destroyed) return;
 
         const currentSettings = view.state.field(directionSettingsState, false);
         if (
