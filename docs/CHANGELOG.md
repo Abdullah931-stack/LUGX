@@ -1,5 +1,41 @@
 # Changelog - LUGX Project
 
+## [1.40.0] - 2026-10-02 (Phase 12: Stripe 1:N Subscriptions, Idempotency & Webhook Hardening)
+
+### Added & Hardened - Stripe 1:N Subscriptions, Dynamic MAX(tier) Derivation, Webhook Retry Mandate & Customer Portal
+
+- **Strict Webhook Error Handling & Retry Mandate (`src/app/api/stripe/webhook/route.ts`, `src/server/actions/subscription-actions.ts`):**
+  - Remediates audit findings `LUGX-025, LUGX-148`.
+  - Eliminated error swallowing. Webhook immediately returns HTTP 500 on transient database disconnects/unhandled errors to mandate Stripe retries, and returns HTTP 503 (`Retry-After: 5`) on lock contention. Returns HTTP 200 ONLY on successful transaction commit or genuine idempotent duplicates.
+  - Updated `isSubscriptionEventProcessed` to re-throw database query errors so transient failures never pretend to be successful or silently pass.
+
+- **1:N Multi-Subscription Tracking & MAX(tier) Derivation (`src/server/services/billing-service.ts`, `src/server/actions/subscription-actions.ts`):**
+  - Remediates audit findings `LUGX-027, LUGX-135`.
+  - Implemented authoritative `BillingService` managing 1:N subscriptions per user indexed by `stripe_subscription_id`.
+  - Calculates effective user tier dynamically via `BillingService.calculateEffectiveTier` using numeric hierarchy (`ultra: 2 > pro: 1 > free: 0`).
+  - Recalculates effective tier on cancellation without downgrading users holding other active subscriptions (e.g. canceling Ultra retains Pro).
+
+- **Multi-Source User ID Resolution & Grace Period Preservation (`src/server/services/billing-service.ts`, `src/app/api/stripe/webhook/route.ts`):**
+  - Remediates audit findings `LUGX-026, LUGX-141`.
+  - Resolved user ID via 4 candidate sources: `metadata.userId`, `subscription_details.metadata.userId`, fast indexed lookup on `users.stripeCustomerId`, or existing subscription record matching `stripe_subscription_id`.
+  - Preserved active tier on initial `invoice.payment_failed` by updating status to `past_due` without immediate tier wipe, allowing smart retry windows.
+
+- **Paused Status & Reverse Price-to-Tier Mapping (`src/server/db/schema/subscriptions.ts`, `src/lib/stripe/config.ts`, `src/lib/stripe/webhook-event-reducer.ts`):**
+  - Remediates audit findings `LUGX-068, LUGX-069`.
+  - Added `'paused'` status to `subscription_status` enum in DDL migration `0012_add_paused_to_subscription_status.sql`.
+  - Treated `paused` as non-terminal in `webhook-event-reducer.ts` (`isTerminal: false`) allowing seamless resumption.
+  - Provided `getTierFromPriceId(priceId)` helper for reverse tier lookup from Stripe Price IDs.
+
+- **Stripe Customer Portal Integration (`src/server/services/billing-service.ts`):**
+  - Remediates audit finding `LUGX-149`.
+  - Added `BillingService.createCustomerPortalSession(userId, returnUrl?)` using `stripe.billingPortal.sessions.create` for self-serve subscription management.
+
+- **Comprehensive Automated Verification:**
+  - Added `src/test/server/billing-service.test.ts` (16/16 unit tests passed).
+  - Expanded `src/test/api/stripe-webhook.test.ts` (18/18 unit tests passed).
+  - Expanded `src/test/api/stripe-webhook.live.test.ts` (7/7 live tests passed against Neon branch).
+  - 0 TypeScript compiler errors (`npx tsc --noEmit`), 0 ESLint errors (`npm run lint`), and 100% markdown link integrity.
+
 ## [1.39.0] - 2026-10-02 (Phase 11: AI Service & Deterministic Server Settlement)
 
 ### Added & Hardened - Revocation of Client Financial Authority, Server-Authoritative Stream Settlement, Replay Defense & Decoupled File Commit

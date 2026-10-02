@@ -34,13 +34,19 @@ sequenceDiagram
     StripeWebhook->>Redis: L1.5: Acquire in-flight lock (stripe:lock:eventId NX EX 30)
     alt Lock Contended
         Redis-->>StripeWebhook: null
-        StripeWebhook-->>StripeCheckout: Return 200 { received: true, deduplicated: true }
+        StripeWebhook-->>StripeCheckout: Return 503 Service Unavailable (Retry-After: 5)
     else Lock Acquired / Fail-Open
         StripeWebhook->>DB: L2: Check durable idempotency (subscription_events)
-        StripeWebhook->>DB: Atomic Transaction: Update User Tier + Upsert Sub + Record Event
-        DB-->>StripeWebhook: Commit OK
-        StripeWebhook->>Redis: SET stripe:dedup:eventId EX 86400 & DEL stripe:lock:eventId
-        StripeWebhook-->>StripeCheckout: Return 200 { received: true, event: eventId }
+        StripeWebhook->>DB: Atomic Transaction: Sync Sub (1:N) + Recalculate MAX(tier) + Record Event
+        alt DB Mutation Success
+            DB-->>StripeWebhook: Commit OK
+            StripeWebhook->>Redis: SET stripe:dedup:eventId EX 86400 & DEL stripe:lock:eventId
+            StripeWebhook-->>StripeCheckout: Return 200 { received: true, event: eventId }
+        else Mutation Failure / Transient Error
+            DB-->>StripeWebhook: Rollback
+            StripeWebhook->>Redis: DEL stripe:lock:eventId
+            StripeWebhook-->>StripeCheckout: Return 500 Internal Server Error (Mandate Stripe Retry)
+        end
     end
     StripeCheckout-->>User: Redirect to dashboard
 ```
@@ -137,37 +143,38 @@ export function isTerminalSubscriptionStatus(status: SubscriptionStatus): boolea
   - `500` - Server error
 
 #### POST `/api/stripe/webhook` (Canonical Handler)
-Authoritative webhook ingestion endpoint with alias re-export at `/api/webhooks/stripe`.
+Authoritative webhook ingestion endpoint with alias re-exports at `/api/webhooks/stripe` and `/api/billing/webhook`.
 
 **Security & Invariants:**
 - **HMAC Signature Verification:** Verified against `STRIPE_WEBHOOK_SECRET` with `MAX_TIMESTAMP_AGE_SECONDS = 300` before JSON parsing or DB operations.
-- **Multi-Tiered Idempotency & Distributed Lock (Phase 21):**
+- **Multi-Tiered Idempotency & Distributed Lock (Phase 12 & Phase 21):**
   - **L1 (Memory):** In-memory Set fast-path check.
   - **L1.5 (Redis Dedup):** `stripe:dedup:${eventId}` cache check with 24h TTL (shields PostgreSQL).
-  - **L1.5 (Redis Lock):** In-flight distributed concurrency lock via `stripe:lock:${eventId}` (`NX EX 30`) drops concurrent executions with 200 `{ deduplicated: true }` and fails open to PostgreSQL ACID transactions upon Redis outage or 1500ms timeout (with explicit `clearTimeout` timer cleanup in `finally` and bounded single-retry policy `retry: { retries: 1, backoff: 50ms }`).
-  - **L2 (DB Ledger):** Authoritative `subscription_events` database query & atomic ACID insertion.
-- **Atomic ACID Transitions:** Encapsulated in `executeSubscriptionTransition(tx)`.
-- **Terminal State Protection:** A subscription in `canceled` state rejects stale `customer.subscription.updated` events attempting to set it back to `active`.
-- **Accurate Period Derivation:** Derives periods from `SubscriptionItem` or `Invoice.lines`, guaranteeing `currentPeriodEnd > currentPeriodStart`.
+  - **L1.5 (Redis Lock):** In-flight distributed concurrency lock via `stripe:lock:${eventId}` (`NX EX 30`). Returns `503 Service Unavailable` with `Retry-After: 5` header on contention so Stripe retries automatically.
+  - **L2 (DB Ledger):** Authoritative `subscription_events` database query & atomic ACID insertion. Re-throws DB errors to trigger HTTP 500 retries.
+- **Strict Error Handling & Retry Mandate (LUGX-025, LUGX-148):** Transient database errors, lock contention, or unhandled failures return HTTP 500/503. Webhook returns HTTP 200 ONLY on successful transaction commit or genuine idempotent duplicates.
+- **1:N Multi-Subscriptions & Dynamic MAX(tier) (LUGX-027):** Users can hold multiple active subscriptions indexed by `stripe_subscription_id`. The user's tier is dynamically derived via `BillingService.calculateEffectiveTier` (`MAX(tier)` where ultra > pro > free).
+- **Grace Period Preservation (LUGX-026):** On `invoice.payment_failed`, the subscription status is marked `past_due` without immediately wiping user tier, allowing smart retries.
+- **Terminal State Protection (LUGX-069):** A subscription in `canceled` state rejects stale `customer.subscription.updated` events, while `paused` status is non-terminal.
 
 **Supported Events:**
 - `checkout.session.completed` — Upgrades tier and records subscription upon confirmed payment.
-- `customer.subscription.updated` — Updates tier and subscription status (fail-closed on unmapped statuses).
-- `customer.subscription.deleted` — Downgrades user to `free` and marks subscription `canceled`.
+- `customer.subscription.updated` — Updates tier and subscription status (fail-closed on unmapped statuses; supports `paused`).
+- `customer.subscription.deleted` — Cancels subscription and recalculates tier from remaining active subscriptions.
 - `customer.subscription.trial_will_end` — Informational notice; preserves user tier.
-- `invoice.payment_failed` — Immediately downgrades tier to `free` and reconciles subscription status locally.
+- `invoice.payment_failed` — Marks subscription `past_due` during grace period without premature tier wipe.
 
 ---
 
-### 3. Server Actions (`src/server/actions/subscription-actions.ts`)
+### 3. Billing Service (`src/server/services/billing-service.ts`)
 
-- `executeSubscriptionTransition(operation)`: Executes DB mutations within an atomic transaction.
-- `getUserSubscription(userId, client?)`: Queries user subscription from local PostgreSQL state.
-- `isSubscriptionEventProcessed(eventId, client?)`: Checks durable idempotency in `subscription_events`.
-- `recordSubscriptionEvent(eventData, client?)`: Persists webhook event ID and processing status.
-- `updateUserTier(userId, tier, client?)`: Updates user's subscription tier.
-- `upsertSubscription(userId, subscriptionData, client?)`: Creates or updates subscription row.
-- `cancelUserSubscription(userId, client?)`: Downgrades user to free and cancels subscription record.
+- `calculateEffectiveTier(userId, client?)`: Computes `MAX(tier)` among all active/trialing subscriptions.
+- `resolveUserId(options, client?)`: Resolves `userId` across metadata, customer ID lookup, and subscription records.
+- `syncSubscription(data, client?)`: Upserts subscription row (1:N) and recalculates effective tier atomically.
+- `handleCancellation(subId, fallbackUserId?, client?)`: Cancels specific subscription and recalculates remaining tier.
+- `handleInvoicePaymentFailed(options, client?)`: Sets subscription to `past_due` without destroying other active tiers.
+- `createCustomerPortalSession(userId, returnUrl?)`: Generates Stripe Customer Portal session URL.
+- `getUserSubscriptions(userId, client?)`: Returns all subscriptions held by a user.
 
 ---
 
@@ -196,9 +203,14 @@ const tierHierarchy = {
 
 ### 5. Verification & Testing
 
-#### Unit Tests:
+#### Webhook Route Unit Tests:
 ```bash
 npx vitest run src/test/api/stripe-webhook.test.ts
+```
+
+#### BillingService Domain Logic Unit Tests (1:N & MAX(tier)):
+```bash
+npx vitest run src/test/server/billing-service.test.ts
 ```
 
 #### Redis Live Integration & Lock Contention Tests (In-Memory REST Mock):
@@ -213,7 +225,7 @@ npx vitest run --config vitest.live.config.mts src/test/api/stripe-webhook.live.
 
 ---
 
-**Last Updated:** 2026-09-30  
-**Version:** 1.35.1  
-**Status:** ✅ Phase 4 Hardened & Synchronized
+**Last Updated:** 2026-10-02  
+**Version:** 1.40.0  
+**Status:** ✅ Phase 12 Hardened & Synchronized
 

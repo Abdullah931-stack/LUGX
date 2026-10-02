@@ -367,7 +367,7 @@ Transition AI quota lifecycle into a deterministic server-driven state machine t
 
 ---
 
-### [Phase 12: Stripe 1:N Subscriptions, Idempotency & Webhook Hardening] — Status: ⏳ PLANNED
+### [Phase 12: Stripe 1:N Subscriptions, Idempotency & Webhook Hardening] — Status: ✅ COMPLETED
 > **Execution Origin:** Independent Remediation Plan - Group 6  
 > **Single Responsibility (SRP):** Support 1:N subscriptions per user, dynamically derive user tiers, and return HTTP 500 on transient webhook errors to mandate retries.
 
@@ -379,18 +379,27 @@ Harden Stripe webhook ingestion to respond with 500 on transient failures, enabl
 
 #### Targeted Files
 - `src/app/api/billing/webhook/route.ts`
+- `src/app/api/stripe/webhook/route.ts`
 - `src/server/services/billing-service.ts`
+- `src/server/actions/subscription-actions.ts`
 - `src/server/db/schema/subscriptions.ts`
+- `src/server/db/migrations/0012_add_paused_to_subscription_status.sql`
+- `src/lib/stripe/config.ts`
+- `src/lib/stripe/webhook-event-reducer.ts`
 
-#### Direct Implementation Actions
-1. **Strict Webhook Error Handling:** Replace error swallowing with `500 Internal Server Error` on transient failures (DB disconnect, lock timeout) to trigger Stripe retries. Return `200 OK` only on successful transaction commit or idempotent duplicate.
-2. **1:N Subscription Resolution:** Upsert rows by `stripe_subscription_id`, updating `users.tier` via `MAX(tier)` among all active subscriptions (`active | trialing`).
-3. **Grace Period Invariant:** Avoid immediate downgrades on initial `invoice.payment_failed`; defer downgrade until grace period expiry.
-4. **Idempotency Ledger:** Record `stripe_event_id` in `subscription_events` table before processing.
+#### Direct Implementation Actions Completed
+1. **Strict Webhook Error Handling (LUGX-025, LUGX-148):** Eliminated error swallowing. Webhook immediately returns HTTP 500 on transient database disconnects/unhandled errors to mandate Stripe retries, and returns HTTP 503 (`Retry-After: 5`) on lock contention. Returns HTTP 200 ONLY on successful commit or genuine idempotent duplicates.
+2. **1:N Multi-Subscription Tracking & MAX(tier) Derivation (LUGX-027):** Implemented authoritative `BillingService.calculateEffectiveTier` computing `MAX(tier)` among active/trialing subscriptions (`ultra: 2 > pro: 1 > free: 0`). When Ultra subscription is canceled, user remains Pro if an active Pro subscription is held.
+3. **Grace Period Preservation (LUGX-026):** Preserved tier on initial `invoice.payment_failed` by updating status to `past_due` without immediate tier wipe, allowing smart retry windows.
+4. **Multi-Source User Resolution (LUGX-141):** Resolved user ID through prioritized waterfall: `metadata.userId` -> `subscription_details.metadata.userId` -> `users.stripeCustomerId` index -> existing subscription record.
+5. **Paused Status & Price ID Derivation (LUGX-068, LUGX-069):** Added `'paused'` enum value in DDL migration `0012` and treated it as non-terminal in reducer. Derived tier from price ID via `getTierFromPriceId`.
+6. **Customer Portal Session (LUGX-149):** Implemented `BillingService.createCustomerPortalSession`.
 
-#### Acceptance Criteria
-- Database connection failure during webhook processing returns 500.
-- User holding two active subscriptions receives the highest tier.
+#### Acceptance Criteria & Verification Evidence
+- Webhook unit tests: 18/18 passing (`src/test/api/stripe-webhook.test.ts`), verifying 500 retry mandate on DB crash, Price ID derivation, and non-terminal paused status.
+- Domain unit tests: 16/16 passing (`src/test/server/billing-service.test.ts`), verifying `MAX(tier)` with concurrent subscriptions and cancellation retention.
+- Live Neon DB integration tests: 7/7 passing (`src/test/api/stripe-webhook.live.test.ts`), proving real 1:N persistence and dynamic `MAX(tier)` recalculation on live Postgres branch.
+- Zero TypeScript errors (`tsc --noEmit`), zero lint errors (`npm run lint`), and 100% markdown link integrity.
 
 ---
 
