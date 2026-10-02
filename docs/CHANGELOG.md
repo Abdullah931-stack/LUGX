@@ -1,5 +1,47 @@
 # Changelog - LUGX Project
 
+## [1.37.0] - 2026-10-02 (Phase 9: Cryptographic Key Hierarchy, Standard AAD Contexts & Adaptive Dual-Try Recovery Migration)
+
+### Added & Hardened - Canonical AAD Contexts, Zero-Lockout Adaptive Recovery Migration & Monotonic Lock Epoch Protection
+
+- **Standardized Authenticated Additional Data (AAD) Framework (`src/lib/crypto/aad.ts`):**
+  - Formulated the uniform domain schema `lugx:v1:<domain>:<userId>[:<resourceId>]` across all cryptographic operations.
+  - Implemented typed context builders: `AAD.file(userId, fileId)`, `AAD.passwordWrap(userId)`, `AAD.recoveryWrap(userId)`, and `AAD.deviceWrap(userId, epoch)`.
+  - Added backward-compatible legacy decorators (`AAD.legacy.*`) enabling graceful fallback during migrations without code fragmentation.
+  - Added `isCanonicalAAD(aad)` runtime schema assertion utility.
+
+- **Audited Canonical BIP-0039 Wordlist (`src/lib/crypto/bip39-wordlist.ts`):**
+  - Remediates audit finding `LUGX-043`.
+  - Replaced corrupted 2052-word array with strictly verified 2,048-word English list from Bitcoin BIP-0039 standard.
+  - Purged 4 non-standard words (`coal`, `paci`, `squad`, `squash`) and restored 4 missing canonical entries (`pact`, `paddle`, `squeeze`, `tragic`).
+  - Integrated with `src/lib/sync/mnemonic.ts` using `BIP39_STANDARD_WORD_MAP` for constant-time index validation.
+
+- **Subkey Derivation & Password Normalization Engine (`src/lib/crypto/key-derivation.ts`):**
+  - Remediates audit finding `LUGX-133`.
+  - Implemented `normalizePassword(password)` applying Unicode Normalization Form KC (`NFKC`) before PBKDF2 derivation, preventing authentication failure across operating systems and input methods.
+  - Implemented high-throughput HKDF-SHA-256 (RFC 5869) subkey derivation for documents (`deriveDocumentKey`), search index keys (`deriveSearchIndexKey`), and challenge proofs (`deriveProofOfPossession`), eliminating CPU-heavy PBKDF2 operations for document-level routines.
+
+- **Adaptive Dual-Try Recovery Migration Service (`src/lib/vault/recovery.ts`):**
+  - Remediates audit finding `LUGX-005` (BIP-39 recovery phrase AAD mismatch locking out user vaults).
+  - Implemented `adaptiveUnwrapRecoverySeed`: attempts canonical context `lugx:v1:recovery:${userId}` (Try 1); on authentication tag failure, falls back to legacy creation context `vault:seed:${userId}` (Try 2).
+  - Automatically re-wraps the master key with canonical AAD and a fresh CSPRNG IV upon legacy success, persisting the upgraded envelope to IndexedDB and cloud PostgreSQL.
+  - Added `updateVaultRecoveryEnvelope` server action in `src/server/actions/vault-actions.ts`.
+
+- **In-Memory Session Key Store Concurrency & RAM Hygiene (`src/lib/sync/session-key-store.ts`):**
+  - Remediates audit finding `LUGX-016`: eliminated internal mutable buffer pointer leakage by returning detached copies (`new Uint8Array(this.masterKeyRaw)`) from `getMasterKeyRaw()`.
+  - Introduced monotonic `lockEpoch` counter and scoped execution wrapper `withMasterKey<T>`, safely aborting in-flight operations if the vault is locked concurrently to prevent encryption with all-zero keys.
+  - Remediates audit finding `LUGX-042`: decoupled programmatic key access (`getMasterKey()`, `getMasterKeyRaw()`) from activity timestamp updates, ensuring background sync and file decryptions do not postpone the 1-hour inactivity auto-lock.
+  - Added non-extractable WebCrypto `CryptoKey` background import (LUGX-084).
+
+- **Hardened Vault UI Modals & Zero-Knowledge Cleanup:**
+  - `src/components/vault/create-vault-modal.tsx`: Immediate RAM sanitization `wipeBuffer(seedBytes)` before network transport (LUGX-127), canonical AAD wrapping, and modal backdrop dismissal lockout while loading (LUGX-128).
+  - `src/components/vault/vault-unlock-modal.tsx`: Wired `adaptiveUnwrapRecoverySeed` with automatic cloud synchronization, NFKC password normalization, and backdrop click suppression while loading.
+
+- **Verification & Test Coverage:**
+  - Added `src/test/vault/adaptive-recovery-migration.test.ts` (21 unit tests covering wordlist validation, AAD assertions, dual-try recovery, re-wrap migration, race condition defense, and NFKC normalization).
+  - Updated `src/test/vault/vault-crypto.test.ts` buffer isolation verification.
+  - 100% test pass rate across all 69 unit test suites (894 tests) and 21 live database suites (118 tests).
+
 ## [1.36.1] - 2026-10-01 (Ad-Hoc Milestone: Automated Test & CI Ecosystem Harmonization)
 
 ### Hardened & Harmonized - Automated Test Suite Modernization, Zero Mock Clones & Docker Container Verification

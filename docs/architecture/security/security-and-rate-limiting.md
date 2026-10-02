@@ -130,24 +130,71 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 ### 4.2 Multi-Layer Defensive RAM Sanitization
 - **Instant `.fill(0)` Memory Clearing**: Intermediate byte arrays (`Uint8Array`) containing passwords, salts, CSPRNG initialization vectors (IVs), 128-bit entropy buffers, and decrypted plaintexts are zeroed out via `.fill(0)` inside `finally` blocks immediately upon operation completion.
 
-### 4.3 Zero-Knowledge Envelope & AAD Integrity Binding
+### 4.3 Zero-Knowledge Envelope & Standardized AAD Context Binding (`src/lib/crypto/aad.ts`, `src/lib/sync/encryption.ts`)
 - **Algorithm & Envelope (`EncryptedEnvelope`)**:
   - Algorithm: **AES-GCM 256-bit** with CSPRNG 12-byte IV and 16-byte salt.
   - Key Derivation: **PBKDF2-HMAC-SHA256** with **600,000 iterations**.
   - Envelope Schema: `{ version: 1, algorithm: 'AES-GCM-256', keyId, iv, salt, ciphertext, kdfIterations }`.
-- **Mandatory AAD Binding**: Additional Authenticated Data (`vault:file:${userId}:${fileId}`) is bound into the AES-GCM 128-bit authentication tag for all document encryptions/decryptions. Any document substitution or payload tampering throws explicit `AADIntegrityError` or `InvalidCiphertextOrKeyError`.
+- **Standardized AAD Hierarchy (`lugx:v1:<domain>:<userId>[:<resourceId>]`)**:
+  - Documents: `AAD.file(userId, fileId)` -> `lugx:v1:file:${userId}:${fileId}` (with fallback to legacy `vault:file:...`).
+  - Password Wrap: `AAD.passwordWrap(userId)` -> `lugx:v1:pass:${userId}` (with fallback to legacy `vault:pass:...` and `master_key:...`).
+  - Recovery Seed Wrap: `AAD.recoveryWrap(userId)` -> `lugx:v1:recovery:${userId}` (with fallback to legacy `vault:seed:...` and `recovery_master_key:...`).
+  - Device Trust: `AAD.deviceWrap(userId, epoch)` -> `lugx:v1:device:${userId}:${epoch}`.
+  - Validation: `isCanonicalAAD(aad)` validates schema adherence. Decryption with tampered or mismatched AAD throws `InvalidCiphertextOrKeyError`.
 
-### 4.4 Dual Key Wrapping & BIP-39 Recovery Seed
-- **Master Key Dual-Wrapping**: The random 256-bit Vault Master Key is encrypted twice in PostgreSQL:
-  1. Password-derived Key Encryption Key (`wrapMasterKeyWithPassword`).
-  2. 12-word BIP-39 mnemonic seed Key Encryption Key (`wrapMasterKeyWithRecoverySeed`).
-- **Standard BIP-39 Seed (`src/lib/sync/mnemonic.ts`)**: Converts 128-bit CSPRNG entropy to 12 English words with 4-bit SHA-256 checksum verification.
+### 4.4 Standard BIP-39 Wordlist, Adaptive Dual-Try Recovery & Subkeys (`src/lib/crypto/*`, `src/lib/vault/*`)
+- **Canonical BIP-0039 Wordlist (`src/lib/crypto/bip39-wordlist.ts`)**:
+  - Strictly adheres to the 2,048 English wordlist defined in Bitcoin BIP-0039 (remediating LUGX-043).
+  - Purged 4 non-standard corrupted words (`coal`, `paci`, `squad`, `squash`) and restored 4 missing canonical entries (`pact`, `paddle`, `squeeze`, `tragic`).
+  - Word index lookup validated via `BIP39_STANDARD_WORD_MAP` in $O(1)$ time.
+- **Adaptive Dual-Try Recovery Migration (`src/lib/vault/recovery.ts` / LUGX-005)**:
+  - Resolves historical AAD mismatch between vault creation (`vault:seed:`) and unlock (`vault:recovery:`).
+  - **Try 1 (Canonical)**: Attempts unwrapping with `lugx:v1:recovery:${userId}`.
+  - **Try 2 (Legacy Fallback)**: On MAC failure, falls back to legacy `vault:seed:${userId}`.
+  - **Transparent Upgrading**: Upon legacy unwrap success, the Master Key is immediately re-wrapped under `lugx:v1:recovery:${userId}` with a fresh CSPRNG IV and persisted to IndexedDB and cloud PostgreSQL (`updateVaultRecoveryEnvelope`).
+- **Unicode Normalization & Fast HKDF Subkeys (`src/lib/crypto/key-derivation.ts`)**:
+  - Unicode Normalization Form KC (`normalizePassword(NFKC)`): Normalizes user passwords prior to PBKDF2 key derivation, eliminating cross-platform character decomposition bugs (remediating LUGX-133).
+  - HKDF-SHA-256 Subkey Derivation: Derives subkeys for documents (`deriveDocumentKey`), search indices (`deriveSearchIndexKey`), and proof of possession (`deriveProofOfPossession`) without repeating CPU-heavy PBKDF2 operations.
 
-### 4.5 In-Memory Session Key Store & Auto-Lock (`src/lib/sync/session-key-store.ts`)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User / Client
+    participant Modal as VaultUnlockModal
+    participant Rec as adaptiveUnwrapRecoverySeed
+    participant Worker as CryptoWorkerBridge
+    participant Svr as VaultActions (Cloud DB)
+
+    User->>Modal: Submit 12-Word Recovery Seed
+    Modal->>Rec: adaptiveUnwrapRecoverySeed({seed, envelope, salt, userId})
+    Rec->>Worker: mnemonicToSeed(seed, salt, 600K)
+    Worker-->>Rec: KEK-Seed (32 bytes)
+
+    Note over Rec,Worker: Try 1: Canonical AAD (lugx:v1:recovery:userId)
+    Rec->>Worker: unwrapKeyRaw(KEK, ciphertext, IV, canonicalAAD)
+    alt Canonical unwrap succeeds
+        Worker-->>Rec: Master Key Bytes
+        Rec-->>Modal: { masterKey, wasMigrated: false }
+    else Canonical MAC fails (Legacy vault)
+        Worker-->>Rec: OperationError / MAC Mismatch
+        Note over Rec,Worker: Try 2: Legacy Fallback AAD (vault:seed:userId)
+        Rec->>Worker: unwrapKeyRaw(KEK, ciphertext, IV, legacyAAD)
+        Worker-->>Rec: Master Key Bytes
+        Note over Rec,Worker: Seamless Re-wrap with Canonical AAD
+        Rec->>Worker: wrapKeyRaw(KEK, masterKey, freshIV, canonicalAAD)
+        Worker-->>Rec: reWrappedEnvelope
+        Rec-->>Modal: { masterKey, wasMigrated: true, reWrappedEnvelope }
+        Modal->>Svr: updateVaultRecoveryEnvelope(reWrappedPayload)
+        Svr-->>Modal: Cloud Profile Updated
+    end
+```
+
+### 4.5 In-Memory Session Key Store, Monotonic Epoch & Auto-Lock (`src/lib/sync/session-key-store.ts`, `src/lib/vault/vault-manager.ts`)
 
 - **Strict Zero-Trace General Default**: The Master Key is stored strictly in volatile RAM Heap memory (`Uint8Array`) and is never written in plaintext to `sessionStorage` or local disk.
-- **Inactivity Auto-Lock**: 1-hour timeout (3,600,000 ms) automatically zeroes and purges keys (`purgeKeys()`) via `wipeBuffer` upon timeout or on logout / session termination.
-- **Activity Touch Integration**: Active typing in CodeMirror dispatches `sessionKeyStore.touch()`, extending the inactivity window seamlessly during active composition.
+- **Detached Caller Buffer Isolation (LUGX-016)**: `getMasterKeyRaw()` returns an isolated clone (`new Uint8Array(this.masterKeyRaw)`), preventing caller modifications or local wipes (`wipeBuffer`) from zeroing the active key held within `SessionKeyStore`.
+- **Monotonic Lock Epoch & Concurrency Protection (LUGX-016)**: `lockEpoch` increments monotonically on every lock/purge. `withMasterKey<T>()` verifies that the active epoch has not changed during asynchronous operations, safely aborting if the vault locked concurrently to prevent zero-key encryption.
+- **Deterministic Auto-Lock & Inactivity Decoupling (LUGX-042)**: Enforces a strict 1-hour inactivity window (3,600,000 ms). Programmatic key retrieval (`getMasterKey()`, `getMasterKeyRaw()`) does not postpone auto-lock; only explicit user interface interactions (`touch()`, `VaultManager.touchActivity()`) update the activity timestamp.
 - **Caller Memory Sanitization & Buffer Independence**: UI modals (`CreateVaultModal`, `VaultUnlockModal`, `TrustDeviceModal`) proactively wipe temporary unwrapped/generated key buffers in `finally` blocks via `wipeBuffer()`, while `SessionKeyStore` maintains an isolated copy immune to caller zeroing.
 
 ### 4.6 Transparent At-Rest Encrypted IndexedDB (`src/lib/sync/indexeddb.ts`)

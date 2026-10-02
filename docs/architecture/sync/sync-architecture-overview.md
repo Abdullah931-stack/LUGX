@@ -66,7 +66,11 @@ graph TD
 | `IndexedDBManager` | Local document & operations storage, offline vault profile caching, and device trust storage |
 | `ETagGenerator` | Deterministic SHA-256 ETag generation with canonical JSON key serialization (`CANONICAL_ENVELOPE_KEYS`) |
 | `SyncRollback` | State checkpoints & isolated failure recovery |
-| `Encryption` (`encryption.ts`) | Dual-tier hybrid encryption orchestration (`AES-GCM-256` + AAD `vault:file:${userId}:${fileId}`) |
+| `Encryption` (`encryption.ts`) | Dual-tier hybrid encryption orchestration (`AES-GCM-256` + canonical AAD `lugx:v1:file:${userId}:${fileId}` with legacy fallback) |
+| `AAD Engine` (`src/lib/crypto/aad.ts`) | Typed canonical AAD context builders (`lugx:v1:<domain>:<userId>[:<resourceId>]`) and legacy fallback decorators |
+| `Key Derivation & Normalizer` (`src/lib/crypto/key-derivation.ts`) | Unicode NFKC password normalization, fast HKDF-SHA-256 subkeys (documents, search, proof-of-possession) |
+| `Adaptive Recovery` (`src/lib/vault/recovery.ts`) | Zero-lockout dual-try recovery unwrap (`lugx:v1:recovery` -> `vault:seed`) and transparent re-wrapping migration |
+| `VaultManager` (`src/lib/vault/vault-manager.ts`) | Centralized vault lifecycle gateway, lock epoch concurrency protection & activity coordination |
 | `WebAuthn PRF Engine` (`webauthn-prf.ts`) | Hardware-bound biometrics key derivation via W3C Level 3 PRF extension & HKDF-SHA-256 |
 | `PIN KEK Engine` (`encryption.ts`) | 6-digit PIN KEK derivation (PBKDF2 600K iterations, $1,000,000$ combinations) |
 | `Device Trust Wrapping` (`encryption.ts`) | AES-GCM-256 wrapping, 30-day expiry, 5-attempt anti-brute-force lockout |
@@ -74,8 +78,8 @@ graph TD
 | `SyncCryptoGateway` (`sync-crypto-gateway.ts`) | Transparent inbound decryption (server IV + MasterKey) & fresh outbound CSPRNG IV re-encryption |
 | `crypto-utils.ts` | Decoupled cryptographic primitives, W3C chunked CSPRNG & RAM sanitization (`wipeBuffer`) |
 | `crypto.worker.ts` | Isolated Web Worker for PBKDF2 (600,000 iter) & heavy symmetric offloading |
-| `SessionKeyStore` | Volatile RAM-only key manager with fixed 1-hour auto-lock, unlock event subscription, keystroke touch, and caller buffer isolation |
-| `BIP39 Mnemonic` (`mnemonic.ts`) | Standard 12-word seed generation & 4-bit SHA-256 checksum verification |
+| `SessionKeyStore` | Volatile RAM-only key manager with monotonic `lockEpoch`, detached buffer cloning, `withMasterKey<T>`, and decoupled inactivity auto-lock |
+| `BIP39 Mnemonic` (`src/lib/crypto/bip39-wordlist.ts`, `mnemonic.ts`) | Audited canonical BIP-0039 2,048 English wordlist, 12-word seed generation & 4-bit SHA-256 checksum verification |
 
 ---
 

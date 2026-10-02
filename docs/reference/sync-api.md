@@ -634,14 +634,17 @@ export class SessionKeyStore {
     public touch(): void;
     public destroy(): void;
     public subscribe(listener: KeyStoreListener): () => void;
+    public getLockEpoch(): number;
+    public withMasterKey<T>(operation: (key: CryptoKey | Uint8Array, epoch: number) => Promise<T> | T): Promise<T>;
 }
 ```
 
 #### Invariants:
 1. **Volatile RAM Only**: Raw Master Key bytes (`masterKeyRaw`) and derived WebCrypto keys are held strictly in memory and are never serialized to `localStorage`, `sessionStorage`, or `IndexedDB`.
-2. **Deterministic Auto-Lock**: Enforces a strict 1-hour inactivity window (3,600,000 ms). `storeMasterKeyRaw(key)` operates purely in memory without allowing callers to mutate the global inactivity timeout.
-3. **Caller Buffer Independence**: Modals and derivation routines wipe their local key buffers (`wipeBuffer(localKey)`) in `finally` blocks without zeroing the persistent `masterKeyRaw` instance held within `SessionKeyStore`.
-4. **Cross-Tab Volatile RAM Purge Synchronization**: When `lock()` or `purgeKeys()` is invoked (or upon inactivity timeout expiration via `isUnlocked()`), a `vault_locked` broadcast event is dispatched across sibling tabs via `BroadcastChannel('textai_cross_tab_sync')`. All sibling tabs immediately sanitize volatile RAM via `wipeBuffer()` (`.fill(0)`) and transition to locked state without re-broadcasting, preventing echo loops.
+2. **Deterministic Auto-Lock & Inactivity Decoupling (LUGX-042)**: Enforces a strict 1-hour inactivity window (3,600,000 ms). Programmatic key retrieval (`getMasterKey()`, `getMasterKeyRaw()`) does not postpone auto-lock; only explicit user interface interactions (`touch()`, `VaultManager.touchActivity()`) update the activity timestamp.
+3. **Detached Caller Buffer Isolation (LUGX-016)**: `getMasterKeyRaw()` returns an isolated clone (`new Uint8Array(this.masterKeyRaw)`), preventing caller modifications or local wipes (`wipeBuffer`) from zeroing the active key held within `SessionKeyStore`.
+4. **Monotonic Lock Epoch & Concurrency Protection (LUGX-016)**: `lockEpoch` increments monotonically on every lock/purge. `withMasterKey<T>()` verifies that the active epoch has not changed during asynchronous operations, safely aborting if the vault locked concurrently to prevent zero-key encryption.
+5. **Cross-Tab Volatile RAM Purge Synchronization**: When `lock()` or `purgeKeys()` is invoked (or upon inactivity timeout expiration via `isUnlocked()`), a `vault_locked` broadcast event is dispatched across sibling tabs via `BroadcastChannel('textai_cross_tab_sync')`. All sibling tabs immediately sanitize volatile RAM via `wipeBuffer()` (`.fill(0)`) and transition to locked state without re-broadcasting, preventing echo loops.
 
 ---
 
