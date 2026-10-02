@@ -325,12 +325,16 @@ export async function reserveAIQuota(
 
         const expiresAt = new Date(Date.now() + ttlMs);
 
+        const dbFileId = options?.fileId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.fileId)
+            ? options.fileId
+            : null;
+
         const [newReservation] = await client
             .insert(schema.aiReservations)
             .values({
                 operationId,
                 userId,
-                fileId: fileId || null,
+                fileId: dbFileId,
                 operation,
                 reservedUnits: wordCount,
                 committedUnits: 0,

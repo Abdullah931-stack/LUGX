@@ -278,19 +278,19 @@ describe("Upstash Redis Live Integration, Lock Contention & Fail-Open Suite (Pha
                 POST(signedRequest(body)),
             ]);
 
-            expect(res1.status).toBe(200);
-            expect(res2.status).toBe(200);
+            // One request must process (200), the other must be intercepted by lock contention (503 Retry-After: 5 per Phase 12 LUGX-025/LUGX-148)
+            const statuses = [res1.status, res2.status].sort();
+            expect(statuses).toEqual([200, 503]);
 
-            const data1 = await res1.json();
-            const data2 = await res2.json();
+            const successRes = res1.status === 200 ? res1 : res2;
+            const contentionRes = res1.status === 503 ? res1 : res2;
 
-            // One request must process, the other must be intercepted by lock contention
-            const responses = [data1, data2];
-            const processed = responses.find((r) => r.event === eventId);
-            const deduplicated = responses.find((r) => r.deduplicated === true || r.duplicate === true);
+            const successData = await successRes.json();
+            const contentionData = await contentionRes.json();
 
-            expect(processed).toBeDefined();
-            expect(deduplicated).toBeDefined();
+            expect(successData.event).toBe(eventId);
+            expect(contentionData.error).toContain("Concurrent event in flight, retry requested");
+            expect(contentionRes.headers.get("Retry-After")).toBe("5");
 
             // Verify User Tier was upgraded
             const [user] = await testDb

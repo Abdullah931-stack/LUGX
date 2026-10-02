@@ -34,7 +34,8 @@ async function seed(): Promise<void> {
         .insert(schema.users)
         .values({ id: USER_ID, email: `${USER_ID}@live.test` })
         .onConflictDoNothing();
-    // Fresh daily-usage slate regardless of prior runs.
+    // Fresh daily-usage and reservations slate regardless of prior runs.
+    await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, USER_ID));
     await testDb.delete(schema.usage).where(eq(schema.usage.userId, USER_ID));
 }
 

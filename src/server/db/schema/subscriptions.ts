@@ -9,6 +9,7 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
     "incomplete",
     "incomplete_expired",
     "unpaid",
+    "paused",
 ]);
 
 // Subscriptions table - Stripe subscription tracking

@@ -7,7 +7,7 @@ import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { revalidatePath } from "next/cache";
-import { refundAIReservation } from "@/server/services/ai-settlement-service";
+import { refundAIReservation, commitAIReservation } from "@/server/services/ai-settlement-service";
 
 export interface CommitAIFileOperationParams {
     operationId: string;
@@ -318,6 +318,10 @@ export async function commitAIFileOperation(
             revalidatePath("/workspace");
         } catch {
             // Ignore static generation store missing error during standalone unit testing
+        }
+
+        if (reservation.status === "reserved") {
+            await commitAIReservation(operationId).catch(() => {});
         }
 
         return {

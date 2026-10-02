@@ -7,8 +7,9 @@
 import { db } from '@/server/db';
 import { txDb } from '@/server/db/transactional';
 import { users, subscriptions, subscriptionEvents } from '@/server/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import type { TierName } from '@/config/tiers.config';
+import { BillingService } from '@/server/services/billing-service';
 
 export type DbClient = {
     select: typeof db.select;
@@ -37,7 +38,7 @@ export async function isSubscriptionEventProcessed(
         return rows.length > 0;
     } catch (error) {
         console.error('Error checking subscription event processed status:', error);
-        return false;
+        throw error;
     }
 }
 
@@ -181,10 +182,8 @@ export async function upsertSubscription(
     subscriptionData: {
         stripeSubscriptionId: string;
         tier: TierName;
-        // ENGINEERING UPGRADE (W2): full Stripe lifecycle (fail-closed):
-        // payment-failure states are now legal values instead of silently
-        // falling back to 'active'.
-        status: 'active' | 'canceled' | 'past_due' | 'trialing' | 'incomplete' | 'incomplete_expired' | 'unpaid';
+        // ENGINEERING UPGRADE (W2 & Phase 12): full Stripe lifecycle with paused status
+        status: 'active' | 'canceled' | 'past_due' | 'trialing' | 'incomplete' | 'incomplete_expired' | 'unpaid' | 'paused';
         currentPeriodStart: Date;
         currentPeriodEnd: Date;
         cancelAtPeriodEnd?: boolean;
@@ -193,91 +192,75 @@ export async function upsertSubscription(
 ): Promise<{ success: boolean; error?: string }> {
     const targetDb = client || db;
     try {
-        // Check if subscription exists by stripeSubscriptionId first, fallback to userId
-        const existing = subscriptionData.stripeSubscriptionId
-            ? await targetDb
-                .select()
-                .from(subscriptions)
-                .where(eq(subscriptions.stripeSubscriptionId, subscriptionData.stripeSubscriptionId))
-                .limit(1)
-            : await targetDb
-                .select()
-                .from(subscriptions)
-                .where(eq(subscriptions.userId, userId))
-                .limit(1);
-
-        if (existing.length > 0) {
-            // Update existing subscription by unique primary key
-            await targetDb
-                .update(subscriptions)
-                .set({
-                    ...subscriptionData,
-                    updatedAt: new Date(),
-                })
-                .where(eq(subscriptions.id, existing[0].id));
-        } else {
-            // Create new subscription record
-            await targetDb.insert(subscriptions).values({
+        await BillingService.syncSubscription(
+            {
                 userId,
                 ...subscriptionData,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-            });
-        }
+            },
+            targetDb as unknown as import('@/server/services/billing-service').DbClient
+        );
 
         return { success: true };
     } catch (error) {
         console.error('Error upserting subscription:', error);
         return {
             success: false,
-            error: 'Failed to update subscription',
+            error: error instanceof Error ? error.message : 'Failed to update subscription',
         };
     }
 }
 
 /**
- * Cancel subscription and downgrade user to free tier
+ * Cancel subscription and recalculate user tier (1:N supported)
  * @param userId - User UUID
  * @param client - Optional DB / transaction client
+ * @param stripeSubscriptionId - Optional specific subscription ID to cancel
  * @returns Success boolean
  */
 export async function cancelUserSubscription(
     userId: string,
-    client?: DbClient
+    client?: DbClient,
+    stripeSubscriptionId?: string
 ): Promise<{ success: boolean; error?: string }> {
     const targetDb = client || db;
     try {
-        // Update user tier to free
-        await targetDb
-            .update(users)
-            .set({
-                tier: 'free',
-                updatedAt: new Date(),
-            })
-            .where(eq(users.id, userId));
+        if (stripeSubscriptionId) {
+            await BillingService.handleCancellation(
+                stripeSubscriptionId,
+                userId,
+                targetDb as unknown as import('@/server/services/billing-service').DbClient
+            );
+        } else {
+            await targetDb
+                .update(subscriptions)
+                .set({
+                    status: 'canceled',
+                    cancelAtPeriodEnd: false,
+                    updatedAt: new Date(),
+                })
+                .where(eq(subscriptions.userId, userId));
 
-        // Update subscription status
-        await targetDb
-            .update(subscriptions)
-            .set({
-                status: 'canceled',
-                cancelAtPeriodEnd: false,
-                updatedAt: new Date(),
-            })
-            .where(eq(subscriptions.userId, userId));
+            await targetDb
+                .update(users)
+                .set({
+                    tier: 'free',
+                    updatedAt: new Date(),
+                })
+                .where(eq(users.id, userId));
+        }
 
         return { success: true };
     } catch (error) {
         console.error('Error canceling subscription:', error);
         return {
             success: false,
-            error: 'Failed to cancel subscription',
+            error: error instanceof Error ? error.message : 'Failed to cancel subscription',
         };
     }
 }
 
 /**
- * Get user subscription record from database
+ * Get the most relevant user subscription record from database (prioritizing active/trialing)
  * @param userId - User UUID
  * @param client - Optional DB / transaction client
  * @returns Subscription object or null
@@ -292,11 +275,48 @@ export async function getUserSubscription(
             .select()
             .from(subscriptions)
             .where(eq(subscriptions.userId, userId))
-            .limit(1);
+            .orderBy(desc(subscriptions.createdAt));
 
-        return rows[0] || null;
+        if (rows.length === 0) return null;
+
+        // Prioritize active or trialing subscriptions
+        const activeSub = rows.find((r) => r.status === 'active' || r.status === 'trialing');
+        return activeSub || rows[0];
     } catch (error) {
         console.error('Error fetching user subscription:', error);
         return null;
     }
+}
+
+/**
+ * Get all subscription records for a user
+ */
+export async function getUserSubscriptions(
+    userId: string,
+    client?: DbClient
+): Promise<(typeof subscriptions.$inferSelect)[]> {
+    const targetDb = client || db;
+    try {
+        return await targetDb
+            .select()
+            .from(subscriptions)
+            .where(eq(subscriptions.userId, userId))
+            .orderBy(desc(subscriptions.createdAt));
+    } catch (error) {
+        console.error('Error fetching user subscriptions:', error);
+        return [];
+    }
+}
+
+/**
+ * Derive user effective tier from all active subscriptions
+ */
+export async function calculateEffectiveTier(
+    userId: string,
+    client?: DbClient
+): Promise<TierName> {
+    return BillingService.calculateEffectiveTier(
+        userId,
+        client as unknown as import('@/server/services/billing-service').DbClient
+    );
 }

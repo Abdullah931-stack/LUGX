@@ -20,7 +20,7 @@ import { createMarkdownExtensions } from "@/components/editor/markdown/markdown-
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
-import { reserveAndUpdateUsage } from "@/server/services/ai-settlement-service";
+import { reserveAndUpdateUsage, commitAIReservation } from "@/server/services/ai-settlement-service";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER_ID })) }));
 
@@ -44,12 +44,16 @@ vi.mock("@/lib/ai/stream-handler", () => ({
         const opts = options as ConsumeCallbacks & { operationId: string };
         capturedCallbacks = opts;
         // Mirror the production /api/ai/stream route: the quota reservation is
-        // created SERVER-side for the hook-generated operationId.
+        // created SERVER-side for the hook-generated operationId, and then
+        // authoritatively committed server-side prior to stream completion (done frame).
         if (activeFixture) {
             await seedServerReservation(opts.operationId, activeFixture.fileId);
         }
         opts.onMeta?.({ sessionId: "s-live", operationId: opts.operationId });
         opts.onChunk?.("Better text", " text");
+        if (activeFixture) {
+            await commitAIReservation(opts.operationId);
+        }
         await opts.onComplete?.("Better text");
     }),
 }));
@@ -156,7 +160,8 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
         expect(editor.getValue()).toBe(snapshot);
         expect(result.current.previewText).toBe("Better text");
 
-        // DB untouched by preview: file still v1, reservation still reserved.
+        // DB untouched by preview: file still v1.
+        // Under Phase 11, reservation was committed authoritatively by server on stream completion.
         const [fileRow] = await testDb
             .select()
             .from(schema.files)
@@ -166,7 +171,7 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
             .select()
             .from(schema.aiReservations)
             .where(eq(schema.aiReservations.operationId, capturedCallbacks.operationId!));
-        expect(reservation.status).toBe("reserved");
+        expect(reservation.status).toBe("committed");
     });
 
     it("rejectPreview settles the reservation as consumed (never refunds) and keeps the document pristine", async () => {
@@ -183,24 +188,20 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
         });
 
         expect(editor.getValue()).toBe(snapshot);
+        expect(result.current.previewText).toBe("");
 
-        // Settlement is fire-and-forget inside the hook — wait for the row.
-        let reservation!: typeof schema.aiReservations.$inferSelect;
-        await waitFor(async () => {
-            const [row] = await testDb
-                .select()
-                .from(schema.aiReservations)
-                .where(
-                    eq(
-                        schema.aiReservations.operationId,
-                        capturedCallbacks.operationId!
-                    )
-                );
-            if (!row || row.status !== "committed") {
-                throw new Error("reservation not settled as committed yet");
-            }
-            reservation = row;
-        });
+        // Phase 11: Client has zero financial authority. The server settled the reservation
+        // as committed upon completion, and rejectPreview leaves the reservation committed (never refunds).
+        const [reservation] = await testDb
+            .select()
+            .from(schema.aiReservations)
+            .where(
+                eq(
+                    schema.aiReservations.operationId,
+                    capturedCallbacks.operationId!
+                )
+            );
+        expect(reservation.status).toBe("committed");
         expect(reservation.committedUnits).toBe(11);
         expect(reservation.refundedUnits).toBe(0); // NEVER refunded
 

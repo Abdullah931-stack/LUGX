@@ -49,3 +49,30 @@ export function getStripePriceId(tier: StripeTier): string {
 export function isValidStripeTier(tier: string): tier is StripeTier {
     return tier === 'pro' || tier === 'ultra';
 }
+
+/**
+ * Reverse mapping from Stripe Price ID to subscription tier (LUGX-068).
+ * Matches against configured price IDs or price ID naming conventions.
+ * Returns null for unrecognized price IDs to fail closed.
+ */
+export function getTierFromPriceId(priceId?: string | null): StripeTier | null {
+    if (!priceId) return null;
+
+    if (
+        priceId === STRIPE_PRICE_IDS.ultra ||
+        (process.env.STRIPE_ULTRA_PRICE_ID && priceId === process.env.STRIPE_ULTRA_PRICE_ID) ||
+        priceId.toLowerCase().includes('ultra')
+    ) {
+        return 'ultra';
+    }
+
+    if (
+        priceId === STRIPE_PRICE_IDS.pro ||
+        (process.env.STRIPE_PRO_PRICE_ID && priceId === process.env.STRIPE_PRO_PRICE_ID) ||
+        priceId.toLowerCase().includes('pro')
+    ) {
+        return 'pro';
+    }
+
+    return null;
+}

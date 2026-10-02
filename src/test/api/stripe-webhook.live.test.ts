@@ -55,6 +55,7 @@ const USERS = {
     checkout: "23232323-2323-2323-2323-232323232323",
     unmapped: "24242424-2424-2424-2424-242424242424",
     deleted: "25252525-2525-2525-2525-252525252525",
+    multisub: "26262626-2626-2626-2626-262626262626",
 };
 
 const TEST_EVENTS = [
@@ -62,6 +63,9 @@ const TEST_EVENTS = [
     "evt_unmapped_live",
     "evt_deleted_live",
     "evt_stale_live_resurrect",
+    "evt_multisub_1_live",
+    "evt_multisub_2_live",
+    "evt_multisub_del_live",
 ];
 
 function signedRequest(body: string, secret = SECRET): NextRequest {
@@ -342,6 +346,81 @@ describe("LIVE: Stripe webhook route & durable idempotency on isolated branch", 
             .where(eq(schema.subscriptionEvents.eventId, "evt_stale_live_resurrect"));
         expect(eventRow).toBeDefined();
         expect(eventRow.status).toBe("ignored_stale");
+    });
+
+    it("1:N multi-subscriptions: maintains MAX(tier) across multiple active subscriptions and recalculates on delete", async () => {
+        // 1. Checkout session for first subscription (Pro)
+        const body1 = makeEventBody(
+            "checkout.session.completed",
+            {
+                id: "cs_multi_1",
+                payment_status: "paid",
+                subscription: "sub_multi_pro",
+                metadata: { userId: USERS.multisub, tier: "pro" },
+                created: 1700000000,
+            },
+            "evt_multisub_1_live"
+        );
+        const res1 = await POST(signedRequest(body1));
+        expect(res1.status).toBe(200);
+
+        // Verify tier is pro
+        const [userAfterPro] = await testDb
+            .select()
+            .from(schema.users)
+            .where(eq(schema.users.id, USERS.multisub));
+        expect(userAfterPro.tier).toBe("pro");
+
+        // 2. Checkout session for second subscription (Ultra) on same user
+        const body2 = makeEventBody(
+            "checkout.session.completed",
+            {
+                id: "cs_multi_2",
+                payment_status: "paid",
+                subscription: "sub_multi_ultra",
+                metadata: { userId: USERS.multisub, tier: "ultra" },
+                created: 1700000100,
+            },
+            "evt_multisub_2_live"
+        );
+        const res2 = await POST(signedRequest(body2));
+        expect(res2.status).toBe(200);
+
+        // Verify tier is upgraded to ultra (MAX(tier): ultra > pro)
+        const [userAfterUltra] = await testDb
+            .select()
+            .from(schema.users)
+            .where(eq(schema.users.id, USERS.multisub));
+        expect(userAfterUltra.tier).toBe("ultra");
+
+        // Verify both subscriptions coexist in database (1:N)
+        const userSubs = await testDb
+            .select()
+            .from(schema.subscriptions)
+            .where(eq(schema.subscriptions.userId, USERS.multisub));
+        expect(userSubs).toHaveLength(2);
+
+        // 3. Cancel the Ultra subscription
+        const bodyDelete = makeEventBody(
+            "customer.subscription.deleted",
+            {
+                id: "sub_multi_ultra",
+                metadata: { userId: USERS.multisub },
+                status: "canceled",
+                cancel_at_period_end: false,
+                start_date: 1700000100,
+            },
+            "evt_multisub_del_live"
+        );
+        const resDelete = await POST(signedRequest(bodyDelete));
+        expect(resDelete.status).toBe(200);
+
+        // Verify user tier is NOT downgraded to free, but recalculated to remaining active pro tier!
+        const [userAfterDelete] = await testDb
+            .select()
+            .from(schema.users)
+            .where(eq(schema.users.id, USERS.multisub));
+        expect(userAfterDelete.tier).toBe("pro");
     });
 });
 

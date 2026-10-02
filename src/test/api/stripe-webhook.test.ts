@@ -58,6 +58,7 @@ vi.mock("@/lib/stripe", () => ({
 vi.mock("@/server/actions/subscription-actions", () => ({
     updateUserTier: vi.fn(async () => ({ success: true })),
     upsertSubscription: vi.fn(async () => ({ success: true })),
+    cancelUserSubscription: vi.fn(async () => ({ success: true })),
     getUserSubscription: vi.fn(async () => null),
     isSubscriptionEventProcessed: vi.fn(async () => false),
     recordSubscriptionEvent: vi.fn(async () => ({ success: true })),
@@ -79,10 +80,11 @@ import * as stripeLib from "@/lib/stripe";
 import * as subActions from "@/server/actions/subscription-actions";
 import { redis } from "@/lib/redis";
 
-type AnyFn = ReturnType<typeof vi.fn>;
+type AnyFn = ReturnType<typeof vi.fn> & ((...args: any[]) => any);
 const mockConstruct = vi.mocked(stripeLib.stripe.webhooks.constructEvent) as AnyFn;
 const mockUpdateTier = vi.mocked(subActions.updateUserTier) as AnyFn;
 const mockUpsert = vi.mocked(subActions.upsertSubscription) as AnyFn;
+const mockCancelSub = vi.mocked(subActions.cancelUserSubscription) as AnyFn;
 const mockGetSub = vi.mocked(subActions.getUserSubscription) as AnyFn;
 const mockSubList = vi.mocked(stripeLib.stripe.subscriptions.list) as AnyFn;
 const mockSubRetrieve = vi.mocked(stripeLib.stripe.subscriptions.retrieve) as AnyFn;
@@ -121,6 +123,10 @@ beforeEach(() => {
     });
     mockUpdateTier.mockResolvedValue({ success: true } as never);
     mockUpsert.mockResolvedValue({ success: true } as never);
+    mockCancelSub.mockImplementation(async (userId: string, tx: any) => {
+        await mockUpdateTier(userId, 'free', tx);
+        return { success: true };
+    });
     mockGetSub.mockResolvedValue(null as never);
     mockSubList.mockResolvedValue({ data: [], has_more: false } as never);
     mockSubRetrieve.mockResolvedValue({
@@ -135,6 +141,7 @@ beforeEach(() => {
         },
     } as never);
     mockIsProcessed.mockResolvedValue(false as never);
+    mockRecordEvent.mockReset();
     mockRecordEvent.mockResolvedValue({ success: true } as never);
     vi.mocked(redis.set).mockResolvedValue("OK" as never);
     vi.mocked(redis.get).mockResolvedValue(null as never);
@@ -165,7 +172,8 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
         expect(calls.length).toBe(0);
         const upsertCalls = mockUpsert.mock.calls.filter((c) => c[0] === "user-1");
         expect(upsertCalls.length).toBe(0);
-        expect(resp.status).toBeLessThan(500);
+        // Phase 12 (LUGX-025): Throws and returns 500 to mandate retry rather than swallowing
+        expect(resp.status).toBe(500);
     });
 
     it("checkout.session.completed with unpaid payment grants no tier (fail-closed)", async () => {
@@ -212,17 +220,16 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
 
         const resp = await POST(makeRequest());
 
-        expect(mockUpdateTier).toHaveBeenCalledWith("user-3", "free", expect.anything());
+        // LUGX-026: Does not immediately downgrade user tier to free, but updates subscription status to past_due (grace period)
         expect(mockUpsert).toHaveBeenCalledWith(
             "user-3",
             expect.objectContaining({
                 stripeSubscriptionId: "sub_existing_123",
                 status: "past_due",
-                tier: "free",
             }),
             expect.anything()
         );
-        expect(resp.status).toBeLessThan(500);
+        expect(resp.status).toBe(200);
     });
 
     it("in-memory fast-path deduplicates rapid sequential delivery", async () => {
@@ -504,9 +511,10 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
             );
 
             const resp = await POST(makeRequest());
-            expect(resp.status).toBe(200);
+            // LUGX-025: Returns 503 so Stripe will retry concurrent delivery instead of dropping
+            expect(resp.status).toBe(503);
             const data = await resp.json();
-            expect(data).toMatchObject({ received: true, deduplicated: true });
+            expect(data).toMatchObject({ error: expect.stringContaining("Concurrent event in flight") });
 
             // Ensure DB transaction was NOT invoked
             expect(mockUpdateTier).not.toHaveBeenCalled();
@@ -576,17 +584,17 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
                     "customer.subscription.deleted",
                     {
                         id: "sub_fail_tx",
-                        metadata: {},
+                        metadata: { userId: "user-fail-tx" },
                     },
                     "evt_fail_tx"
                 )
             );
 
-            // Cause mutationMeta to have success: false
+            // Phase 12 (LUGX-025): Mutation failure returns 500 to mandate Stripe retry
             const resp = await POST(makeRequest());
-            expect(resp.status).toBe(200);
+            expect(resp.status).toBe(500);
 
-            // Lock was cleaned up in else branch so retries are not blocked
+            // Lock was cleaned up in error branch so retries are not blocked
             expect(redis.del).toHaveBeenCalledWith("stripe:lock:evt_fail_tx");
         });
 
@@ -599,6 +607,100 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
 
             // Lock was cleaned up in POST's outer catch block
             expect(redis.del).toHaveBeenCalledWith("stripe:lock:evt_unhandled_err");
+        });
+    });
+
+    describe("Phase 12: Stripe 1:N subscriptions, tier derivation & error mandates", () => {
+        it("mandates Stripe retry with 500 on database connection or write error (Acceptance Criteria 1)", async () => {
+            mockUpsert.mockRejectedValueOnce(new Error("Postgres connection terminated unexpectedly"));
+
+            stubEvent(
+                makeEvent(
+                    "customer.subscription.updated",
+                    {
+                        id: "sub_db_crash",
+                        metadata: { userId: "user-db-crash", tier: "ultra" },
+                        status: "active",
+                        cancel_at_period_end: false,
+                        start_date: 1700000000,
+                    },
+                    "evt_db_crash_500"
+                )
+            );
+
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(500);
+            const payload = await resp.json();
+            expect(payload.error).toContain("Postgres connection terminated");
+
+            // Verify in-flight lock was released for retry
+            expect(redis.del).toHaveBeenCalledWith("stripe:lock:evt_db_crash_500");
+        });
+
+        it("derives tier from Stripe Price ID when available (LUGX-068)", async () => {
+            stubEvent(
+                makeEvent(
+                    "customer.subscription.updated",
+                    {
+                        id: "sub_price_test",
+                        customer: "cus_price_1",
+                        items: {
+                            data: [
+                                {
+                                    price: { id: "price_ultra_monthly" },
+                                    current_period_start: 1700000000,
+                                    current_period_end: 1702592000,
+                                },
+                            ],
+                        },
+                        metadata: { userId: "user-price-derived", tier: "pro" }, // Metadata says pro, but price is ultra!
+                        status: "active",
+                        start_date: 1700000000,
+                    },
+                    "evt_price_override"
+                )
+            );
+
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(200);
+
+            // Verify tier was derived as ultra from price ID despite metadata saying pro
+            expect(mockUpsert).toHaveBeenCalledWith(
+                "user-price-derived",
+                expect.objectContaining({
+                    stripeSubscriptionId: "sub_price_test",
+                    tier: "ultra",
+                    status: "active",
+                }),
+                expect.anything()
+            );
+        });
+
+        it("paused subscription status is accepted without terminal state freeze (LUGX-069)", async () => {
+            stubEvent(
+                makeEvent(
+                    "customer.subscription.updated",
+                    {
+                        id: "sub_paused_test",
+                        metadata: { userId: "user-paused", tier: "pro" },
+                        status: "paused",
+                        start_date: 1700000000,
+                    },
+                    "evt_paused_status"
+                )
+            );
+
+            const resp = await POST(makeRequest());
+            expect(resp.status).toBe(200);
+
+            expect(mockUpsert).toHaveBeenCalledWith(
+                "user-paused",
+                expect.objectContaining({
+                    stripeSubscriptionId: "sub_paused_test",
+                    status: "paused",
+                }),
+                expect.anything()
+            );
         });
     });
 });

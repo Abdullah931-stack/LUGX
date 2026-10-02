@@ -27,6 +27,7 @@ import { headers } from 'next/headers';
 import {
     updateUserTier,
     upsertSubscription,
+    cancelUserSubscription,
     getUserSubscription,
     isSubscriptionEventProcessed,
     recordSubscriptionEvent,
@@ -35,7 +36,9 @@ import {
 import type { TierName } from '@/config/tiers.config';
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
+import { getTierFromPriceId } from '@/lib/stripe/config';
 import { redis } from '@/lib/redis';
+import { BillingService } from '@/server/services/billing-service';
 
 import {
     isEventProcessedInMemory,
@@ -250,18 +253,30 @@ async function handleSubscriptionUpdated(
     eventId: string
 ): Promise<HandlerResult> {
     try {
-        const userId = subscription.metadata?.userId;
-        const tier = subscription.metadata?.tier as TierName;
+        const firstItem = subscription.items?.data?.[0];
+        const priceTier = getTierFromPriceId(firstItem?.price?.id);
+        const metadataTier = subscription.metadata?.tier as TierName | undefined;
+        const tier: TierName | undefined = priceTier || metadataTier;
+
+        const customerId = typeof subscription.customer === 'string'
+            ? subscription.customer
+            : subscription.customer?.id;
+
+        const userId = await BillingService.resolveUserId({
+            metadataUserId: subscription.metadata?.userId,
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscription.id,
+        });
 
         if (!userId || !tier) {
-            console.error('Missing metadata in subscription:', subscription.id);
+            console.error('Missing metadata or unrecognized price in subscription:', subscription.id);
             return { success: false, subscriptionId: subscription.id, error: 'Missing metadata' };
         }
 
         // Fail-closed mapping: any unrecognized status throws, aborting mutation
         const STATUS_MAP: Record<
             string,
-            'active' | 'canceled' | 'past_due' | 'trialing' | 'incomplete' | 'incomplete_expired' | 'unpaid'
+            'active' | 'canceled' | 'past_due' | 'trialing' | 'incomplete' | 'incomplete_expired' | 'unpaid' | 'paused'
         > = {
             active: 'active',
             canceled: 'canceled',
@@ -270,7 +285,7 @@ async function handleSubscriptionUpdated(
             incomplete: 'incomplete',
             incomplete_expired: 'incomplete_expired',
             unpaid: 'unpaid',
-            paused: 'canceled',
+            paused: 'paused',
         };
 
         const status = STATUS_MAP[subscription.status];
@@ -282,7 +297,6 @@ async function handleSubscriptionUpdated(
         const paidStatuses: ReadonlyArray<string> = ['active', 'trialing'];
         const effectiveTier: TierName = paidStatuses.includes(subscription.status) ? tier : 'free';
 
-        const firstItem = subscription.items?.data?.[0];
         let invoicePeriod: { start?: number; end?: number } | undefined;
         if (subscription.latest_invoice && typeof subscription.latest_invoice === 'object') {
             invoicePeriod = (subscription.latest_invoice as Stripe.Invoice).lines?.data?.[0]?.period;
@@ -295,15 +309,15 @@ async function handleSubscriptionUpdated(
             fallbackAnchorSeconds: subscription.start_date,
         });
 
-        // Atomic Transaction: Check Terminal State + Update Tier + Upsert Sub + Record Event
+        // Atomic Transaction: Check Terminal State + Sync Sub + Record Event
         return await executeSubscriptionTransition(async (tx) => {
             const currentSub = await getUserSubscription(userId, tx);
 
             // TERMINAL STATE PROTECTION: If subscription is already canceled in DB,
             // an incoming out-of-order update event attempting to set it back to active is ignored.
-            if (currentSub?.status === 'canceled' && status === 'active') {
+            if (currentSub?.status === 'canceled' && status === 'active' && (!currentSub?.stripeSubscriptionId || currentSub?.stripeSubscriptionId === subscription.id)) {
                 console.warn(
-                    `[WEBHOOK] Stale update event ignored: subscription for user ${userId} is already canceled (terminal state protection)`
+                    `[WEBHOOK] Stale update event ignored: subscription ${subscription.id} for user ${userId} is already canceled (terminal state protection)`
                 );
                 await recordSubscriptionEvent(
                     {
@@ -318,21 +332,7 @@ async function handleSubscriptionUpdated(
                 return { success: true, userId, subscriptionId: subscription.id };
             }
 
-            if (effectiveTier !== tier) {
-                const tierResult = await updateUserTier(userId, 'free', tx);
-                if (!tierResult.success) {
-                    throw new Error(
-                        `Failed to downgrade user tier on payment failure: ${tierResult.error}`
-                    );
-                }
-            } else {
-                const tierResult = await updateUserTier(userId, effectiveTier, tx);
-                if (!tierResult.success) {
-                    throw new Error(`Failed to update user tier: ${tierResult.error}`);
-                }
-            }
-
-            const result = await upsertSubscription(
+            const upsertResult = await upsertSubscription(
                 userId,
                 {
                     stripeSubscriptionId: subscription.id,
@@ -345,8 +345,8 @@ async function handleSubscriptionUpdated(
                 tx
             );
 
-            if (!result.success) {
-                throw new Error(`Failed to upsert subscription: ${result.error}`);
+            if (!upsertResult.success) {
+                throw new Error(`Failed to upsert subscription: ${upsertResult.error}`);
             }
 
             await recordSubscriptionEvent(
@@ -380,48 +380,31 @@ async function handleSubscriptionDeleted(
     eventId: string
 ): Promise<HandlerResult> {
     try {
-        const userId = subscription.metadata?.userId;
+        const customerId = typeof subscription.customer === 'string'
+            ? subscription.customer
+            : subscription.customer?.id;
+
+        const userId = await BillingService.resolveUserId({
+            metadataUserId: subscription.metadata?.userId,
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscription.id,
+        });
 
         if (!userId) {
             console.error('Missing userId in subscription metadata:', subscription.id);
             return { success: false, subscriptionId: subscription.id, error: 'Missing userId' };
         }
 
-        const firstItem = subscription.items?.data?.[0];
-        const { currentPeriodStart, currentPeriodEnd } = extractPeriod({
-            itemStart: firstItem?.current_period_start,
-            itemEnd: firstItem?.current_period_end,
-            fallbackAnchorSeconds: subscription.start_date || subscription.canceled_at,
-        });
-
-        // Atomic Transaction: Downgrade User + Mark Canceled + Record Event
+        // Atomic Transaction: Cancel Subscription + Recalculate Tier (1:N) + Record Event
         return await executeSubscriptionTransition(async (tx) => {
-            const tierResult = await updateUserTier(userId, 'free', tx);
-            if (!tierResult.success) {
-                console.error('Failed to downgrade user tier:', tierResult.error);
-                return {
-                    success: false,
-                    userId,
-                    subscriptionId: subscription.id,
-                    error: tierResult.error,
-                };
-            }
-
-            const upsertResult = await upsertSubscription(
+            const cancelResult = await cancelUserSubscription(
                 userId,
-                {
-                    stripeSubscriptionId: subscription.id,
-                    tier: 'free',
-                    status: 'canceled',
-                    currentPeriodStart,
-                    currentPeriodEnd,
-                    cancelAtPeriodEnd: false,
-                },
-                tx
+                tx,
+                subscription.id
             );
 
-            if (!upsertResult.success) {
-                throw new Error(`Failed to cancel subscription: ${upsertResult.error}`);
+            if (!cancelResult.success) {
+                throw new Error(`Failed to cancel subscription: ${cancelResult.error}`);
             }
 
             await recordSubscriptionEvent(
@@ -435,7 +418,9 @@ async function handleSubscriptionDeleted(
                 tx
             );
 
-            console.log(`[WEBHOOK] Subscription canceled atomically for user ${userId}`);
+            console.log(
+                `[WEBHOOK] Subscription canceled atomically for user ${userId}`
+            );
             return { success: true, userId, subscriptionId: subscription.id };
         });
     } catch (error) {
@@ -445,14 +430,32 @@ async function handleSubscriptionDeleted(
 }
 
 /**
- * Process invoice payment failed event atomically using local database state
+ * Process invoice payment failed event atomically with grace period preservation (LUGX-026)
  */
 async function handleInvoicePaymentFailed(
     invoice: Stripe.Invoice,
     eventId: string
 ): Promise<HandlerResult> {
     try {
-        const userId = invoice.metadata?.userId;
+        const rawInvoice = invoice as unknown as {
+            subscription?: string | { id: string };
+            subscription_details?: { metadata?: { userId?: string } };
+        };
+        const subDetails = rawInvoice.subscription_details;
+        const subId = typeof rawInvoice.subscription === 'string'
+            ? rawInvoice.subscription
+            : rawInvoice.subscription?.id;
+        const customerId = typeof invoice.customer === 'string'
+            ? invoice.customer
+            : (invoice.customer as Stripe.Customer | undefined)?.id;
+
+        const userId = await BillingService.resolveUserId({
+            metadataUserId: invoice.metadata?.userId,
+            subscriptionDetailsUserId: subDetails?.metadata?.userId,
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subId,
+        });
+
         if (!userId) {
             console.error('[WEBHOOK] Missing userId in invoice metadata:', invoice.id);
             return { success: false, error: 'Missing userId' };
@@ -464,22 +467,16 @@ async function handleInvoicePaymentFailed(
             fallbackAnchorSeconds: invoice.created,
         });
 
-        // Atomic Transaction: Downgrade User + Update Subscription locally + Record Event
+        // Atomic Transaction: Grace Period (past_due) + Recalculate Tier + Record Event
         return await executeSubscriptionTransition(async (tx) => {
-            const tierResult = await updateUserTier(userId, 'free', tx);
-            if (!tierResult.success) {
-                throw new Error(`Failed to downgrade on payment failure: ${tierResult.error}`);
-            }
-
-            // Local DB Lookup: Look up user's existing subscription directly without external Stripe network call
             const existingSub = await getUserSubscription(userId, tx);
-            const subId = existingSub?.stripeSubscriptionId || '';
+            const resolvedSubId = subId || existingSub?.stripeSubscriptionId || '';
 
             const upsertResult = await upsertSubscription(
                 userId,
                 {
-                    stripeSubscriptionId: subId,
-                    tier: 'free',
+                    stripeSubscriptionId: resolvedSubId,
+                    tier: existingSub?.tier || 'free',
                     status: 'past_due',
                     currentPeriodStart: existingSub?.currentPeriodStart || currentPeriodStart,
                     currentPeriodEnd: existingSub?.currentPeriodEnd || currentPeriodEnd,
@@ -489,7 +486,7 @@ async function handleInvoicePaymentFailed(
             );
 
             if (!upsertResult.success) {
-                throw new Error(`Failed to record failed-payment status: ${upsertResult.error}`);
+                throw new Error(`Failed to update past_due status: ${upsertResult.error}`);
             }
 
             await recordSubscriptionEvent(
@@ -497,16 +494,16 @@ async function handleInvoicePaymentFailed(
                     eventId,
                     eventType: 'invoice.payment_failed',
                     userId,
-                    stripeSubscriptionId: subId || null,
+                    stripeSubscriptionId: resolvedSubId || null,
                     status: 'processed',
                 },
                 tx
             );
 
             console.log(
-                `[WEBHOOK] Payment failed handled atomically for user ${userId}; downgraded to free`
+                `[WEBHOOK] Payment failed handled atomically for user ${userId}; status: past_due`
             );
-            return { success: true, userId, subscriptionId: subId };
+            return { success: true, userId, subscriptionId: resolvedSubId };
         });
     } catch (error) {
         console.error('Error handling invoice.payment_failed:', error);
@@ -591,9 +588,12 @@ export async function POST(request: NextRequest) {
         try {
             const lockResult = await withTimeout(redis.set(lockKey, '1', { nx: true, ex: 30 }));
             if (lockResult === null) {
-                // Another worker is processing this exact event right now
-                console.log(`[WEBHOOK] Deduplicated by Redis lock: ${eventId}`);
-                return NextResponse.json({ received: true, deduplicated: true });
+                // Another worker is processing this exact event right now (LUGX-025)
+                console.warn(`[WEBHOOK] Lock contention for event: ${eventId} - returning 503`);
+                return NextResponse.json(
+                    { error: 'Concurrent event in flight, retry requested' },
+                    { status: 503, headers: { 'Retry-After': '5' } }
+                );
             }
             lockAcquired = true;
         } catch (redisError) {
@@ -674,13 +674,18 @@ export async function POST(request: NextRequest) {
                     /* non-critical: DB is authoritative */
                 }
             }
+            return NextResponse.json({ received: true, event: eventId });
         } else {
+            // LUGX-025: Return 500 on mutation failure so Stripe retries
             if (lockAcquired && lockKey) {
                 await withTimeout(redis.del(lockKey)).catch(() => {});
             }
+            console.error(`[WEBHOOK] Mutation failed for event ${eventId}: ${mutationMeta.error}`);
+            return NextResponse.json(
+                { error: mutationMeta.error || 'Webhook mutation failed' },
+                { status: 500 }
+            );
         }
-
-        return NextResponse.json({ received: true, event: eventId });
     } catch (error) {
         console.error('Error in webhook handler:', error);
         if (lockAcquired && lockKey) {

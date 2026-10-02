@@ -17,7 +17,8 @@ export type SubscriptionStatus =
   | 'canceled'
   | 'incomplete'
   | 'incomplete_expired'
-  | 'unpaid';
+  | 'unpaid'
+  | 'paused';
 
 /**
  * Terminal subscription statuses from which backward transitions are forbidden
@@ -95,6 +96,13 @@ export interface UnpaidSubscriptionState {
   readonly isTerminal: false;
 }
 
+export interface PausedSubscriptionState {
+  readonly status: 'paused';
+  readonly tier: 'free';
+  readonly subscriptionId: string;
+  readonly isTerminal: false;
+}
+
 export interface NoSubscriptionState {
   readonly status: 'none';
   readonly tier: 'free';
@@ -109,6 +117,7 @@ export type SubscriptionState =
   | IncompleteSubscriptionState
   | IncompleteExpiredSubscriptionState
   | UnpaidSubscriptionState
+  | PausedSubscriptionState
   | NoSubscriptionState;
 
 /**
@@ -362,6 +371,18 @@ export function reduceSubscriptionState(
         return {
           state: {
             status: 'unpaid',
+            tier: 'free',
+            subscriptionId: event.subscriptionId,
+            isTerminal: false,
+          },
+          action: 'applied',
+        };
+      }
+
+      if (event.status === 'paused') {
+        return {
+          state: {
+            status: 'paused',
             tier: 'free',
             subscriptionId: event.subscriptionId,
             isTerminal: false,
