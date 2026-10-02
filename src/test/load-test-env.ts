@@ -29,21 +29,48 @@ export function loadTestEnv(
     // Injectable for deterministic unit tests; defaults to the true shell value.
     shellTestDatabaseUrl: string | undefined = MODULE_LOAD_TEST_DATABASE_URL
 ): void {
-    dotenvConfig({
-        path: path.join(rootDir, ".env.test.local"),
-        override: true,
-    });
-    dotenvConfig({ path: path.join(rootDir, ".env.test"), override: false });
-    dotenvConfig({ path: path.join(rootDir, ".env.local"), override: false });
-    dotenvConfig({ path: path.join(rootDir, ".env"), override: false });
+    const isLive =
+        process.env.VITEST_LIVE === "true" ||
+        process.env.npm_lifecycle_event === "test:live";
 
-    if (shellTestDatabaseUrl) {
-        process.env.TEST_DATABASE_URL = shellTestDatabaseUrl;
-    }
+    if (isLive) {
+        // LIVE test mode: Load isolated test branch credentials and live runtime environment
+        dotenvConfig({
+            path: path.join(rootDir, ".env.test.local"),
+            override: true,
+        });
+        dotenvConfig({ path: path.join(rootDir, ".env.local"), override: true });
+        dotenvConfig({ path: path.join(rootDir, ".env"), override: false });
 
-    const testUrl = process.env.TEST_DATABASE_URL;
-    if (testUrl) {
-        // Binding contract: the vitest DATABASE_URL IS the test branch URL.
-        process.env.DATABASE_URL = testUrl;
+        if (shellTestDatabaseUrl) {
+            process.env.TEST_DATABASE_URL = shellTestDatabaseUrl;
+        }
+
+        const testUrl = process.env.TEST_DATABASE_URL;
+        if (testUrl) {
+            process.env.DATABASE_URL = testUrl;
+        }
+    } else {
+        // HERMETIC UNIT test mode: Never load .env.local or .env.
+        dotenvConfig({
+            path: path.join(rootDir, ".env.test.local"),
+            override: true,
+        });
+        dotenvConfig({ path: path.join(rootDir, ".env.test"), override: false });
+
+        if (shellTestDatabaseUrl) {
+            process.env.TEST_DATABASE_URL = shellTestDatabaseUrl;
+        }
+
+        const testUrl = process.env.TEST_DATABASE_URL;
+        if (testUrl) {
+            process.env.DATABASE_URL = testUrl;
+        } else {
+            process.env.DATABASE_URL = "postgres://dummy:dummy@localhost:5432/dummy";
+        }
+
+        // Hermetic Redis Guard: strictly force placeholders for unit tests
+        process.env.UPSTASH_REDIS_REST_URL = "https://placeholder-redis.upstash.io";
+        process.env.UPSTASH_REDIS_REST_TOKEN = "placeholder-token";
     }
 }

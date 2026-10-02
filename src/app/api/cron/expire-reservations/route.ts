@@ -18,6 +18,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { timingSafeEqual } from "crypto";
+import { acquireCronLock } from "@/lib/cron/lock";
 
 function authorized(request: NextRequest): boolean {
     const secret = process.env.CRON_SECRET;
@@ -40,6 +41,16 @@ export async function GET(request: NextRequest) {
         );
     }
 
+    const lock = await acquireCronLock("expire-reservations", 300);
+    if (!lock.acquired) {
+        return NextResponse.json({
+            success: true,
+            skipped: true,
+            reason: "Overlapping execution prevented by distributed lock",
+            timestamp: new Date().toISOString(),
+        });
+    }
+
     try {
         const expiredCount = await expireStaleReservations();
 
@@ -54,6 +65,8 @@ export async function GET(request: NextRequest) {
             { success: false, error: "Expire reservations failed" },
             { status: 500 }
         );
+    } finally {
+        await lock.release();
     }
 }
 

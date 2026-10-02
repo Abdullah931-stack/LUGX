@@ -5,9 +5,13 @@ import { LIVE_TEST_FILES, CLOUD_E2E_FILES } from './vitest.constants.mjs';
 export default defineConfig({
     test: {
         environment: 'node',
+        env: {
+            VITEST_LIVE: 'false',
+        },
         setupFiles: ['./vitest.setup.ts'],
         globals: true,
         testTimeout: 15_000,
+        maxWorkers: process.env.CI ? 4 : 3,
         include: ['src/**/*.test.{ts,tsx}', 'src/**/*.test.ts'],
         // Phase 10: LIVE integration suites and external cloud suites are excluded from default runner
         exclude: [...configDefaults.exclude, ...LIVE_TEST_FILES, ...CLOUD_E2E_FILES],

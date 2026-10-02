@@ -146,6 +146,13 @@ vi.mock('@/server/db/transactional', () => ({
 vi.mock('@/server/services/ai-settlement-service', () => mockSettlementService);
 vi.mock('@/server/actions/ai-ops', () => mockAiOps);
 vi.mock('@/lib/ai/client', () => mockAiClient);
+vi.mock('@/lib/rate-limit', () => ({
+    aiStreamRateLimiter: {
+        limit: vi.fn().mockResolvedValue({ success: true, remaining: 10, reset: 60 }),
+    },
+    addRateLimitHeaders: vi.fn(),
+    rateLimitExceededResponse: vi.fn(),
+}));
 
 // Import Route Handlers and Server Actions after mocks
 import { POST as aiStreamRoute } from '@/app/api/ai/stream/route';

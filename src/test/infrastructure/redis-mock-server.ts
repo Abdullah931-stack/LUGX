@@ -18,6 +18,7 @@ export interface MockServerOptions {
 export class UpstashHttpMockServer {
     private store = new Map<string, string>();
     private ttls = new Map<string, number>();
+    private sortedSets = new Map<string, Map<string, number>>();
     private delayMs = 0;
     private server: http.Server;
     private sockets = new Set<Socket>();
@@ -81,6 +82,7 @@ export class UpstashHttpMockServer {
     public clear(): void {
         this.store.clear();
         this.ttls.clear();
+        this.sortedSets.clear();
         this.delayMs = 0;
     }
 
@@ -96,7 +98,7 @@ export class UpstashHttpMockServer {
      */
     public has(key: string): boolean {
         this.evictIfExpired(key);
-        return this.store.has(key);
+        return this.store.has(key) || this.sortedSets.has(key);
     }
 
     /**
@@ -112,6 +114,7 @@ export class UpstashHttpMockServer {
         if (expiresAt !== undefined && expiresAt <= Date.now()) {
             this.store.delete(key);
             this.ttls.delete(key);
+            this.sortedSets.delete(key);
         }
     }
 
@@ -177,23 +180,93 @@ export class UpstashHttpMockServer {
                 let deletedCount = 0;
                 for (const arg of args) {
                     const key = String(arg);
-                    if (this.store.delete(key)) {
-                        deletedCount++;
-                    }
+                    let deleted = false;
+                    if (this.store.delete(key)) deleted = true;
+                    if (this.sortedSets.delete(key)) deleted = true;
+                    if (deleted) deletedCount++;
                     this.ttls.delete(key);
                 }
                 return deletedCount;
             }
 
-            // Fallback stubs for sliding-window rate limiters if triggered
-            case "zremrangebyscore":
+            case "expire": {
+                const key = String(args[0]);
+                const seconds = Number(args[1]);
+                if (!Number.isNaN(seconds)) {
+                    this.ttls.set(key, now + seconds * 1000);
+                    return 1;
+                }
                 return 0;
-            case "zcard":
-                return 0;
-            case "zadd":
-                return 1;
-            case "expire":
-                return 1;
+            }
+
+            case "zadd": {
+                const key = String(args[0]);
+                this.evictIfExpired(key);
+                let zset = this.sortedSets.get(key);
+                if (!zset) {
+                    zset = new Map<string, number>();
+                    this.sortedSets.set(key, zset);
+                }
+
+                let added = 0;
+                for (let i = 1; i < args.length; i++) {
+                    const arg = args[i];
+                    if (typeof arg === "object" && arg !== null && "score" in arg && "member" in arg) {
+                        const obj = arg as { score: number; member: string };
+                        if (!zset.has(String(obj.member))) added++;
+                        zset.set(String(obj.member), Number(obj.score));
+                    } else if (i + 1 < args.length) {
+                        const score = Number(arg);
+                        const member = String(args[i + 1]);
+                        if (!zset.has(member)) added++;
+                        zset.set(member, score);
+                        i++;
+                    }
+                }
+                return added;
+            }
+
+            case "zcard": {
+                const key = String(args[0]);
+                this.evictIfExpired(key);
+                const zset = this.sortedSets.get(key);
+                return zset ? zset.size : 0;
+            }
+
+            case "zremrangebyscore": {
+                const key = String(args[0]);
+                const min = Number(args[1]);
+                const max = Number(args[2]);
+                this.evictIfExpired(key);
+                const zset = this.sortedSets.get(key);
+                if (!zset) return 0;
+
+                let removed = 0;
+                for (const [member, score] of Array.from(zset.entries())) {
+                    if (score >= min && score <= max) {
+                        zset.delete(member);
+                        removed++;
+                    }
+                }
+                return removed;
+            }
+
+            case "zcount": {
+                const key = String(args[0]);
+                const min = Number(args[1]);
+                const max = Number(args[2]);
+                this.evictIfExpired(key);
+                const zset = this.sortedSets.get(key);
+                if (!zset) return 0;
+
+                let count = 0;
+                for (const [, score] of zset.entries()) {
+                    if (score >= min && score <= max) {
+                        count++;
+                    }
+                }
+                return count;
+            }
 
             default:
                 return "OK";

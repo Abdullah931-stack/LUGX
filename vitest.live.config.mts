@@ -7,6 +7,9 @@ const isCloudSmoke = process.env.CLOUD_SMOKE === 'true' || process.argv.some((ar
 export default defineConfig({
     test: {
         environment: 'node',
+        env: {
+            VITEST_LIVE: 'true',
+        },
         setupFiles: ['./vitest.setup.ts'],
         globals: true,
         include: isCloudSmoke ? CLOUD_E2E_FILES : LIVE_TEST_FILES,

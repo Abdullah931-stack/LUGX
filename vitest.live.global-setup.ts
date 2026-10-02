@@ -37,6 +37,7 @@ function isPortOpen(host: string, port: number, timeoutMs = 5000): Promise<boole
  * `ensureTestDb()` — a live run with no database must FAIL, never "pass".
  */
 export default async function globalSetup(): Promise<void> {
+    process.env.VITEST_LIVE = "true";
     // globalSetup runs in its own process BEFORE setupFiles, so it must load
     // the test environment itself.
     loadTestEnv();

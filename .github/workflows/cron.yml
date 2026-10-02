@@ -1,68 +1,80 @@
 # ---------------------------------------------------------------------------
-# Daily purge of expired soft-deleted files (30-day retention).
+# Scheduled Maintenance Cron Workflows
 #
-# Calls the hardened /api/cron/purge-deleted endpoint (CRON_SECRET auth,
-# bounded batches of 500 rows per run — see the route file).
+# Remediates:
+# - LUGX-096: Separate jobs so purge failure never blocks reservation expiry;
+#   reconciled comments; --fail-with-body; backlog drain loop.
+# - TD-02: Automated expiry of stale AI reservations held past TTL.
+# - Soft-delete tombstone purge (30-day retention).
 #
 # Setup:
-#   1. Generate a secret: openssl rand -base64 32
-#   2. Add CRON_SECRET to this repository's Actions Secrets (Settings >
-#      Secrets and variables > Actions > Secrets).
-#   3. Add DEPLOY_URL to Actions Secrets or Variables (e.g. https://your-app.vercel.app).
-#
-# The workflow never fails the whole pipeline on cron issues: cron jobs are
-# operationally important but non-blocking for development, so errors are
-# logged and surfaced without a failing check.
+#   1. Add CRON_SECRET to repository Secrets (Settings > Secrets > Actions).
+#   2. Add DEPLOY_URL to repository Secrets or Variables (e.g. https://your-app.com).
 # ---------------------------------------------------------------------------
-name: Cron — purge deleted files
+name: Cron — Scheduled Maintenance
 
 on:
   schedule:
     # Daily at 03:00 UTC
     - cron: "0 3 * * *"
-  # Manual trigger for catch-up runs or testing
+  # Manual trigger for catch-up runs, testing, or operator interventions
   workflow_dispatch:
 
 jobs:
-  purge:
+  purge-deleted:
     name: Purge expired tombstones
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Run purge cron endpoint
+      - name: Drain soft-deleted retention backlog
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           DEPLOY_URL: ${{ secrets.DEPLOY_URL || vars.DEPLOY_URL }}
         run: |
           if [ -z "$CRON_SECRET" ] || [ -z "$DEPLOY_URL" ]; then
             echo "ERROR: CRON_SECRET or DEPLOY_URL not configured."
-            echo "Add CRON_SECRET to repository Secrets, and DEPLOY_URL to Secrets or Variables (Settings > Secrets and variables > Actions)."
+            echo "Add CRON_SECRET to repository Secrets, and DEPLOY_URL to Secrets or Variables."
             exit 1
           fi
 
-          RESPONSE=$(curl -fsS -w "\n__HTTP__%{http_code}" \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            "$DEPLOY_URL/api/cron/purge-deleted" || true)
+          MAX_BATCHES=10
+          BATCH_NUM=1
 
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1 | sed 's/__HTTP__//')
-          BODY=$(echo "$RESPONSE" | sed '$d')
+          while [ $BATCH_NUM -le $MAX_BATCHES ]; do
+            echo "--- Executing Purge Batch $BATCH_NUM / $MAX_BATCHES ---"
+            
+            RESPONSE=$(curl -sS -w "\n__HTTP__%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              "$DEPLOY_URL/api/cron/purge-deleted" || true)
 
-          echo "HTTP $HTTP_CODE"
-          echo "$BODY"
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1 | sed 's/__HTTP__//')
+            BODY=$(echo "$RESPONSE" | sed '$d')
 
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "ERROR: purge endpoint returned HTTP $HTTP_CODE"
-            exit 1
-          fi
+            echo "HTTP Status: $HTTP_CODE"
+            echo "Response Body: $BODY"
 
-          # `done: true` means fewer than 500 rows were deleted — retention
-          # backlog fully drained for today.
-          if echo "$BODY" | grep -q '"done":true'; then
-            echo "Retention backlog drained."
-          fi
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "ERROR: Purge endpoint returned HTTP $HTTP_CODE"
+              exit 1
+            fi
 
-      - name: Run expire reservations cron endpoint (TD-02)
+            if echo "$BODY" | grep -q '"done":true'; then
+              echo "Retention backlog fully drained on batch $BATCH_NUM."
+              break
+            fi
+
+            BATCH_NUM=$((BATCH_NUM + 1))
+          done
+
+  expire-reservations:
+    name: Expire stale AI reservations (TD-02)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Run expire reservations sweeper
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           DEPLOY_URL: ${{ secrets.DEPLOY_URL || vars.DEPLOY_URL }}
@@ -72,15 +84,16 @@ jobs:
             exit 1
           fi
 
-          RESPONSE=$(curl -fsS -w "\n__HTTP__%{http_code}" \
+          RESPONSE=$(curl -sS -w "\n__HTTP__%{http_code}" \
+            -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$DEPLOY_URL/api/cron/expire-reservations" || true)
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1 | sed 's/__HTTP__//')
           BODY=$(echo "$RESPONSE" | sed '$d')
 
-          echo "HTTP $HTTP_CODE"
-          echo "$BODY"
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response Body: $BODY"
 
           if [ "$HTTP_CODE" != "200" ]; then
             echo "ERROR: expire-reservations endpoint returned HTTP $HTTP_CODE"

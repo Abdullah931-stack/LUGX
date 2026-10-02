@@ -70,6 +70,14 @@ vi.mock("@/lib/ai/client", () => ({
     processWithAI: vi.fn(),
 }));
 
+vi.mock("@/config/features.config", () => ({
+    FEATURES: {
+        AI_STREAMING_ENABLED: true,
+        RESERVATION_TTL_MS: 300_000,
+        PREVIEW_BUFFER_MAX_CHARS: 500_000,
+    },
+}));
+
 import { POST as aiStreamRoute } from "@/app/api/ai/stream/route";
 
 describe("Phase 11: Authoritative Server-Side Stream Settlement", () => {

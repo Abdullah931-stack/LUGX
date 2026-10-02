@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET as expireReservationsGET, POST as expireReservationsPOST } from '@/app/api/cron/expire-reservations/route';
 import * as aiSettlement from '@/server/services/ai-settlement-service';
+import * as cronLock from '@/lib/cron/lock';
 
 vi.mock('@/server/services/ai-settlement-service', () => ({
     expireStaleReservations: vi.fn(),
 }));
 
-describe('Cron: Expire Stale Reservations (/api/cron/expire-reservations) — TD-02', () => {
+describe('Cron: Expire Stale Reservations (/api/cron/expire-reservations) — TD-02 & Overlap Protection', () => {
     const originalEnv = process.env.CRON_SECRET;
     const TEST_SECRET = 'super-secret-cron-key-123';
 
@@ -86,7 +87,33 @@ describe('Cron: Expire Stale Reservations (/api/cron/expire-reservations) — TD
         expect(aiSettlement.expireStaleReservations).toHaveBeenCalledTimes(1);
     });
 
-    it('should return 500 when expireStaleReservations throws an internal error', async () => {
+    it('should safely skip overlapping execution when lock is already held', async () => {
+        const spyLock = vi.spyOn(cronLock, 'acquireCronLock').mockResolvedValueOnce({
+            acquired: false,
+            lockKey: 'cron:lock:expire-reservations',
+            lockId: 'conflict',
+            release: vi.fn(),
+        });
+
+        const req = new NextRequest('http://localhost:3000/api/cron/expire-reservations', {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${TEST_SECRET}`,
+            },
+        });
+
+        const res = await expireReservationsGET(req);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.success).toBe(true);
+        expect(data.skipped).toBe(true);
+        expect(data.reason).toContain('Overlapping execution prevented');
+        expect(aiSettlement.expireStaleReservations).not.toHaveBeenCalled();
+
+        spyLock.mockRestore();
+    });
+
+    it('should return 500 when expireStaleReservations throws an internal error and release the lock', async () => {
         vi.mocked(aiSettlement.expireStaleReservations).mockRejectedValueOnce(new Error('DB Connection Dropped'));
 
         const req = new NextRequest('http://localhost:3000/api/cron/expire-reservations', {
@@ -101,5 +128,10 @@ describe('Cron: Expire Stale Reservations (/api/cron/expire-reservations) — TD
         const data = await res.json();
         expect(data.success).toBe(false);
         expect(data.error).toBe('Expire reservations failed');
+
+        // Subsequent call must be able to acquire lock cleanly
+        vi.mocked(aiSettlement.expireStaleReservations).mockResolvedValueOnce(0);
+        const nextRes = await expireReservationsGET(req);
+        expect(nextRes.status).toBe(200);
     });
 });

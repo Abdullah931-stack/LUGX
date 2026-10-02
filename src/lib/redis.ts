@@ -5,6 +5,21 @@ let lastUrl: string | undefined;
 let lastToken: string | undefined;
 
 /**
+ * Check if Upstash Redis credentials are genuinely configured.
+ * Returns false when unconfigured or pointing to placeholder domain.
+ */
+export function isRedisConfigured(): boolean {
+    const url = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+    return Boolean(
+        url &&
+        token &&
+        !url.includes("placeholder-redis") &&
+        token !== "placeholder-token"
+    );
+}
+
+/**
  * Lazily initialize and return the Upstash Redis client.
  * Ensures environment variables loaded at runtime (.env.local) are properly bound.
  */

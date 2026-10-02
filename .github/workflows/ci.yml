@@ -175,6 +175,15 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      upstash-proxy:
+        image: hiett/serverless-redis-http:latest
+        ports:
+          - 8079:80
+        env:
+          SRH_MODE: env
+          SRH_TOKEN: mock-test-token
+          SRH_CONNECTION_STRING: "redis://redis:6379"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -199,7 +208,7 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
           TEST_DB_FORBIDDEN_HOSTS: ep-main-branch.neon.tech,production.neon.tech
-          UPSTASH_REDIS_REST_URL: http://localhost:6379
+          UPSTASH_REDIS_REST_URL: http://localhost:8079
           UPSTASH_REDIS_REST_TOKEN: mock-test-token
           NEXT_PUBLIC_SUPABASE_URL: https://mock-project.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: mock-anon-key-ci-test

@@ -43,6 +43,13 @@ vi.mock('@/server/db', () => ({
 }));
 vi.mock('@/server/db/transactional', () => ({ txDb: mockTxDb }));
 vi.mock('@/server/actions/ai-ops', () => mockAiOps);
+vi.mock('@/lib/rate-limit', () => ({
+    aiStreamRateLimiter: {
+        limit: vi.fn().mockResolvedValue({ success: true, remaining: 10, reset: 60 }),
+    },
+    addRateLimitHeaders: vi.fn(),
+    rateLimitExceededResponse: vi.fn(),
+}));
 vi.mock('@/lib/ai/client', () => ({
     streamWithAI: vi.fn().mockResolvedValue(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('x')); c.close(); } })),
     processWithAI: vi.fn().mockResolvedValue('ok'),

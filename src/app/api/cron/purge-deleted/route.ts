@@ -22,6 +22,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { timingSafeEqual } from "crypto";
+import { acquireCronLock } from "@/lib/cron/lock";
 
 function authorized(request: NextRequest): boolean {
     const secret = process.env.CRON_SECRET;
@@ -42,6 +43,16 @@ export async function GET(request: NextRequest) {
             { success: false, error: "Unauthorized" },
             { status: 401 }
         );
+    }
+
+    const lock = await acquireCronLock("purge-deleted", 600);
+    if (!lock.acquired) {
+        return NextResponse.json({
+            success: true,
+            skipped: true,
+            reason: "Overlapping execution prevented by distributed lock",
+            timestamp: new Date().toISOString(),
+        });
     }
 
     try {
@@ -78,5 +89,9 @@ export async function GET(request: NextRequest) {
             { success: false, error: "Purge failed" },
             { status: 500 }
         );
+    } finally {
+        await lock.release();
     }
 }
+
+export const POST = GET;
