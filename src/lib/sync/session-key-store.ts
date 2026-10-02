@@ -31,6 +31,7 @@ export class SessionKeyStore {
   private localDeviceKey: CryptoKey | null = null;
   private localDeviceKeyRaw: Uint8Array | null = null;
   private keyVersion = 1;
+  private lockEpoch = 1;
 
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private inactivityTimeoutMs = 60 * 60 * 1000; // 1 hour default (3,600,000 ms)
@@ -112,6 +113,23 @@ export class SessionKeyStore {
     if (key instanceof Uint8Array) {
       this.masterKeyRaw = new Uint8Array(key);
       this.masterKey = null;
+
+      // Asynchronously isolate as non-extractable CryptoKey if WebCrypto is available (LUGX-084)
+      if (typeof crypto !== 'undefined' && crypto.subtle) {
+        void crypto.subtle.importKey(
+          'raw',
+          new Uint8Array(this.masterKeyRaw),
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt', 'decrypt']
+        ).then((imported) => {
+          if (this.masterKeyRaw) {
+            this.masterKey = imported;
+          }
+        }).catch(() => {
+          // Graceful fallback to raw bytes in environments lacking full subtle support
+        });
+      }
     } else {
       this.masterKey = key;
       this.masterKeyRaw = null;
@@ -123,25 +141,65 @@ export class SessionKeyStore {
   }
 
   /**
-   * Retrieves the current Vault Master Key with deterministic time-check gatekeeper
+   * Retrieves the current Vault Master Key without triggering an activity touch (LUGX-042).
+   * Background decryption and synchronization do not postpone inactivity lock.
    */
   public getMasterKey(): CryptoKey | Uint8Array | null {
     if (!this.isUnlocked()) {
       return null;
     }
-    this.touch();
-    return this.masterKey || this.masterKeyRaw;
+    return this.masterKey || (this.masterKeyRaw ? new Uint8Array(this.masterKeyRaw) : null);
   }
 
   /**
-   * Retrieves raw master key bytes if stored as Uint8Array with time-check gatekeeper
+   * Retrieves a detached clone of raw master key bytes if stored as Uint8Array (LUGX-016).
+   * Prevents callers from holding mutable pointers that get zeroed in place on purge.
+   * Does not trigger an activity touch (LUGX-042).
    */
   public getMasterKeyRaw(): Uint8Array | null {
     if (!this.isUnlocked()) {
       return null;
     }
-    this.touch();
-    return this.masterKeyRaw;
+    return this.masterKeyRaw ? new Uint8Array(this.masterKeyRaw) : null;
+  }
+
+  /**
+   * Returns the current monotonic lock epoch counter
+   */
+  public getLockEpoch(): number {
+    return this.lockEpoch;
+  }
+
+  /**
+   * Scoped execution wrapper that operates over master key material with lockEpoch validation.
+   * Guarantees that if the vault locks during an async operation, execution is safely aborted
+   * rather than producing ciphertext encrypted with an all-zero buffer (LUGX-016).
+   */
+  public async withMasterKey<T>(
+    operation: (key: CryptoKey | Uint8Array, epoch: number) => Promise<T> | T
+  ): Promise<T> {
+    if (!this.isUnlocked()) {
+      throw new SessionKeyStoreError('Vault is locked; operation rejected');
+    }
+    const startEpoch = this.lockEpoch;
+    const keyRef = this.masterKey || (this.masterKeyRaw ? new Uint8Array(this.masterKeyRaw) : null);
+    if (!keyRef) {
+      throw new SessionKeyStoreError('Vault key is unavailable');
+    }
+
+    try {
+      const result = await operation(keyRef, startEpoch);
+      if (this.lockEpoch !== startEpoch || !this.isUnlocked()) {
+        throw new SessionKeyStoreError(
+          'Vault was locked concurrently during operation; execution aborted to prevent zero-key encryption'
+        );
+      }
+      return result;
+    } finally {
+      if (keyRef instanceof Uint8Array) {
+        wipeBuffer(keyRef);
+      }
+    }
   }
 
   /**
@@ -250,6 +308,8 @@ export class SessionKeyStore {
   }
 
   private purgeMasterKey(): void {
+    this.lockEpoch++;
+
     if (this.inactivityTimer) {
       clearTimeout(this.inactivityTimer);
       this.inactivityTimer = null;

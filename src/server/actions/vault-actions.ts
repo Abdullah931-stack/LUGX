@@ -35,6 +35,11 @@ export interface UpdateVaultPasswordInput {
     kdfIterations?: number;
 }
 
+export interface UpdateVaultRecoveryEnvelopeInput {
+    recoveryEncryptedMasterKey: string;
+    recoverySalt?: string;
+}
+
 /**
  * Retrieves the current authenticated user's vault profile if initialized.
  */
@@ -149,6 +154,53 @@ export async function updateVaultPassword(
     } catch (error) {
         console.error("[VaultActions] updateVaultPassword error:", error);
         return { success: false, status: "error", error: "Failed to update vault password" };
+    }
+}
+
+/**
+ * Updates the recovery-wrapped master key envelope (e.g. after adaptive dual-try migration).
+ */
+export async function updateVaultRecoveryEnvelope(
+    input: UpdateVaultRecoveryEnvelopeInput
+): Promise<VaultActionResult<typeof schema.userVaultProfiles.$inferSelect>> {
+    try {
+        const user = await getUser();
+        if (!user) {
+            return { success: false, status: "unauthorized", error: "Authentication required" };
+        }
+
+        if (!input.recoveryEncryptedMasterKey?.trim()) {
+            return { success: false, status: "error", error: "Missing recovery envelope payload" };
+        }
+
+        const existing = await db.query.userVaultProfiles.findFirst({
+            where: eq(schema.userVaultProfiles.userId, user.id),
+        });
+
+        if (!existing) {
+            return { success: false, status: "not_found", error: "Vault profile not found" };
+        }
+
+        const now = new Date();
+        const updateData: Partial<typeof schema.userVaultProfiles.$inferInsert> = {
+            recoveryEncryptedMasterKey: input.recoveryEncryptedMasterKey.trim(),
+            updatedAt: now,
+        };
+
+        if (input.recoverySalt?.trim()) {
+            updateData.recoverySalt = input.recoverySalt.trim();
+        }
+
+        const [updated] = await db
+            .update(schema.userVaultProfiles)
+            .set(updateData)
+            .where(eq(schema.userVaultProfiles.userId, user.id))
+            .returning();
+
+        return { success: true, data: updated };
+    } catch (error) {
+        console.error("[VaultActions] updateVaultRecoveryEnvelope error:", error);
+        return { success: false, status: "error", error: "Failed to update recovery envelope" };
     }
 }
 

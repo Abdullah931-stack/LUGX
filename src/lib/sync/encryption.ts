@@ -21,6 +21,7 @@ import {
   base64ToUint8Array
 } from './crypto-worker-bridge';
 import { validateMnemonic } from './mnemonic';
+import { AAD } from '../crypto/aad';
 
 export interface EncryptionConfig {
   algorithm: 'AES-GCM';
@@ -114,7 +115,7 @@ export async function wrapMasterKeyWithPassword(
 ): Promise<{ wrappedKeyBase64: string; ivBase64: string }> {
   const kek = await deriveKEKFromPassword(password, saltBytes, iterations);
   const iv = await generateIV(12);
-  const aad = `master_key:${userId}`;
+  const aad = AAD.passwordWrap(userId);
 
   try {
     return await cryptoWorkerBridge.wrapKeyRaw(kek, masterKeyBytes, iv, aad);
@@ -125,7 +126,7 @@ export async function wrapMasterKeyWithPassword(
 }
 
 /**
- * Unwraps (decrypts) the Master Key using the user's password
+ * Unwraps (decrypts) the Master Key using the user's password with adaptive AAD fallback
  */
 export async function unwrapMasterKeyWithPassword(
   wrappedKeyBase64: string,
@@ -137,10 +138,22 @@ export async function unwrapMasterKeyWithPassword(
 ): Promise<Uint8Array> {
   const kek = await deriveKEKFromPassword(password, saltBytes, iterations);
   const iv = base64ToUint8Array(ivBase64);
-  const aad = `master_key:${userId}`;
+
+  const aadsToTry = [
+    AAD.passwordWrap(userId),
+    AAD.legacy.passWrap(userId),
+    AAD.legacy.masterKey(userId)
+  ];
 
   try {
-    return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, aad);
+    for (const aad of aadsToTry) {
+      try {
+        return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, aad);
+      } catch {
+        // Continue to next candidate context
+      }
+    }
+    throw new InvalidCiphertextOrKeyError('Master key unwrap failed: password incorrect or tag mismatch');
   } finally {
     wipeBuffer(kek);
     wipeBuffer(iv);
@@ -159,7 +172,7 @@ export async function wrapMasterKeyWithRecoverySeed(
 ): Promise<{ wrappedKeyBase64: string; ivBase64: string }> {
   const kek = await deriveKEKFromRecoverySeed(mnemonic, recoverySaltBytes, iterations);
   const iv = await generateIV(12);
-  const aad = `recovery_master_key:${userId}`;
+  const aad = AAD.recoveryWrap(userId);
 
   try {
     return await cryptoWorkerBridge.wrapKeyRaw(kek, masterKeyBytes, iv, aad);
@@ -170,7 +183,7 @@ export async function wrapMasterKeyWithRecoverySeed(
 }
 
 /**
- * Unwraps (decrypts) the Master Key using the 12-word recovery seed
+ * Unwraps (decrypts) the Master Key using the 12-word recovery seed with adaptive dual-try fallback
  */
 export async function unwrapMasterKeyWithRecoverySeed(
   wrappedKeyBase64: string,
@@ -182,10 +195,22 @@ export async function unwrapMasterKeyWithRecoverySeed(
 ): Promise<Uint8Array> {
   const kek = await deriveKEKFromRecoverySeed(mnemonic, recoverySaltBytes, iterations);
   const iv = base64ToUint8Array(ivBase64);
-  const aad = `recovery_master_key:${userId}`;
+
+  const aadsToTry = [
+    AAD.recoveryWrap(userId),
+    AAD.legacy.seedWrap(userId),
+    AAD.legacy.recoveryMasterKey(userId)
+  ];
 
   try {
-    return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, aad);
+    for (const aad of aadsToTry) {
+      try {
+        return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, aad);
+      } catch {
+        // Continue to next candidate context
+      }
+    }
+    throw new InvalidCiphertextOrKeyError('Master key unwrap failed: recovery seed incorrect or tag mismatch');
   } finally {
     wipeBuffer(kek);
     wipeBuffer(iv);

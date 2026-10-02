@@ -7,6 +7,8 @@ import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { createUserVaultProfile } from "@/server/actions/vault-actions";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
+import { AAD } from "@/lib/crypto/aad";
+import { normalizePassword } from "@/lib/crypto/key-derivation";
 
 interface CreateVaultModalProps {
     isOpen: boolean;
@@ -142,31 +144,32 @@ export function CreateVaultModal({ isOpen, onClose, onSuccess, userId }: CreateV
             saltBytes = await cryptoWorkerBridge.generateRandomBytes(16);
             recoverySaltBytes = await cryptoWorkerBridge.generateRandomBytes(16);
 
-            // 3. Derive KEK-Pass from password
+            // 3. Derive KEK-Pass from password with NFKC normalization (LUGX-133)
             const encoder = new TextEncoder();
-            passBytes = encoder.encode(password);
+            passBytes = encoder.encode(normalizePassword(password));
             kekPass = await cryptoWorkerBridge.deriveKeyRaw(passBytes, saltBytes, 600000, 256);
 
-            // 4. Wrap Master Key with KEK-Pass
+            // 4. Wrap Master Key with KEK-Pass using canonical AAD
             ivPass = await cryptoWorkerBridge.generateRandomBytes(12);
             const passWrapResult = await cryptoWorkerBridge.wrapKeyRaw(
                 kekPass,
                 masterKeyRaw,
                 ivPass,
-                `vault:pass:${userId}`
+                AAD.passwordWrap(userId)
             );
 
-            // 5. Derive KEK-Seed from 12-word mnemonic
+            // 5. Derive KEK-Seed from 12-word mnemonic with zeroing
             const seedBytes = await cryptoWorkerBridge.mnemonicToSeed(mnemonic, recoverySaltBytes, 600000);
             kekSeed = seedBytes.slice(0, 32);
+            wipeBuffer(seedBytes);
 
-            // 6. Wrap Master Key with KEK-Seed
+            // 6. Wrap Master Key with KEK-Seed using canonical AAD (LUGX-005)
             ivSeed = await cryptoWorkerBridge.generateRandomBytes(12);
             const seedWrapResult = await cryptoWorkerBridge.wrapKeyRaw(
                 kekSeed,
                 masterKeyRaw,
                 ivSeed,
-                `vault:seed:${userId}`
+                AAD.recoveryWrap(userId)
             );
 
             const payload = {
@@ -239,7 +242,7 @@ export function CreateVaultModal({ isOpen, onClose, onSuccess, userId }: CreateV
     return (
         <>
             {/* Backdrop */}
-            <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 transition-opacity" onClick={onClose} />
+            <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 transition-opacity" onClick={isLoading ? undefined : onClose} />
 
             {/* Modal Dialog */}
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

@@ -4,12 +4,15 @@ import { useState, useEffect } from "react";
 import { Lock, KeyRound, AlertCircle, Loader2, RefreshCw, CheckCircle2, Laptop, ShieldCheck, Fingerprint, Cpu } from "lucide-react";
 import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array, arrayBufferToBase64 } from "@/lib/sync/crypto-worker-bridge";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
-import { getUserVaultProfile, updateVaultPassword } from "@/server/actions/vault-actions";
+import { getUserVaultProfile, updateVaultPassword, updateVaultRecoveryEnvelope } from "@/server/actions/vault-actions";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
 import { unwrapMasterKeyWithWebAuthnPrf, checkWebAuthnSupportStatus, createWebAuthnPrfEnvelope } from "@/lib/sync/webauthn-prf";
 import { unwrapMasterKeyWithPin, wrapMasterKeyWithPin, generateSalt } from "@/lib/sync/encryption";
 import { DeviceTrustEnvelope, DeviceTrustType, UserVaultProfile } from "@/lib/sync/types/vault";
+import { AAD } from "@/lib/crypto/aad";
+import { normalizePassword } from "@/lib/crypto/key-derivation";
+import { adaptiveUnwrapRecoverySeed } from "@/lib/vault/recovery";
 
 interface VaultUnlockModalProps {
     isOpen: boolean;
@@ -304,7 +307,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
 
             saltBytes = base64ToUint8Array(profile.keySalt);
             const encoder = new TextEncoder();
-            passBytes = encoder.encode(password);
+            passBytes = encoder.encode(normalizePassword(password));
 
             // Derive KEK-Pass
             kekPass = await cryptoWorkerBridge.deriveKeyRaw(
@@ -318,13 +321,22 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
             const wrappedObj = JSON.parse(profile.encryptedMasterKey);
             const ivBytes = base64ToUint8Array(wrappedObj.iv);
 
-            // Unwrap Master Key
-            unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
-                kekPass,
-                wrappedObj.ciphertext,
-                ivBytes,
-                `vault:pass:${userId}`
-            );
+            // Unwrap Master Key with canonical schema and legacy fallback
+            try {
+                unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
+                    kekPass,
+                    wrappedObj.ciphertext,
+                    ivBytes,
+                    AAD.passwordWrap(userId)
+                );
+            } catch (_canonicalErr) {
+                unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
+                    kekPass,
+                    wrappedObj.ciphertext,
+                    ivBytes,
+                    AAD.legacy.passWrap(userId)
+                );
+            }
 
             // Deposit Master Key into volatile RAM session store
             sessionKeyStore.setMasterKey(unwrappedMasterKey, profile.keyVersion || 1);
@@ -411,26 +423,37 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
 
             const recoverySaltBytes = base64ToUint8Array(profile.recoverySalt);
 
-            // Derive KEK-Seed
-            const kekSeed = await cryptoWorkerBridge.mnemonicToSeed(
-                cleanedSeed,
+            // Execute Adaptive Dual-Try Recovery unwrapping (LUGX-005)
+            const recoveryResult = await adaptiveUnwrapRecoverySeed({
+                seedMnemonic: cleanedSeed,
+                recoveryEncryptedMasterKey: profile.recoveryEncryptedMasterKey,
                 recoverySaltBytes,
-                profile.kdfIterations || 600000
-            );
+                userId,
+                kdfIterations: profile.kdfIterations || 600000
+            });
 
-            const wrappedObj = JSON.parse(profile.recoveryEncryptedMasterKey);
-            const ivBytes = base64ToUint8Array(wrappedObj.iv);
-
-            // Unwrap Master Key
-            unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
-                kekSeed,
-                wrappedObj.ciphertext,
-                ivBytes,
-                `vault:recovery:${userId}`
-            );
-
-            wipeBuffer(kekSeed);
             wipeBuffer(recoverySaltBytes);
+            unwrappedMasterKey = recoveryResult.masterKey;
+
+            // If the vault was migrated, persist the new canonical recovery envelope in background
+            if (recoveryResult.wasMigrated && recoveryResult.reWrappedEnvelope) {
+                const newRecoveryPayload = JSON.stringify(recoveryResult.reWrappedEnvelope);
+                // 1. Update local IDB cache
+                void indexedDBManager.saveCachedVaultProfile({
+                    ...profile,
+                    recoveryEncryptedMasterKey: newRecoveryPayload,
+                    updatedAt: new Date()
+                }).catch(idbErr => {
+                    console.warn("[VaultUnlockModal] Local IDB recovery migration cache deferred:", idbErr);
+                });
+
+                // 2. Persist to server
+                void updateVaultRecoveryEnvelope({
+                    recoveryEncryptedMasterKey: newRecoveryPayload
+                }).catch(serverErr => {
+                    console.warn("[VaultUnlockModal] Cloud recovery migration sync deferred:", serverErr);
+                });
+            }
 
             // Temporarily store in memory to allow setting a new password
             sessionKeyStore.setMasterKey(unwrappedMasterKey, profile.keyVersion || 1);
@@ -476,7 +499,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
 
             newSaltBytes = await cryptoWorkerBridge.generateRandomBytes(16);
             const encoder = new TextEncoder();
-            passBytes = encoder.encode(newPassword);
+            passBytes = encoder.encode(normalizePassword(newPassword));
 
             kekPass = await cryptoWorkerBridge.deriveKeyRaw(
                 passBytes,
@@ -490,7 +513,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                 kekPass,
                 masterKey,
                 ivPass,
-                `vault:pass:${userId}`
+                AAD.passwordWrap(userId)
             );
 
             const payload = {
@@ -547,7 +570,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
     return (
         <>
             {/* Backdrop */}
-            <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 transition-opacity" onClick={onClose} />
+            <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 transition-opacity" onClick={isLoading ? undefined : onClose} />
 
             {/* Modal Dialog */}
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
