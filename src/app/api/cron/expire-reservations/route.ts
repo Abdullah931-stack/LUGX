@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { expireStaleReservations } from "@/server/actions/ai-ops";
+import { expireStaleReservations } from "@/server/services/ai-settlement-service";
 
 /**
  * Sweeper for stale AI quota reservations — closing TD-02.

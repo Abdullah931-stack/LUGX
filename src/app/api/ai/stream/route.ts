@@ -4,11 +4,11 @@ import { db, schema } from "@/server/db";
 import { eq, and, isNull } from "drizzle-orm";
 import {
     getUserTier,
-    reserveAndUpdateUsage,
+    reserveAIQuota,
     refundAIReservation,
     commitAIReservation,
-    refundUsage,
-} from "@/server/actions/ai-ops";
+    computeRequestHash,
+} from "@/server/services/ai-settlement-service";
 import { streamWithAI, processWithAI, Tier } from "@/lib/ai/client";
 import { countWords } from "@/lib/utils";
 import { AIOperation } from "@/lib/ai/prompts";
@@ -22,15 +22,16 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * Route Handler: Stream AI text with NDJSON framing, quota reservation, and resilient error recovery.
+ * Route Handler: Stream AI text with NDJSON framing, Server-Authoritative Settlement, and Replay Defense.
  *
- * PHASE 7 & PHASE 17 SPECIFICATION COMPLIANCE:
- * 1. Emits canonical NDJSON frames: start (with non-sensitive identifiers & correlationId), chunk, done, error, cancelled.
- * 2. Strict isolation: zero sensitive user prompt leakage in stream headers or framing metadata.
- * 3. Gracefully encapsulates mid-stream errors into NDJSON error frames without abrupt TCP resets.
- * 4. Automatic idempotent quota refund on startup errors, mid-stream failures, or client disconnects.
- * 5. Supports buffered fallback header for clients requesting non-streaming responses.
- * 6. Rate-limited via sliding window counter with fail-open fallback and end-to-end correlation ID tracking.
+ * PHASE 11 SPECIFICATION COMPLIANCE:
+ * 1. Emits canonical NDJSON frames: start, chunk, done, error, cancelled.
+ * 2. Replay Attack Prevention: rejects reused operationIds with divergent request fingerprints via 409 Conflict.
+ * 3. Server-Authoritative Settlement:
+ *    - Pre-TTFT provider failure or client disconnect: autonomously refunds quota (refundAIReservation).
+ *    - Post-TTFT client disconnect: autonomously commits quota (commitAIReservation) to account for spent provider compute.
+ *    - Clean completion: commits quota BEFORE enqueuing `{ type: "done" }`.
+ * 4. Zero client-side financial authority: clients cannot trigger refund or commit RPCs.
  */
 export async function POST(req: NextRequest) {
     const correlationId = getOrGenerateCorrelationId(req);
@@ -39,10 +40,7 @@ export async function POST(req: NextRequest) {
     let ttftMs: number | null = null;
     let operationId: string | null = null;
     let reserved = false;
-    let reservedUserId: string | null = null;
-    let reservedOperation: AIOperation | null = null;
     let reservedWordCount = 0;
-    let userTier: Tier = "free";
 
     try {
         const user = await getUser();
@@ -116,16 +114,17 @@ export async function POST(req: NextRequest) {
 
         // 1. Get User Tier
         const tier = await getUserTier(user.id);
-        userTier = tier;
-        reservedUserId = user.id;
-        reservedOperation = operation as AIOperation;
 
-        // 2. Atomically reserve quota BEFORE starting the stream
+        // 2. Count words
         const wordCount = countWords(text);
         reservedWordCount = wordCount;
 
+        // 3. Compute deterministic request fingerprint for Replay Attack Prevention
+        const requestHash = computeRequestHash(user.id, operation, cleanFileId, text);
+
+        // 4. Atomically reserve quota BEFORE starting the stream
         const resStart = performance.now();
-        const reservation = await reserveAndUpdateUsage(
+        const reservation = await reserveAIQuota(
             user.id,
             operation as AIOperation,
             wordCount,
@@ -133,19 +132,25 @@ export async function POST(req: NextRequest) {
             {
                 operationId: operationId!,
                 fileId: cleanFileId,
+                requestHash,
             }
         );
         reservationDurationMs = performance.now() - resStart;
 
         if (!reservation.reserved) {
+            if (reservation.isReplayConflict) {
+                return withCorrelation(
+                    new NextResponse(reservation.reason || "Replay conflict: operationId already used with different payload", {
+                        status: 409,
+                    })
+                );
+            }
             return withCorrelation(new NextResponse(reservation.reason || "Quota exceeded", { status: 403 }));
         }
 
         reserved = true;
 
-        // 3. Start AI generation — incremental NDJSON streaming path (feature-flag
-        // gated, G10) or the safe buffered accumulator fallback. Both paths honor the
-        // request abort signal and multi-key failover inside the AI client.
+        // 5. Start AI generation — incremental NDJSON streaming path or buffered fallback
         const encoder = new TextEncoder();
 
         let aiStream: ReadableStream<Uint8Array>;
@@ -171,15 +176,9 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        // 4. Construct resilient NDJSON output stream
+        // 6. Construct resilient NDJSON output stream with Server-Authoritative Settlement
         const decoder = new TextDecoder("utf-8");
 
-        // Canonical TD-05 Resolution: Unified Disconnect Handler.
-        // If the client disconnects pre-TTFT (before any tokens were streamed),
-        // it is refunded as an unfulfilled / early-aborted request.
-        // Once tokens start streaming (post-TTFT), compute was consumed by the provider.
-        // Under the Explicit Settlement Policy (§4-D), the server autonomously commits
-        // the reservation, eliminating client-side settlement round-trip wait times and race conditions.
         const handleClientDisconnect = async (reason: string) => {
             if (!operationId) return;
             try {
@@ -263,6 +262,15 @@ export async function POST(req: NextRequest) {
                         controller.enqueue(encoder.encode(finalChunkFrame));
                     }
 
+                    // PHASE 11: Server commits the reservation authoritatively BEFORE emitting done frame
+                    if (operationId) {
+                        try {
+                            await commitAIReservation(operationId);
+                        } catch (commitErr) {
+                            console.error(`[AI Stream Route] Failed to commit reservation before done (${operationId}):`, commitErr);
+                        }
+                    }
+
                     // Emit clean done frame
                     const doneFrame = JSON.stringify({ type: "done" }) + "\n";
                     controller.enqueue(encoder.encode(doneFrame));
@@ -286,13 +294,19 @@ export async function POST(req: NextRequest) {
                         : String(streamError);
                     console.error(`[AI Stream Route] Mid-stream exception (op: ${operationId}, corr: ${correlationId}):`, detail);
 
-                    // Trigger automatic quota refund
+                    // Automatic quota settlement on mid-stream failure:
+                    // Pre-TTFT provider failure -> refund
+                    // Post-TTFT failure -> commit consumed compute
                     try {
                         if (operationId) {
-                            await refundAIReservation(operationId, "mid_stream_failure");
+                            if (ttftMs === null) {
+                                await refundAIReservation(operationId, "mid_stream_failure_pre_ttft");
+                            } else {
+                                await commitAIReservation(operationId);
+                            }
                         }
                     } catch (refundErr) {
-                        console.warn("[AI Stream Route] Quota refund error:", refundErr);
+                        console.warn("[AI Stream Route] Quota settlement error on stream exception:", refundErr);
                     }
 
                     // Emit graceful NDJSON error frame instead of breaking the connection
@@ -356,13 +370,9 @@ export async function POST(req: NextRequest) {
         console.error(`[AI Stream Route] Startup error (operationId: ${operationId || "none"}, corr: ${correlationId}):`, sanitizeLogMessage(detail));
 
         // Auto-refund quota if reserved before stream failed or aborted
-        if (reserved) {
+        if (reserved && operationId) {
             try {
-                if (operationId) {
-                    await refundAIReservation(operationId, "stream_startup_error");
-                } else if (reservedUserId && reservedOperation) {
-                    await refundUsage(reservedUserId, reservedOperation, reservedWordCount, userTier);
-                }
+                await refundAIReservation(operationId, "stream_startup_error");
             } catch (refundError) {
                 console.error("[AI Stream Route] Failed to refund usage quota:", refundError);
             }
@@ -388,4 +398,3 @@ export async function POST(req: NextRequest) {
         return res;
     }
 }
-

@@ -7,7 +7,7 @@ import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { revalidatePath } from "next/cache";
-import { refundAIReservation as refundAIReservationOp } from "@/server/actions/ai-ops";
+import { refundAIReservation } from "@/server/services/ai-settlement-service";
 
 export interface CommitAIFileOperationParams {
     operationId: string;
@@ -43,15 +43,15 @@ export type CommitAIFileOperationResult =
     };
 
 /**
- * Server Action: Commit AI Operation and persist document update with version lock and transactional settlement.
+ * Server Action: Commit AI Operation to persist document update with version lock.
  *
- * G2 & PHASE 8 COMPLIANCE:
- * 1. Validates authenticated user session.
- * 2. Enforces reservation existence, user ownership, and file association.
- * 3. Enforces idempotency via `operationId` (returns committed file state upon retry).
- * 4. Verifies optimistic version and expectedETag preconditions before executing transactions.
- * 5. Atomically executes file content update and reservation settlement within a single database transaction.
- * 6. Yields explicit 412 Conflict if version or ETag mismatch is detected, preventing silent overwrite.
+ * PHASE 11 & G2 COMPLIANCE:
+ * 1. Validates authenticated user session and file ownership.
+ * 2. Decoupled from active pending reservation lock: accepts server-authoritative committed reservations.
+ * 3. Enforces document idempotency: if file already contains target content at current version, returns already_committed.
+ * 4. Verifies optimistic version and expectedETag preconditions before executing update.
+ * 5. Yields explicit 412 Conflict if version or ETag mismatch is detected.
+ * 6. Financial quota management is handled strictly server-side in ai-settlement-service.
  */
 export async function commitAIFileOperation(
     params: CommitAIFileOperationParams
@@ -72,7 +72,7 @@ export async function commitAIFileOperation(
             };
         }
 
-        // 1. Verify reservation state & user ownership
+        // 1. Verify reservation existence & user/file association
         const reservation = await db.query.aiReservations.findFirst({
             where: and(
                 eq(schema.aiReservations.operationId, operationId),
@@ -97,38 +97,11 @@ export async function commitAIFileOperation(
             };
         }
 
-        // Idempotency: If already committed, return the existing file state
-        if (reservation.status === "committed") {
-            const currentFile = await db.query.files.findFirst({
-                where: and(
-                    eq(schema.files.id, fileId),
-                    eq(schema.files.userId, user.id),
-                    isNull(schema.files.deletedAt)
-                ),
-            });
-
-            return {
-                success: true,
-                status: "already_committed",
-                version: currentFile?.version ?? undefined,
-                etag: currentFile?.etag ?? undefined,
-                updatedAt: currentFile?.updatedAt?.toISOString(),
-            };
-        }
-
         if (reservation.status === "refunded" || reservation.status === "expired") {
             return {
                 success: false,
                 status: "reservation_expired",
                 error: `Reservation is already ${reservation.status}`,
-            };
-        }
-
-        if (reservation.status !== "reserved") {
-            return {
-                success: false,
-                status: "error",
-                error: `Invalid reservation status: ${reservation.status}`,
             };
         }
 
@@ -145,6 +118,21 @@ export async function commitAIFileOperation(
             return { success: false, status: "error", error: "File not found or deleted" };
         }
 
+        // Idempotency: If reservation was committed and file has already advanced past expectedVersion,
+        // or if current file content already matches target content at or above expectedVersion.
+        if (
+            reservation.status === "committed" &&
+            ((currentFile.version ?? 0) > expectedVersion || currentFile.content === resultContent)
+        ) {
+            return {
+                success: true,
+                status: "already_committed",
+                version: currentFile.version ?? undefined,
+                etag: currentFile.etag ?? undefined,
+                updatedAt: currentFile.updatedAt?.toISOString(),
+            };
+        }
+
         // Zero-Knowledge AI Gatekeeper Defense:
         if (currentFile.isEncrypted) {
             if (typeof db.query?.userVaultProfiles?.findFirst === "function") {
@@ -152,7 +140,7 @@ export async function commitAIFileOperation(
                     where: eq(schema.userVaultProfiles.userId, user.id),
                 });
                 if (!vaultProfile?.allowAIOnEncryptedFiles) {
-                    await refundAIReservationOp(operationId, user.id).catch(() => {});
+                    await refundAIReservation(operationId, user.id).catch(() => {});
                     return {
                         success: false,
                         status: "unauthorized",
@@ -162,7 +150,7 @@ export async function commitAIFileOperation(
             }
 
             if (!params.encryptionMetadata?.iv) {
-                await refundAIReservationOp(operationId, user.id).catch(() => {});
+                await refundAIReservation(operationId, user.id).catch(() => {});
                 return {
                     success: false,
                     status: "error",
@@ -234,14 +222,8 @@ export async function commitAIFileOperation(
             } : undefined,
         });
 
-        // Enforce transactional safety in production
-        if (process.env.NODE_ENV !== "test" && typeof txDb?.transaction !== "function") {
-            throw new Error("Transactional DB client is unavailable. Atomic commit requires txDb.transaction().");
-        }
-
-        // 3. Atomically update file and settle reservation in a single transaction
+        // 3. Atomically update file with optimistic version lock
         const targetDb = txDb && typeof txDb.transaction === "function" ? txDb : db;
-
         let updatedFile: typeof currentFile | undefined;
 
         if (typeof targetDb.transaction === "function") {
@@ -271,25 +253,6 @@ export async function commitAIFileOperation(
                     return { conflict: true };
                 }
 
-                const [res] = await tx
-                    .update(schema.aiReservations)
-                    .set({
-                        status: "committed",
-                        committedUnits: reservation.reservedUnits,
-                        updatedAt: now,
-                    })
-                    .where(
-                        and(
-                            eq(schema.aiReservations.id, reservation.id),
-                            eq(schema.aiReservations.status, "reserved")
-                        )
-                    )
-                    .returning();
-
-                if (!res) {
-                    throw new Error("Failed to settle AI reservation during commit");
-                }
-
                 return { conflict: false, file: f };
             });
 
@@ -311,7 +274,6 @@ export async function commitAIFileOperation(
 
             updatedFile = txResult.file;
         } else {
-            // Fallback for drivers without interactive transactions (strictly in test environment)
             const [f] = await db
                 .update(schema.files)
                 .set({
@@ -349,20 +311,6 @@ export async function commitAIFileOperation(
                 };
             }
 
-            await db
-                .update(schema.aiReservations)
-                .set({
-                    status: "committed",
-                    committedUnits: reservation.reservedUnits,
-                    updatedAt: now,
-                })
-                .where(
-                    and(
-                        eq(schema.aiReservations.id, reservation.id),
-                        eq(schema.aiReservations.status, "reserved")
-                    )
-                );
-
             updatedFile = f;
         }
 
@@ -388,14 +336,4 @@ export async function commitAIFileOperation(
             error: error instanceof Error ? error.message : "Failed to commit AI operation",
         };
     }
-}
-
-/**
- * Server Action: Refund an AI Reservation idempotently (delegating to unified ai-ops handler).
- */
-export async function refundAIReservation(
-    operationId: string,
-    reason: string = "stream_failed"
-): Promise<{ refunded: boolean; reason?: string }> {
-    return refundAIReservationOp(operationId, reason);
 }

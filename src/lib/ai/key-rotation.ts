@@ -268,6 +268,42 @@ export function classifyGeminiError(error: unknown): GeminiErrorClassification {
         };
     }
 
+    // Check for Authentication / Invalid or Blocked API Key (including HTTP 400 returned by Google for disabled/blocked keys)
+    const fullErrorText = (
+        (errorObj?.message || "") +
+        " " +
+        (typeof error === "object" && error !== null ? JSON.stringify(error) : String(error))
+    ).toLowerCase();
+
+    const isAuthMessage =
+        fullErrorText.includes("api key not valid") ||
+        fullErrorText.includes("api_key_invalid") ||
+        fullErrorText.includes("invalid api key") ||
+        fullErrorText.includes("api key expired") ||
+        fullErrorText.includes("service_disabled") ||
+        fullErrorText.includes("service disabled") ||
+        fullErrorText.includes("has not been used in project") ||
+        fullErrorText.includes("it is disabled") ||
+        fullErrorText.includes("consumer_suspended") ||
+        fullErrorText.includes("consumer suspended") ||
+        fullErrorText.includes("is suspended") ||
+        fullErrorText.includes("billing not enabled") ||
+        fullErrorText.includes("permission_denied") ||
+        fullErrorText.includes("permission denied") ||
+        fullErrorText.includes("unauthorized") ||
+        fullErrorText.includes("the caller does not have permission") ||
+        fullErrorText.includes("api key has been deleted");
+
+    if (statusCode === 401 || isAuthMessage) {
+        return {
+            category: "authentication",
+            statusCode: statusCode === 400 ? 400 : 401,
+            retryableWithKey: true,
+            retryableWithModel: false,
+            reason: "API key invalid, blocked, or unauthorized",
+        };
+    }
+
     // Check for 400 Bad Request / Invalid Argument / Safety Filters (Non-recoverable with another key)
     if (
         statusCode === 400 ||
@@ -284,23 +320,6 @@ export function classifyGeminiError(error: unknown): GeminiErrorClassification {
             retryableWithKey: false,
             retryableWithModel: false,
             reason: "Invalid client request or moderation block (non-rotatable)",
-        };
-    }
-
-    // Check for 401 Unauthorized / Invalid API Key
-    if (
-        statusCode === 401 ||
-        message.includes("api key not valid") ||
-        message.includes("api_key_invalid") ||
-        message.includes("unauthorized") ||
-        message.includes("invalid api key")
-    ) {
-        return {
-            category: "authentication",
-            statusCode: 401,
-            retryableWithKey: true,
-            retryableWithModel: false,
-            reason: "API key invalid or unauthorized",
         };
     }
 

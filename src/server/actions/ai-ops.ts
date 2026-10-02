@@ -1,7 +1,6 @@
 "use server";
 
 import { db } from "@/server/db";
-import { txDb } from "@/server/db/transactional";
 import * as schema from "@/server/db/schema";
 import crypto from "node:crypto";
 import { processWithAI, Tier } from "@/lib/ai/client";
@@ -11,10 +10,27 @@ import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config";
 import { countWords } from "@/lib/utils";
 import { eq, and, sql } from "drizzle-orm";
+import {
+    getUserTier as getTierFromService,
+    getTodayUsage as getUsageFromService,
+    reserveAIQuota,
+    commitAIReservation as commitReservationService,
+    refundAIReservation as refundReservationService,
+    getAIReservationStatus as getStatusFromService,
+} from "@/server/services/ai-settlement-service";
 
-// Get current date as string for usage tracking
-function getToday(): string {
-    return new Date().toISOString().split("T")[0];
+/**
+ * Get user's tier from database (read-only query).
+ */
+export async function getUserTier(userId: string): Promise<TierName> {
+    return getTierFromService(userId);
+}
+
+/**
+ * Get usage for today (read-only query / ensure record).
+ */
+export async function getTodayUsage(userId: string) {
+    return getUsageFromService(userId);
 }
 
 // Get start of current week (Sunday) for weekly quota
@@ -25,107 +41,6 @@ function getWeekStart(): string {
     startOfWeek.setDate(now.getDate() - dayOfWeek);
     return startOfWeek.toISOString().split("T")[0];
 }
-
-/**
- * Get user's tier from database
- */
-export async function getUserTier(userId: string): Promise<TierName> {
-    const user = await db.query.users.findFirst({
-        where: eq(schema.users.id, userId),
-        columns: { tier: true },
-    });
-
-    return (user?.tier as TierName) || "free";
-}
-
-/**
- * Get usage for today.
- *
- * INTEGRITY FIX (paired with migration 0003): the old SELECT-then-INSERT
- * flow created duplicate (user, date) rows under concurrency because the
- * INSERT raced between the two steps. Now the insert uses
- * `ON CONFLICT (user_id, date) DO NOTHING` — the unique index on
- * (user_id, date) makes the whole upsert atomic, so concurrent callers can
- * never produce more than one row per day.
- */
-export async function getTodayUsage(userId: string) {
-    const today = getToday();
-
-    // Guard against foreign key violation: ensure user exists in 'users' before attempting insert into 'usage'
-    const userExists = await db.query.users.findFirst({
-        where: eq(schema.users.id, userId),
-        columns: { id: true },
-    });
-
-    if (!userExists) {
-        return {
-            id: "",
-            userId,
-            date: today,
-            correctWords: 0,
-            improveWords: 0,
-            translateWords: 0,
-            summarizeCount: 0,
-            summarizeWords: 0,
-            toPromptCount: 0,
-            createdAt: new Date(),
-        };
-    }
-
-    // Atomic ensure: inserts only when no row exists yet. If a concurrent
-    // request inserts first, the ON CONFLICT clause is a no-op (NOT a race —
-    // the DB enforces it under the unique index), and we fall through to the
-    // SELECT which will find the row the other request created.
-    await db
-        .insert(schema.usage)
-        .values({ userId, date: today })
-        .onConflictDoNothing({
-            target: [schema.usage.userId, schema.usage.date],
-        });
-
-    const usage = await db.query.usage.findFirst({
-        where: and(
-            eq(schema.usage.userId, userId),
-            eq(schema.usage.date, today)
-        ),
-    });
-
-    // Defensive guard: if something unexpected happened (e.g. unique index
-    // missing on a freshly created DB before migrations run), fall back to
-    // creating the row explicitly rather than returning undefined.
-    if (!usage) {
-        const [newUsage] = await db
-            .insert(schema.usage)
-            .values({ userId, date: today })
-            .onConflictDoNothing({
-                target: [schema.usage.userId, schema.usage.date],
-            })
-            .returning();
-        return (
-            newUsage ??
-            (await db.query.usage.findFirst({
-                where: and(
-                    eq(schema.usage.userId, userId),
-                    eq(schema.usage.date, today)
-                ),
-            })) ?? {
-                id: "",
-                userId,
-                date: today,
-                correctWords: 0,
-                improveWords: 0,
-                translateWords: 0,
-                summarizeCount: 0,
-                summarizeWords: 0,
-                toPromptCount: 0,
-                createdAt: new Date(),
-            }
-        );
-    }
-
-    return usage;
-}
-
 
 /**
  * Get weekly word usage for free tier
@@ -149,7 +64,7 @@ async function getWeeklyWordUsage(userId: string): Promise<number> {
 }
 
 /**
- * Check if user has quota for operation
+ * Check if user has quota for operation (read-only pre-flight check)
  */
 export async function checkQuota(
     userId: string,
@@ -212,582 +127,8 @@ export async function checkQuota(
 }
 
 /**
- * Get the user's current tier limits (memoized-ish lookup)
- */
-function getLimitsForOperation(
-    operation: AIOperation,
-    tier: TierName,
-    wordCount: number
-): { maxWords: number; period: string; allowed: boolean; reason?: string } {
-    const limits = TIER_LIMITS[tier];
-
-    if (operation === "toPrompt") {
-        const allowed = isToPromptEnabled(tier);
-        return {
-            maxWords: 0,
-            period: "daily",
-            allowed,
-            reason: allowed ? undefined : "ToPrompt is only available for Pro and Ultra plans",
-        };
-    }
-
-    if (operation === "summarize") {
-        const allowed = wordCount <= limits.summarize.maxWordsPerRequest;
-        return {
-            maxWords: limits.summarize.maxWordsPerRequest,
-            period: "daily",
-            allowed,
-            reason: allowed ? undefined : `Text exceeds maximum ${limits.summarize.maxWordsPerRequest} words for summarization`,
-        };
-    }
-
-    // Correct / Improve / Translate share one combined limit
-    return {
-        maxWords: limits.correctImproveTranslate.words,
-        period: limits.correctImproveTranslate.period,
-        allowed: true,
-    };
-}
-
-export interface ReservationOptions {
-    operationId?: string;
-    fileId?: string | null;
-    ttlMs?: number;
-    requestHash?: string;
-}
-
-export interface ReservationResult {
-    reserved: boolean;
-    reason?: string;
-    reservationId?: string;
-    operationId?: string;
-    periodKey?: string;
-}
-
-/**
- * Atomically reserve quota and update usage counters with idempotency tracking.
- *
- * Phase 7 Hardening (LUGX-030, LUGX-031):
- * Executes check, deduction, and reservation creation within interactive transactions (txDb.transaction).
- * Guarantees zero partial writes: unique constraint violations or errors trigger complete engine-level rollbacks.
- */
-function getActiveDb() {
-    return txDb && typeof txDb.transaction === "function" ? txDb : db;
-}
-
-export async function reserveAndUpdateUsage(
-    userId: string,
-    operation: AIOperation,
-    wordCount: number,
-    tier: TierName,
-    options?: ReservationOptions
-): Promise<ReservationResult> {
-    const today = getToday();
-    const limitsInfo = getLimitsForOperation(operation, tier, wordCount);
-
-    if (!limitsInfo.allowed) {
-        return { reserved: false, reason: limitsInfo.reason };
-    }
-
-    const targetDb = getActiveDb();
-
-    const executeReservation = async (client: typeof db): Promise<ReservationResult> => {
-        // Idempotency check: If operationId is provided, check existing reservation record
-        if (options?.operationId) {
-            const existing = await client.query.aiReservations.findFirst({
-                where: and(
-                    eq(schema.aiReservations.userId, userId),
-                    eq(schema.aiReservations.operationId, options.operationId)
-                ),
-            });
-
-            if (existing) {
-                if (existing.status === "reserved") {
-                    return {
-                        reserved: true,
-                        reservationId: existing.id,
-                        operationId: existing.operationId,
-                        periodKey: existing.periodKey,
-                    };
-                }
-                if (existing.status === "committed") {
-                    return { reserved: false, reason: "Operation already committed" };
-                }
-                if (existing.status === "refunded") {
-                    return { reserved: false, reason: "Operation already refunded" };
-                }
-                if (existing.status === "expired") {
-                    return { reserved: false, reason: "Reservation expired" };
-                }
-            }
-        }
-
-        // Ensure the daily usage row exists (UPSERT is atomic per row on conflict)
-        await getTodayUsage(userId);
-
-        // Build the SQL that only applies when quota remains
-        let quotaGuard = sql`TRUE`;
-        const updateFields: Record<string, unknown> = {};
-
-        switch (operation) {
-            case "correct":
-                updateFields.correctWords = sql`correct_words + ${wordCount}`;
-                break;
-            case "improve":
-                updateFields.improveWords = sql`improve_words + ${wordCount}`;
-                break;
-            case "translate":
-                updateFields.translateWords = sql`translate_words + ${wordCount}`;
-                break;
-            case "summarize":
-                updateFields.summarizeCount = sql`summarize_count + 1`;
-                updateFields.summarizeWords = sql`summarize_words + ${wordCount}`;
-                quotaGuard = sql`COALESCE(summarize_count, 0) + 1 <= ${TIER_LIMITS[tier].summarize.dailyLimit}`;
-                break;
-            case "toPrompt":
-                updateFields.toPromptCount = sql`to_prompt_count + 1`;
-                quotaGuard = sql`COALESCE(to_prompt_count, 0) + 1 <= ${TIER_LIMITS[tier].toPrompt?.dailyLimit ?? 0}`;
-                break;
-        }
-
-        if (operation === "correct" || operation === "improve" || operation === "translate") {
-            if (limitsInfo.period === "weekly") {
-                const weekStart = getWeekStart();
-                quotaGuard = sql`(SELECT COALESCE(SUM(correct_words + improve_words + translate_words), 0) FROM ${schema.usage} WHERE user_id = ${userId} AND date >= ${weekStart}) + ${wordCount} <= ${limitsInfo.maxWords}`;
-            } else {
-                quotaGuard = sql`COALESCE(correct_words, 0) + COALESCE(improve_words, 0) + COALESCE(translate_words, 0) + ${wordCount} <= ${limitsInfo.maxWords}`;
-            }
-        }
-
-        const [updated] = await client
-            .update(schema.usage)
-            .set(updateFields)
-            .where(
-                and(
-                    eq(schema.usage.userId, userId),
-                    eq(schema.usage.date, today),
-                    quotaGuard
-                )
-            )
-            .returning({ id: schema.usage.id });
-
-        if (!updated) {
-            return {
-                reserved: false,
-                reason:
-                    operation === "summarize"
-                        ? "Daily summarize limit reached"
-                        : operation === "toPrompt"
-                            ? "Daily ToPrompt limit reached"
-                            : `Word limit (${limitsInfo.maxWords}) exceeded for ${limitsInfo.period} period`,
-            };
-        }
-
-        // If operationId is provided, persist the reservation record in `ai_reservations`
-        if (options?.operationId) {
-            const ttlMs = options.ttlMs || 5 * 60 * 1000; // 5 minutes default TTL
-            const expiresAt = new Date(Date.now() + ttlMs);
-            const requestHash = options.requestHash ||
-                crypto.createHash("sha256").update(`${userId}:${operation}:${wordCount}:${options.operationId}`).digest("hex");
-
-            const [newReservation] = await client
-                .insert(schema.aiReservations)
-                .values({
-                    operationId: options.operationId,
-                    userId,
-                    fileId: options.fileId || null,
-                    operation,
-                    reservedUnits: wordCount,
-                    committedUnits: 0,
-                    refundedUnits: 0,
-                    periodKey: today,
-                    status: "reserved",
-                    expiresAt,
-                    requestHash,
-                })
-                .returning();
-
-            return {
-                reserved: true,
-                reservationId: newReservation?.id,
-                operationId: options.operationId,
-                periodKey: today,
-            };
-        }
-
-        return { reserved: true, periodKey: today };
-    };
-
-    if (typeof targetDb.transaction === "function") {
-        try {
-            return await (targetDb.transaction as unknown as (cb: (tx: typeof db) => Promise<ReservationResult>) => Promise<ReservationResult>)(executeReservation);
-        } catch (error) {
-            // Check if concurrent race on operationId occurred
-            if (options?.operationId) {
-                const existing = await db.query.aiReservations.findFirst({
-                    where: and(
-                        eq(schema.aiReservations.userId, userId),
-                        eq(schema.aiReservations.operationId, options.operationId)
-                    ),
-                });
-                if (existing) {
-                    if (existing.status === "reserved") {
-                        return {
-                            reserved: true,
-                            reservationId: existing.id,
-                            operationId: existing.operationId,
-                            periodKey: existing.periodKey,
-                        };
-                    }
-                    return {
-                        reserved: false,
-                        reason: `Operation already ${existing.status}`,
-                    };
-                }
-            }
-            throw error;
-        }
-    }
-
-    return await executeReservation(db);
-}
-
-/**
- * Refund a previously reserved quota by operationId (Idempotent).
- *
- * G1 & G4 COMPLIANCE:
- * 1. Checks if reservation is currently in `reserved` status.
- * 2. Transition to `refunded` is conditional and atomic (reserved -> refunded).
- * 3. Sets refundedUnits = reservedUnits atomically.
- * 4. Uses the EXACT `periodKey` captured at reservation time (cross-midnight safety).
- * 5. Reverts `usage` counters using bounded subtraction GREATEST(col - units, 0).
- * 6. Repeated call with same operationId returns `{ refunded: false, reason: "already_refunded" }`.
- * 7. Call on committed reservation returns `{ refunded: false, reason: "already_committed" }`.
- */
-export async function refundAIReservation(
-    operationId: string,
-    _reason: string = "stream_failed"
-): Promise<{ refunded: boolean; reason?: string }> {
-    const reservation = await db.query.aiReservations.findFirst({
-        where: eq(schema.aiReservations.operationId, operationId),
-    });
-
-    if (!reservation) {
-        return { refunded: false, reason: "reservation_not_found" };
-    }
-
-    if (reservation.status === "committed") {
-        return { refunded: false, reason: "already_committed" };
-    }
-
-    if (reservation.status === "refunded") {
-        return { refunded: false, reason: "already_refunded" };
-    }
-
-    if (reservation.status === "expired") {
-        return { refunded: false, reason: "already_expired" };
-    }
-
-    const unitsToRefund = reservation.reservedUnits;
-    const targetDb = getActiveDb();
-
-    const executeRefund = async (client: typeof db): Promise<{ refunded: boolean; reason?: string }> => {
-        // Atomic conditional transition: reserved -> refunded
-        const [updatedReservation] = await client
-            .update(schema.aiReservations)
-            .set({
-                status: "refunded",
-                refundedUnits: unitsToRefund,
-                updatedAt: new Date(),
-            })
-            .where(
-                and(
-                    eq(schema.aiReservations.id, reservation.id),
-                    eq(schema.aiReservations.status, "reserved")
-                )
-            )
-            .returning();
-
-        if (!updatedReservation) {
-            // Raced with another refund or commit call
-            const refreshed = await client.query.aiReservations.findFirst({
-                where: eq(schema.aiReservations.id, reservation.id),
-            });
-            return { refunded: false, reason: refreshed?.status ? `already_${refreshed.status}` : "state_conflict" };
-        }
-
-        // Revert usage counters using the recorded `periodKey` (UTC date at reservation time)
-        const undoFields: Record<string, unknown> = {};
-
-        switch (reservation.operation as AIOperation) {
-            case "correct":
-                undoFields.correctWords = sql`GREATEST(correct_words - ${unitsToRefund}, 0)`;
-                break;
-            case "improve":
-                undoFields.improveWords = sql`GREATEST(improve_words - ${unitsToRefund}, 0)`;
-                break;
-            case "translate":
-                undoFields.translateWords = sql`GREATEST(translate_words - ${unitsToRefund}, 0)`;
-                break;
-            case "summarize":
-                undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-                undoFields.summarizeWords = sql`GREATEST(summarize_words - ${unitsToRefund}, 0)`;
-                break;
-            case "toPrompt":
-                undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
-                break;
-        }
-
-        await client
-            .update(schema.usage)
-            .set(undoFields)
-            .where(
-                and(
-                    eq(schema.usage.userId, reservation.userId),
-                    eq(schema.usage.date, reservation.periodKey)
-                )
-            );
-
-        return { refunded: true };
-    };
-
-    if (typeof targetDb.transaction === "function") {
-        return await (targetDb.transaction as unknown as (cb: (tx: typeof db) => Promise<{ refunded: boolean; reason?: string }>) => Promise<{ refunded: boolean; reason?: string }>)(executeRefund);
-    }
-
-    return await executeRefund(db);
-}
-
-/**
- * Transition a reservation from reserved -> committed (Idempotent).
- */
-export async function commitAIReservation(
-    operationId: string
-): Promise<{ committed: boolean; reason?: string }> {
-    const reservation = await db.query.aiReservations.findFirst({
-        where: eq(schema.aiReservations.operationId, operationId),
-    });
-
-    if (!reservation) {
-        return { committed: false, reason: "not_found" };
-    }
-
-    if (reservation.status === "committed") {
-        return { committed: true, reason: "already_committed" };
-    }
-
-    if (reservation.status !== "reserved") {
-        return { committed: false, reason: reservation.status };
-    }
-
-    const [updated] = await db
-        .update(schema.aiReservations)
-        .set({
-            status: "committed",
-            committedUnits: reservation.reservedUnits,
-            updatedAt: new Date(),
-        })
-        .where(
-            and(
-                eq(schema.aiReservations.id, reservation.id),
-                eq(schema.aiReservations.status, "reserved")
-            )
-        )
-        .returning();
-
-    if (!updated) {
-        const current = await db.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.id, reservation.id),
-        });
-        if (current?.status === "committed") {
-            return { committed: true, reason: "already_committed" };
-        }
-        return { committed: false, reason: current?.status || "state_conflict" };
-    }
-
-    return { committed: true };
-}
-
-/**
- * Query an AI reservation lifecycle status by operationId for the CURRENT
- * session user (read-only - never mutates the reservation).
- *
- * Phase 11 (reload / navigation recovery): after a HARD page reload or an
- * abandoned tab, the client may still hold a pending-operation identifier and
- * needs a server-authoritative answer about whether its quota reservation is
- * still "reserved", or was already committed / refunded / expired.
- *
- * Ownership: the row is filtered by the session user id, so an operationId
- * belonging to another user is indistinguishable from a missing one
- * ("found: false") - no cross-user data leakage.
- */
-export async function getAIReservationStatus(
-    operationId: string
-): Promise<
-    | {
-          found: true;
-          operationId: string;
-          status: "reserved" | "committed" | "refunded" | "expired";
-          operation: string;
-          periodKey: string;
-          reservedUnits: number;
-          committedUnits: number;
-          refundedUnits: number;
-          expiresAt: string;
-      }
-    | { found: false; reason: "unauthorized" | "not_found" }
-> {
-    const user = await getUser();
-    if (!user) return { found: false, reason: "unauthorized" };
-
-    const reservation = await db.query.aiReservations.findFirst({
-        where: and(
-            eq(schema.aiReservations.operationId, operationId),
-            eq(schema.aiReservations.userId, user.id)
-        ),
-    });
-
-    if (!reservation) return { found: false, reason: "not_found" };
-
-    return {
-        found: true,
-        operationId: reservation.operationId,
-        status: reservation.status,
-        operation: reservation.operation,
-        periodKey: reservation.periodKey,
-        reservedUnits: reservation.reservedUnits,
-        committedUnits: reservation.committedUnits,
-        refundedUnits: reservation.refundedUnits,
-        expiresAt: reservation.expiresAt.toISOString(),
-    };
-}
-
-/**
- * Sweep and expire stale reservations that passed their TTL.
- */
-export async function expireStaleReservations(): Promise<number> {
-    const now = new Date();
-    const staleReservations = await db.query.aiReservations.findMany({
-        where: and(
-            eq(schema.aiReservations.status, "reserved"),
-            sql`expires_at <= ${now}`
-        ),
-        limit: 100,
-    });
-
-    let expiredCount = 0;
-    const targetDb = getActiveDb();
-
-    for (const res of staleReservations) {
-        const unitsToRefund = res.reservedUnits;
-
-        const executeExpireItem = async (client: typeof db): Promise<boolean> => {
-            const [updated] = await client
-                .update(schema.aiReservations)
-                .set({
-                    status: "expired",
-                    refundedUnits: unitsToRefund,
-                    updatedAt: now,
-                })
-                .where(
-                    and(
-                        eq(schema.aiReservations.id, res.id),
-                        eq(schema.aiReservations.status, "reserved")
-                    )
-                )
-                .returning();
-
-            if (updated) {
-                // Refund the quota on the original periodKey
-                const undoFields: Record<string, unknown> = {};
-
-                switch (res.operation as AIOperation) {
-                    case "correct":
-                        undoFields.correctWords = sql`GREATEST(correct_words - ${unitsToRefund}, 0)`;
-                        break;
-                    case "improve":
-                        undoFields.improveWords = sql`GREATEST(improve_words - ${unitsToRefund}, 0)`;
-                        break;
-                    case "translate":
-                        undoFields.translateWords = sql`GREATEST(translate_words - ${unitsToRefund}, 0)`;
-                        break;
-                    case "summarize":
-                        undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-                        undoFields.summarizeWords = sql`GREATEST(summarize_words - ${unitsToRefund}, 0)`;
-                        break;
-                    case "toPrompt":
-                        undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
-                        break;
-                }
-
-                await client
-                    .update(schema.usage)
-                    .set(undoFields)
-                    .where(
-                        and(
-                            eq(schema.usage.userId, res.userId),
-                            eq(schema.usage.date, res.periodKey)
-                        )
-                    );
-
-                return true;
-            }
-            return false;
-        };
-
-        const itemExpired = typeof targetDb.transaction === "function"
-            ? await (targetDb.transaction as unknown as (cb: (tx: typeof db) => Promise<boolean>) => Promise<boolean>)(executeExpireItem)
-            : await executeExpireItem(db);
-
-        if (itemExpired) {
-            expiredCount++;
-        }
-    }
-
-    return expiredCount;
-}
-
-/**
- * Refund a previously reserved quota (Legacy wrapper for backward compatibility).
- */
-export async function refundUsage(
-    userId: string,
-    operation: AIOperation,
-    wordCount: number,
-    _tier: TierName
-): Promise<void> {
-    const today = getToday();
-    const undoFields: Record<string, unknown> = {};
-    switch (operation) {
-        case "correct":
-            undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
-            break;
-        case "improve":
-            undoFields.improveWords = sql`GREATEST(improve_words - ${wordCount}, 0)`;
-            break;
-        case "translate":
-            undoFields.translateWords = sql`GREATEST(translate_words - ${wordCount}, 0)`;
-            break;
-        case "summarize":
-            undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-            undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
-            break;
-        case "toPrompt":
-            undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
-            break;
-    }
-
-    await db
-        .update(schema.usage)
-        .set(undoFields)
-        .where(
-            and(eq(schema.usage.userId, userId), eq(schema.usage.date, today))
-        );
-}
-
-
-/**
- * Server Action: Process text with AI
+ * Server Action: Process text with AI (synchronous complete generation).
+ * Internal settlement is server-authoritative and not directly callable by client.
  */
 export async function processText(
     operation: AIOperation,
@@ -797,44 +138,46 @@ export async function processText(
     let user: SupabaseUser | null = null;
     let wordCount = 0;
     let tier: TierName | null = null;
-    let reservation: ReservationResult | undefined;
+    let reserved = false;
     const operationId = options?.operationId || `op_${crypto.randomUUID()}`;
 
     try {
-        // Get authenticated user
         user = await getUser();
         if (!user) {
             return { success: false, error: "Authentication required" };
         }
 
         wordCount = countWords(text);
-
-        // Get user tier once (needed for the atomic quota reservation)
         tier = await getUserTier(user.id);
 
-        // Atomic quota reservation + counter update
-        reservation = await reserveAndUpdateUsage(user.id, operation, wordCount, tier, {
+        const requestHash = crypto
+            .createHash("sha256")
+            .update(`${user.id}:${operation}:direct:${text}`)
+            .digest("hex");
+
+        const reservation = await reserveAIQuota(user.id, operation, wordCount, tier, {
             operationId,
+            fileId: "",
+            requestHash,
         });
 
         if (!reservation.reserved) {
             return { success: false, error: reservation.reason };
         }
 
-        // Process with AI (quota already reserved atomically)
+        reserved = true;
+
         const result = await processWithAI(operation, text, tier as Tier);
 
-        // Commit reservation upon confirmed successful response
-        await commitAIReservation(operationId);
+        await commitReservationService(operationId);
 
         return { success: true, data: result };
 
     } catch (error) {
-        // Auto-refund reservation on AI failure
-        if (reservation && reservation.reserved) {
-            await refundAIReservation(operationId, "process_text_failure");
+        if (reserved) {
+            await refundReservationService(operationId, "process_text_failure").catch(() => {});
         }
-        console.error(`AI operation ${operation} failed (quota refunded):`, error);
+        console.error(`AI operation ${operation} failed:`, error);
         return {
             success: false,
             error: error instanceof Error ? error.message : "An error occurred",
@@ -843,7 +186,7 @@ export async function processText(
 }
 
 /**
- * Server Action: Get remaining quota for current user
+ * Server Action: Get remaining quota for current user (read-only query).
  */
 export async function getRemainingQuota(): Promise<{
     tier: TierName;
@@ -876,7 +219,6 @@ export async function getRemainingQuota(): Promise<{
         const limits = TIER_LIMITS[tier];
         const usage = await getTodayUsage(user.id);
 
-        // Get word usage based on period
         let wordUsage: number;
         if (limits.correctImproveTranslate.period === "weekly") {
             wordUsage = await getWeeklyWordUsage(user.id);
@@ -887,7 +229,6 @@ export async function getRemainingQuota(): Promise<{
                 (usage.translateWords || 0);
         }
 
-        // Calculate remaining quotas
         const wordsRemaining = Math.max(0, limits.correctImproveTranslate.words - wordUsage);
         const summarizeRemaining = Math.max(0, limits.summarize.dailyLimit - (usage.summarizeCount || 0));
 
@@ -915,4 +256,16 @@ export async function getRemainingQuota(): Promise<{
         console.error("Failed to get quota:", error);
         return null;
     }
+}
+
+/**
+ * Query an AI reservation lifecycle status by operationId (read-only Server Action).
+ * Enforces authenticated user ownership boundary.
+ */
+export async function getAIReservationStatus(operationId: string) {
+    const user = await getUser();
+    if (!user) {
+        return { found: false as const, reason: "unauthorized" as const };
+    }
+    return getStatusFromService(operationId, user.id);
 }

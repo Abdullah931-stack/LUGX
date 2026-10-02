@@ -13,8 +13,7 @@ import {
 import { previewBuffer } from '@/lib/ai/preview-buffer';
 import { consumeAIStream, AIOperationType } from '@/lib/ai/stream-handler';
 import { validateStreamMarkdownOutput } from '@/lib/parsers/stream-markdown';
-import { commitAIFileOperation, refundAIReservation } from '@/server/actions/ai-commit';
-import { commitAIReservation, getAIReservationStatus } from '@/server/actions/ai-ops';
+import { commitAIFileOperation } from '@/server/actions/ai-commit';
 import {
     trackPendingAIOperation,
     updatePendingAIOperationPhase,
@@ -73,6 +72,15 @@ interface PendingPreview {
     resultMarkdown: string;
 }
 
+/**
+ * useAIStream: Client-side AI streaming hook.
+ *
+ * PHASE 11 COMPLIANCE:
+ * 1. Zero client-side financial authority: no refund or commit RPC calls originate from the client.
+ * 2. Settlement is strictly Server-Authoritative: the /api/ai/stream route manages commit/refund.
+ * 3. Reject/Retry/Stop dismantle local ephemeral preview decorations cleanly without financial side-effects.
+ * 4. Document persistence on Accept executes via commitAIFileOperation with optimistic concurrency control.
+ */
 export function useAIStream(options: UseAIStreamOptions = {}) {
     const [status, setStatus] = useState<AIStreamStatus>('idle');
     const [previewText, setPreviewText] = useState<string>('');
@@ -100,56 +108,25 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         }
     }, []);
 
-    // Clean up on unmount
+    // Clean up on unmount: abort stream and clear client state (server handles settlement autonomously)
     useEffect(() => {
         return () => {
             if (activeSessionRef.current) {
                 const session = activeSessionRef.current;
                 session.abortController.abort();
                 previewBuffer.close(session.sessionId);
-                if (session.status === 'streaming' || session.status === 'reserved') {
-                    refundAIReservation(session.operationId, 'unmount_cleanup').catch(() => {});
-                } else if (session.status === 'preview_ready') {
-                    // Explicit Settlement Policy: generation completed successfully, so the
-                    // compute cost is consumed even if the user never decided. Finalize the
-                    // reservation as committed (idempotent, no document write) so a future
-                    // TTL sweeper can never refund a fully generated result.
-                    commitAIReservation(session.operationId).catch(() => {});
-                }
                 clearPendingAIOperation(session.operationId);
                 pendingPreviewRef.current = null;
             }
         };
     }, []);
 
-    // Phase 11 (hard-reload recovery): React cleanup never runs on a HARD page
-    // reload, so pending-operation records surviving in sessionStorage are
-    // settled here on the next mount. The abandoned preview is NEVER applied
-    // to the document and NEVER treated as committed - the server document is
-    // re-fetched by the orchestrator's initial-load pipeline as the single
-    // source of truth. Settlement follows the v1.6.0 quota policy:
-    // - preview_ready (completed generation): consumed (commitAIReservation)
-    // - generating (lost mid-generation reservation): refundAIReservation
+    // Clean up orphaned tab-scoped pending operation records
     useEffect(() => {
         const orphans = listPendingAIOperations();
         if (orphans.length === 0) return;
-
         for (const record of orphans) {
-            void (async () => {
-                try {
-                    const status = await getAIReservationStatus(record.operationId);
-                    if (status.found && status.status === 'reserved') {
-                        if (record.phase === 'preview_ready') {
-                            await commitAIReservation(record.operationId);
-                        } else {
-                            await refundAIReservation(record.operationId, 'reload_recovery');
-                        }
-                    }
-                    clearPendingAIOperation(record.operationId);
-                } catch {
-                    // Transient failure: keep the record so a later mount retries.
-                }
-            })();
+            clearPendingAIOperation(record.operationId);
         }
     }, []);
 
@@ -166,19 +143,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     }, [options]);
 
     /**
-     * Explicit Settlement helper (quota policy):
-     * A user-decided rejection / retry / undecided teardown of a COMPLETED
-     * generation must consume the reservation — never refund it. Marking the
-     * reservation `committed` (idempotent, document untouched) pins the
-     * speculative deduction so no TTL sweeper or stray refund can reverse it.
-     */
-    const settleReservationAsConsumed = useCallback((operationId: string): void => {
-        Promise.resolve(commitAIReservation(operationId)).catch(() => {});
-    }, []);
-
-    /**
-     * Reject the completed preview: dismantle the ghost, keep the document
-     * pristine, and settle the reservation as consumed (user decision cost).
+     * Reject the completed preview: dismantle the ghost decoration and keep the document pristine.
+     * The server already committed the compute spent during streaming.
      */
     const rejectPreview = useCallback((): void => {
         const session = activeSessionRef.current;
@@ -195,8 +161,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     clearGhostDecoration(editorRef.current);
                 });
             }
-
-            settleReservationAsConsumed(session.operationId);
         } catch (err) {
             console.error('[useAIStream] Error rejecting preview:', err);
         } finally {
@@ -206,51 +170,37 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             setPreviewText('');
             activeSessionRef.current = null;
         }
-    }, [clearGhostDecoration, runAsProgrammaticTransaction, settleReservationAsConsumed]);
+    }, [clearGhostDecoration, runAsProgrammaticTransaction]);
 
     /**
-     * Stop / Abort the active AI streaming session.
-     *
-     * USER-INITIATED STOP POLICY (quota): stopping a running generation is the
-     * user's decision — the compute spent up to that point is consumed and is
-     * NEVER refunded. The reservation is therefore settled as committed BEFORE
-     * the abort fires, guaranteeing the server-side disconnect refund handler
-     * (`cancel()` in /api/ai/stream) no-ops with `already_committed` instead of
-     * winning the race and reversing the charge. Genuine system failures
-     * (mid-stream errors, startup errors, 412 conflicts) still refund.
+     * Stop / Abort the active AI streaming session immediately (< 15ms).
+     * Server route disconnect handler autonomously commits post-TTFT or refunds pre-TTFT.
      */
     const stopStream = useCallback(async () => {
         const session = activeSessionRef.current;
         if (!session) return;
 
-        // If the session has already transitioned to a terminal status, release ref and skip aborting
         if (isTerminalStatus(session.status)) {
             activeSessionRef.current = null;
             return;
         }
 
-        // ADV2-02 Inconsistency Guard: Committing state is atomic & in-flight on server, cannot be aborted
         if (session.status === 'committing') {
             console.warn('[useAIStream] Session is actively committing changes to database. Abort is suppressed.');
             return;
         }
 
-        // Re-entry guard: a settlement round-trip is already in flight
         if (session.status === 'aborting') {
             return;
         }
 
-        // A completed-but-undecided preview is a REJECTION, not a mid-generation
-        // cancellation: settle the reservation as consumed instead of refunding it.
         if (session.status === 'preview_ready') {
             rejectPreview();
             return;
         }
 
         try {
-            // ZERO-LATENCY STOP PROTOCOL (Canonical TD-05 Resolution):
-            // Abort stream socket immediately (0ms). Upstream Gemini generation terminates
-            // instantly through the downstream AbortSignal, preventing token bleed.
+            // Immediately abort the fetch stream socket (0ms latency)
             session.abortController.abort();
             transitionSession(session, 'aborted');
             setStatus('aborted');
@@ -259,10 +209,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             if (editorRef.current) {
                 clearGhostDecoration(editorRef.current);
             }
-
-            // Non-blocking redundant settlement notification (defense-in-depth).
-            // Server-side disconnect handler already commits autonomously upon post-TTFT abort.
-            settleReservationAsConsumed(session.operationId);
         } catch (err) {
             console.error('[useAIStream] Error stopping stream:', err);
         } finally {
@@ -271,10 +217,10 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             clearPendingAIOperation(session.operationId);
             activeSessionRef.current = null;
         }
-    }, [clearGhostDecoration, rejectPreview, settleReservationAsConsumed]);
+    }, [clearGhostDecoration, rejectPreview]);
 
     /**
-     * Initiate an AI streaming operation with Ephemeral Preview & Atomic Commit
+     * Initiate an AI streaming operation with Ephemeral Preview
      */
     const startStream = useCallback(async ({
         editor,
@@ -286,7 +232,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     }: StartStreamParams): Promise<void> => {
         if (!editor) return;
 
-        // IN-FLIGHT MUTEX: Prevent duplicate / double-click triggering while a stream is actively running
+        // IN-FLIGHT MUTEX: Prevent duplicate triggering while a stream is actively running
         if (activeSessionRef.current && !isTerminalStatus(activeSessionRef.current.status)) {
             console.warn('[useAIStream] An active AI streaming session is already in progress. Ignoring duplicate trigger.');
             return;
@@ -347,7 +293,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         });
 
         activeSessionRef.current = session;
-        // Phase 11: durable tab-scoped record enabling hard-reload recovery.
         trackPendingAIOperation(operationId, fileId, 'generating');
 
         previewBuffer.open(sessionId);
@@ -388,7 +333,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 onChunk: (accumulated, latestChunk) => {
                     if (activeSessionRef.current?.sessionId !== sessionId) return;
 
-                    // Append only the latest delta to previewBuffer
                     previewBuffer.append(sessionId, latestChunk);
                     setPreviewText(accumulated);
 
@@ -399,7 +343,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     }
                 },
                 onComplete: async (finalRawText) => {
-                    // Double Decision & Session Integrity Guard
                     if (
                         activeSessionRef.current?.sessionId !== sessionId ||
                         session.abortController.signal.aborted ||
@@ -412,34 +355,26 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     setStatus('preview_ready');
                     updatePendingAIOperationPhase(operationId, 'preview_ready');
 
-                    // Validate pure Markdown output
                     const { markdown: validatedMarkdown, isEmpty } = validateStreamMarkdownOutput(finalRawText);
                     if (isEmpty) {
                         throw new Error('AI produced an empty or invalid response');
                     }
 
-
-                    // Check session integrity before preparing preview decision
                     const integrity = assertSessionIntegrity(session, editorGeneration, expectedVersion);
                     if (!integrity.valid) {
                         throw new Error(`Integrity error: ${integrity.reason}`);
                     }
 
-                    // Check again in case of user abort during format
                     if (session.abortController.signal.aborted || activeSessionRef.current?.sessionId !== sessionId) {
                         return;
                     }
 
-                    // Update ghost widget state to preview_ready (switching action buttons to Reject/Retry/Apply)
                     if (editor) {
                         if (typeof editor.updateStreamingGhost === 'function') {
                             editor.updateStreamingGhost(validatedMarkdown, false);
                         }
                     }
 
-                    // EXPLICIT DECISION MODEL: park the validated Markdown result and wait for the
-                    // user's Accept / Reject / Retry decision. Neither the document, nor the
-                    // server version, nor the quota reservation is touched until then.
                     pendingPreviewRef.current = {
                         sessionId,
                         operationId,
@@ -469,9 +404,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     transitionSession(session, 'failed', err.message);
                     setStatus('failed');
                     activeSessionRef.current = null;
-
-                    // Auto-refund on failure
-                    refundAIReservation(operationId, 'stream_error').catch(() => {});
                     clearPendingAIOperation(operationId);
                     options.onError?.(err);
                 },
@@ -484,7 +416,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 if (editor) {
                     runAsProgrammaticTransaction(() => {
                         clearGhostDecoration(editor);
-                        // USER DATA PROTECTION (AUD-02): Never overwrite user's manual edits
                         if (editorGeneration === session.editorGeneration && session.originalMarkdown) {
                             if (typeof editor.setValue === 'function' && editor.getValue() !== session.originalMarkdown) {
                                 editor.setValue(session.originalMarkdown);
@@ -496,7 +427,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 setError(detailMessage || 'An unexpected error occurred');
                 transitionSession(session, 'failed', detailMessage);
                 setStatus('failed');
-                refundAIReservation(operationId, 'exception_caught').catch(() => {});
                 clearPendingAIOperation(operationId);
                 activeSessionRef.current = null;
             }
@@ -508,9 +438,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     }, [clearGhostDecoration, options, runAsProgrammaticTransaction]);
 
     /**
-     * Accept the completed preview: server-first atomic commit on pure Markdown,
-     * then a single atomic editor transaction replacing the dynamically tracked [from, to] range.
-     * Only this action — not stream completion — mutates the document and finalizes the operation.
+     * Accept the completed preview: persists changes to database via commitAIFileOperation
+     * and updates the local editor state atomically.
      */
     const commitPreview = useCallback(async (): Promise<void> => {
         const session = activeSessionRef.current;
@@ -536,7 +465,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         setStatus('committing');
 
         try {
-            // Dynamic Position Resolution: Query current shifted ghost range from CodeMirror StateField
             const ghostRange = typeof editor?.getGhostRange === 'function'
                 ? editor.getGhostRange()
                 : null;
@@ -547,7 +475,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const targetFrom = ghostRange ? ghostRange.from : Math.max(0, Math.min(selectionStart, currentDocLength));
             const targetTo = ghostRange ? ghostRange.to : Math.max(targetFrom, Math.min(selectionEnd, currentDocLength));
 
-            // Compute server Markdown content
             let finalDocumentMarkdown: string;
             if (typeof editor?.getValue === 'function') {
                 const currentFullContent = editor.getValue();
@@ -559,7 +486,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 finalDocumentMarkdown = resultMarkdown;
             }
 
-            // STEP 1: Server Atomic Commit (with encryption support if configured)
             const effectiveExpectedVersion = typeof options.getLatestVersion === 'function'
                 ? options.getLatestVersion()
                 : expectedVersion;
@@ -586,12 +512,10 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 originalContent: session.originalMarkdown || undefined,
             });
 
-            // Check if session was aborted during network commit
             if (session.abortController.signal.aborted || activeSessionRef.current?.sessionId !== session.sessionId) {
                 return;
             }
 
-            // Handle Version Conflict (412)
             if (commitResult.status === 'conflict') {
                 setIsConflict(true);
                 setError(commitResult.error);
@@ -601,7 +525,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 if (editor) {
                     runAsProgrammaticTransaction(() => {
                         clearGhostDecoration(editor);
-                        // USER DATA PROTECTION (AUD-02): Only rollback if editor generation hasn't changed
                         if (editorGeneration === session.editorGeneration && session.originalMarkdown) {
                             if (typeof editor.setValue === 'function' && editor.getValue() !== session.originalMarkdown) {
                                 editor.setValue(session.originalMarkdown);
@@ -610,8 +533,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     });
                 }
 
-                // Auto-refund reservation on conflict (system condition, not a user decision)
-                await refundAIReservation(operationId, 'version_conflict');
                 clearPendingAIOperation(operationId);
                 activeSessionRef.current = null;
                 pendingPreviewRef.current = null;
@@ -626,11 +547,10 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 throw new Error(errMessage);
             }
 
-            // STEP 2: Local Atomic Commit (1 Transaction in History)
+            // Local Atomic Commit: apply replacement to editor
             if (editor) {
                 runAsProgrammaticTransaction(() => {
                     if (typeof editor.replaceRange === 'function') {
-                        // CodeMirror Markdown EditorAdapter: query latest dynamic range before clearing
                         const latestGhost = typeof editor.getGhostRange === 'function' ? editor.getGhostRange() : null;
                         const docLen = typeof editor.getCharCount === 'function'
                             ? editor.getCharCount()
@@ -650,8 +570,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             clearPendingAIOperation(operationId);
             activeSessionRef.current = null;
             pendingPreviewRef.current = null;
-            // Hide the preview panel on acceptance — the decision is final and
-            // the output now lives inside the document itself.
             setPreviewText('');
             options.onCommitSuccess?.({
                 version: commitResult.version ?? expectedVersion,
@@ -674,9 +592,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             setStatus('failed');
             activeSessionRef.current = null;
             pendingPreviewRef.current = null;
-
-            // Commit failure is a system condition, not a user decision: refund.
-            refundAIReservation(operationId, 'commit_error').catch(() => {});
             clearPendingAIOperation(operationId);
             options.onError?.(err instanceof Error ? err : new Error(detailMessage));
         }
@@ -684,8 +599,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
     /**
      * Retry the last AI operation with the same feature and original text.
-     * The completed preview's reservation is settled as consumed (user decision
-     * cost — never refunded) and a brand-new session reserves fresh quota.
      */
     const retryPreview = useCallback(async (): Promise<void> => {
         const params = lastParamsRef.current;
@@ -726,4 +639,3 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         retryPreview,
     };
 }
-
