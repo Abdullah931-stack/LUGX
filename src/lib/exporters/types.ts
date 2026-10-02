@@ -28,6 +28,7 @@ export type ExportErrorCode =
     | 'DISK_SPACE'
     | 'ENCODING_ERROR'
     | 'INVALID_CONTENT'
+    | 'ENCRYPTED_EXPORT_UNCONFIRMED'
     | 'UNKNOWN';
 
 /**

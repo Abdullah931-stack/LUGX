@@ -21,6 +21,7 @@ import { AIStreamStatus } from "@/components/editor/ai-stream-status";
 import { ConflictDialog } from "@/components/sync/conflict-dialog";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import { VaultUnlockModal } from "@/components/vault";
+import { ExportWarningModal } from "@/components/export/export-warning-modal";
 
 export default function EditorPage() {
     const params = useParams();
@@ -37,6 +38,8 @@ export default function EditorPage() {
         mode: "auto",
         lockCodeBlocksLTR: true,
     });
+    const [isExportWarningOpen, setIsExportWarningOpen] = useState(false);
+    const [pendingExportFormat, setPendingExportFormat] = useState<"md" | "txt">("txt");
 
     // Load persisted direction preferences from localStorage on mount
     useEffect(() => {
@@ -229,18 +232,24 @@ export default function EditorPage() {
         setEditorMode((prev) => (prev === "live" ? "source" : "live"));
     }, []);
 
-    // Export document in multiple formats (MD, TXT)
-    const handleExport = useCallback(
-        async (format: "md" | "txt" = "txt") => {
+    // Governed document export execution
+    const executeExport = useCallback(
+        async (format: "md" | "txt", confirmedPlaintext: boolean) => {
             if (!adapter) return;
 
             try {
-                const { exportContent, downloadBlob } = await import("@/lib/exporters");
+                const { exportDocument, triggerBrowserDownload } = await import("@/lib/export/export-service");
                 const content = adapter.getValue();
-                const result = await exportContent(content, title || "document", format);
+                const result = await exportDocument({
+                    content,
+                    filename: title || "document",
+                    format,
+                    isEncrypted,
+                    confirmedPlaintextExport: confirmedPlaintext,
+                });
 
                 if (result.success && result.blob && result.filename) {
-                    downloadBlob(result.blob, result.filename);
+                    triggerBrowserDownload(result.blob, result.filename);
                 } else {
                     setError(result.error || "Export failed");
                 }
@@ -249,7 +258,24 @@ export default function EditorPage() {
                 console.error("Export error:", err);
             }
         },
-        [adapter, title, setError]
+        [adapter, title, isEncrypted, setError]
+    );
+
+    // Export document in multiple formats (MD, TXT)
+    const handleExport = useCallback(
+        async (format: "md" | "txt" = "txt") => {
+            if (!adapter) return;
+
+            // Zero-Knowledge Encrypted Content Governance Barrier (LUGX-004, LUGX-085)
+            if (isEncrypted) {
+                setPendingExportFormat(format);
+                setIsExportWarningOpen(true);
+                return;
+            }
+
+            await executeExport(format, false);
+        },
+        [adapter, isEncrypted, executeExport]
     );
 
     // Dynamic stats computation from raw Markdown
@@ -487,6 +513,18 @@ export default function EditorPage() {
                     userId={userId}
                 />
             )}
+
+            {/* Plaintext Export Warning Modal for Encrypted Documents */}
+            <ExportWarningModal
+                isOpen={isExportWarningOpen}
+                onClose={() => setIsExportWarningOpen(false)}
+                onConfirm={() => {
+                    setIsExportWarningOpen(false);
+                    executeExport(pendingExportFormat, true);
+                }}
+                fileName={title || "document"}
+                format={pendingExportFormat}
+            />
         </div>
     );
 }
