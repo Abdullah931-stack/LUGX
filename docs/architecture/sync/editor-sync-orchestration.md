@@ -437,7 +437,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
     - `src/test/sync/sync-crypto-gateway.test.ts` (5/5 passing - transparent inbound decryption gateway, fresh outbound CSPRNG IV re-encryption, vault-lock quarantine)
     - `src/test/sync/encrypted-conflict-decryption.integration.test.ts` (4/4 passing - end-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution)
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
-  - **Project Full Test Suite:** 72/72 test files, 914/914 tests passing (100% success rate) via `vitest.config.mts`.
+  - **Project Full Test Suite:** 76/76 test files, 929/929 tests passing (100% success rate) via `vitest.config.mts`.
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).
 
 
