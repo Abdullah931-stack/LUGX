@@ -93,38 +93,35 @@ flowchart TD
   - **Quota settlement:** the abort is a *user decision*, so the reservation is settled as consumed under the Explicit Settlement Policy (§4-D) — it is NOT refunded.
   - **Critical Rule:** The system **NEVER** silently resets user edits. All manual edits written by the user are preserved 100% without data loss.
 
-### C. Server-Side Autonomous Disconnect Settlement (TD-05 Canonical Resolution)
-- In `/api/ai/stream/route.ts`, if the client disconnects, tab closes, or socket drops (`req.signal.aborted` or `ReadableStream.cancel()`), the server executes `handleClientDisconnect`:
-  - **Pre-TTFT Disconnect (`ttftMs === null`):** No tokens were produced or streamed to the client (early cancel or provider stall). The server triggers `refundAIReservation(operationId, 'disconnect_pre_generation')`.
-  - **Post-TTFT Disconnect (`ttftMs !== null`):** Output chunks were already generated and delivered to the client, consuming upstream compute. The server autonomously executes `commitAIReservation(operationId)` to settle the reservation as consumed.
-- **Zero-Latency Client Stop:** Because the server commits autonomously upon post-TTFT disconnect, `stopStream` on the client aborts immediately (0ms) and dismantles ghost decorations instantly without awaiting an out-of-band network round-trip. The client dispatches a non-blocking `commitAIReservation` call in the background as defense-in-depth. Both commit calls are idempotent, eliminating the previous 100–300ms stop latency and terminating upstream Gemini token generation without delay.
+### C. Server-Authoritative Streaming Settlement & Revocation of Client Financial Authority (Phase 11)
+- **Zero Client Financial Authority:** The server actions `refundAIReservation` and `commitAIReservation` have been completely removed from client-accessible RPC entrypoints (`"use server"`). Settlement logic is strictly encapsulated inside `src/server/services/ai-settlement-service.ts` using `import "server-only"`. The client cannot manipulate reservation states via network calls.
+- **Server Stream Lifecycle Settlement (`/api/ai/stream/route.ts`):**
+  - **Normal Stream Completion:** The server autonomously commits the reservation (`commitAIReservation(operationId)`) *immediately prior* to enqueuing the terminal `{ type: "done" }` NDJSON frame.
+  - **Pre-TTFT Failures & Aborts (`ttftMs === null`):** If upstream generation fails before any token is emitted, or if the client disconnects before the first chunk, the server issues an atomic refund (`refundAIReservation(operationId, 'mid_stream_failure_pre_ttft' | 'disconnect_pre_generation')`).
+  - **Post-TTFT Failures & Aborts (`ttftMs !== null`):** If tokens have already been delivered across the wire and the connection is aborted or interrupted, the server commits the reservation to account for consumed upstream compute.
+- **Zero-Latency Client Stop:** The client hook (`useAIStream`) executes `abortController.abort()` with 0ms client-side latency, without dispatching any RPC settlement calls. The server stream handler (`cancel()` and `req.signal.aborted`) settles the state autonomously.
 
-### D. Explicit Settlement Policy (User Decisions) — v1.6.0 & v1.29.2
-Quota refunds are reserved for **system failures**. Any outcome driven by a **user decision** consumes the reservation, because the compute cost was already spent. Settlement is performed idempotently via `commitAIReservation(operationId)` (status `reserved -> committed`, no document write), which also pins the deduction against the TTL sweeper (`expireStaleReservations`) and any stray refund call (returns `already_committed`).
+### D. Replay Attack Defense & Request Fingerprint Validation (Phase 11)
+- **Deterministic Payload Fingerprinting:**
+  $$\text{requestHash} = \text{SHA-256}(\text{userId} : \text{operation} : \text{fileId} : \text{text})$$
+- **Integrity Validation:** When `reserveAIQuota` is called with an existing `operationId`:
+  1. The existing reservation's `requestHash` is verified against the incoming payload's fingerprint.
+  2. The reservation's `userId` is verified against the authenticated session.
+  3. If `operationId` is reused with divergent parameters, the reservation is rejected with `isReplayConflict: true`, and the stream endpoint returns **HTTP 409 Conflict**.
+
+### E. Explicit Settlement Policy (User Decisions) — v1.6.0 & Phase 11
+Quota refunds are reserved strictly for **system failures** occurring pre-TTFT. Any outcome driven by a **user decision** (accept, reject, retry, or post-TTFT stop) settles the reservation as consumed, as upstream AI tokens were already generated. Settlement is performed idempotently via `commitAIReservation(operationId)`.
 
 | Outcome | Trigger | Quota action |
 |---|---|---|
-| Stream startup / mid-stream failure | System error | **Refund** (`refundAIReservation`) |
-| Optimistic-lock conflict (412) at commit time | System condition | **Refund** |
-| Client exception during pipeline | System error | **Refund** |
-| HARD page reload mid-generation (cleanup never ran) | Lost baseline | **Refund** (`refundAIReservation(op, 'reload_recovery')` on next mount, after `getAIReservationStatus`) |
-| HARD page reload with a completed undecided preview | Undecided generation | **Settle as consumed** (`commitAIReservation`, idempotent) — preview itself is never applied |
-| User rejects the completed preview (`rejectPreview`) | User decision | **Settle as consumed** |
-| User re-runs the operation (`retryPreview`) — old session | User decision | **Settle as consumed** (new session reserves fresh quota) |
-| User stops a running generation (`stopStream`) | User decision | **Settle as consumed** (instant 0ms client abort + server post-TTFT auto-commit) |
-| Teardown while output awaits decision (unmount in `preview_ready`) | Undecided user teardown | **Settle as consumed** |
-
-Rationale: the provider call completed (or partially completed) for every settled case above — the tokens were spent regardless of what the user chooses to do with the output. Refunding would allow unlimited free regeneration by reject/retry cycles.
-
-### E. Reload Recovery & Operation Query (Phase 11 amendment)
-
-A sessionStorage registry (`src/lib/ai/pending-operation-store.ts`) tracks every in-flight
-or undecided AI operation for the current TAB (identifiers + phase only — never document
-content). Because React cleanup never runs on a hard reload, orphaned records are settled
-on the next mount: the client queries `getAIReservationStatus(operationId)` (read-only
-session-scoped server action in `src/server/actions/ai-ops.ts`; cross-user ids collapse
-to `not_found`) and settles per the matrix above. The abandoned preview output is never
-applied to the document and never treated as committed.
+| Stream startup / upstream error pre-TTFT | System error | **Refund** (`refundAIReservation` on server) |
+| Client disconnect pre-TTFT (`ttftMs === null`) | Client disconnect | **Refund** (`refundAIReservation` on server) |
+| Upstream error post-TTFT (`ttftMs !== null`) | Mid-stream failure | **Settle as consumed** (`commitAIReservation` on server) |
+| Client disconnect post-TTFT (`ttftMs !== null`) | Client abort | **Settle as consumed** (`commitAIReservation` on server) |
+| Stream successfully finished | Successful completion | **Settle as consumed** (Committed before `done` frame) |
+| User accepts preview (`commitPreview`) | User decision | **Document committed** (`commitAIFileOperation` updates file) |
+| User rejects preview (`rejectPreview`) | User decision | **Settle as consumed** (Reservation committed; doc unchanged) |
+| User retries preview (`retryPreview`) | User decision | **Settle as consumed** (New session reserves fresh quota) |
 
 ---
 

@@ -12,7 +12,7 @@ This specification details the end-to-end NDJSON (Newline-Delimited JSON) Stream
 ### Architectural Guarantees
 1. **Zero Document Model Mutation During Streaming**: Chunks stream exclusively into `EphemeralPreviewBuffer` and UI preview overlays. Neither document source state nor IndexedDB storage is modified until atomic commit.
 2. **Deterministic Single-Phase Commit**: Atomic server and local transaction commits occur strictly on stream completion.
-3. **Atomic Quota Reservation & Idempotent Settlement**: Automatic quota refunds occur on startup errors, pre-TTFT disconnects (`ttftMs === null`), or version conflicts. Post-TTFT disconnects (`ttftMs !== null`) and user-initiated stops (`stopStream`) or rejections settle quota as consumed without refund under the Dual-Side Inversion Protocol (TD-05 & Explicit Settlement Policy §4-D).
+3. **Atomic Quota Reservation & Server-Authoritative Settlement (Phase 11)**: Quota refunds occur strictly on startup errors or pre-TTFT disconnects/failures (`ttftMs === null`). Post-TTFT disconnects (`ttftMs !== null`), normal stream completion, and user-initiated stops (`stopStream`), rejections, or retries settle quota as consumed without refund. Client financial authority is completely revoked: `refundAIReservation` and `commitAIReservation` are not exposed as Server Actions.
 4. **Multi-Byte UTF-8 & Line Boundary Preservation**: Resilient stream parsing protects against chunk slicing, surrogate splits, and network fragmentation.
 5. **Adversarial Resilience**: Line buffer flooding guards (`MAX_LINE_BUFFER_CHARS = 256KB`), payload ceiling guards (`MAX_INPUT_CHARS = 100,000`), DOM XSS immunity, and dynamic position tracking.
 
@@ -57,14 +57,14 @@ stateDiagram-v2
     committing --> committed: Local atomic Editor transaction
     committed --> idle: Session recycled
 
-    streaming --> aborted: User STOPS (settle-as-consumed, never refund)
+    streaming --> aborted: User STOPS (settle-as-consumed, server post-TTFT auto-commit)
     preview_ready --> aborted: User REJECTS / RETRIES (settle-as-consumed)
 
-    reserving --> failed: Startup / quota error (refund)
-    streaming --> failed: Network / model error (refund)
-    committing --> failed: Database commit error (refund)
+    reserving --> failed: Startup / quota error (auto-refund)
+    streaming --> failed: Mid-stream error (pre-TTFT: refund / post-TTFT: commit)
+    committing --> failed: Database commit error (no refund, tokens consumed)
 
-    committing --> conflict: Version mismatch (HTTP 412, refund)
+    committing --> conflict: Version mismatch (HTTP 412, no refund)
     
     aborted --> idle: Reset
     failed --> idle: Reset
@@ -158,11 +158,23 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
   - **Sanitized Client 500 Response**: Generic unhandled route exceptions return a safe generic string (`"An unexpected error occurred while processing your request. Please try again."`) with the `X-Correlation-ID` header.
   - **Sanitized Server Telemetry**: Raw exception messages are sanitized with `sanitizeLogMessage(detail)` before structured `console.info` emission, ensuring prompt text and API credentials never reach logs.
 
+### 4.10 Replay Attack Prevention & Deterministic Fingerprinting (Phase 11)
+- **Risk**: Malicious or buggy clients re-submitting an existing `operationId` with divergent prompts, operations, or target files to bypass quota tracking or inject arbitrary text into existing reservations.
+- **Protection**:
+  - The settlement service computes a deterministic SHA-256 fingerprint:
+    $$\text{requestHash} = \text{SHA-256}(\text{userId} : \text{operation} : \text{fileId} : \text{text})$$
+  - When `reserveAIQuota` encounters an existing `operationId`, it asserts that `existing.requestHash === incomingHash` and `existing.userId === incomingUserId`.
+  - If a mismatch is detected, the operation is rejected with `isReplayConflict: true`, and the `/api/ai/stream` route immediately returns `HTTP 409 Conflict` (`Replay attack detected: operationId reused with divergent payload`).
+
 ---
 
 ## 5. Verification & Test Evidence
 
 The implementation is verified with automated tests covering all parser, FSM, and adversarial edge cases:
+- `src/test/ai/ai-client-authority-revocation.test.ts`: 4 tests verifying complete removal of financial Server Actions (`refundAIReservation`, `commitAIReservation`, `reserveAndUpdateUsage`) from `"use server"` boundaries and confirming encapsulation under `server-only`.
+- `src/test/ai/ai-stream-replay-prevention.test.ts`: 3 tests verifying SHA-256 fingerprinting, rejection of divergent payloads on reused `operationId`, and HTTP 409 Conflict emission.
+- `src/test/ai/ai-authoritative-stream-settlement.test.ts`: 4 tests verifying server-authoritative commitment before `{ type: "done" }`, pre-TTFT auto-refunds on upstream failure, post-TTFT auto-commit on mid-stream failure, and autonomous pre-TTFT disconnect refunds.
+- `src/test/ai/ai-key-rotation-400.test.ts`: 5 tests verifying Google Gemini HTTP 400 error inspection for disabled/blocked key signatures (`API_KEY_INVALID`, `SERVICE_DISABLED`, etc.) and classification as `authentication` with `retryableWithKey: true`.
 - `src/test/ai/ai-stream-fileid-governance.test.ts`: 7 tests verifying mandatory `fileId` payload enforcement, missing/empty 400 rejection (`MISSING_FILE_ID`), non-owned/missing document 404 isolation, encrypted document 403 gatekeeping, and authorized streaming pass-through.
 - `src/test/ai/ai-stream-parser.test.ts`: 9 tests covering NDJSON framing, multi-byte UTF-8, incomplete EOF (`failed_incomplete_stream`), duplicate `done`, unknown frames, buffer overflow (`stream_buffer_overflow`), and signal aborts.
 - `src/test/ai/ai-stream-session.test.ts`: 12 tests covering canonical FSM lifecycle, terminal state identification, illegal transitions, generation/version mismatch assertions, conflict rollback, and preview buffer boundaries.

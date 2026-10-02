@@ -38,13 +38,13 @@ flowchart TD
     UserChoice -->|"Accept (commitPreview)"| Step1["Step 1: Server Commit (commitAIFileOperation)"]
     UserChoice -->|"Reject / Retry (rejectPreview)"| SettleConsumed["Settle Quota as Consumed (commitAIReservation)<br/>Dismantle Preview (Doc Pristine, No Refund)"]
     
-    Step1 --> VerifyRes["Verify ai_reservations status == 'reserved'"]
-    Step1 --> VerifyVer["Verify files.version == expectedVersion"]
+    Step1 --> VerifyVer["Verify files.version == expectedVersion or Idempotent Commit"]
+    Step1 --> VerifyOwnership["Verify Document & Reservation Ownership"]
     Step1 --> VerifyZK["Verify Vault Opt-In & Encryption Metadata (if encrypted)"]
     
-    VerifyRes & VerifyVer & VerifyZK --> TxCommit["UPDATE files (content, version + 1, new etag)<br/>UPDATE ai_reservations (status = 'committed')"]
+    VerifyVer & VerifyOwnership & VerifyZK --> TxCommit["UPDATE files (content, version + 1, new etag)<br/>UPDATE ai_reservations (status = 'committed' - idempotent)"]
     
-    TxCommit -->|Version Conflict / 412 or Security Error| Rollback["Rollback ephemeral state & refund quota (refundAIReservation)"]
+    TxCommit -->|Version Conflict / 412 or Security Error| Rollback["Rollback ephemeral state locally (tokens already settled as consumed)"]
     TxCommit -->|Success (200 OK)| Step2["Step 2: Local Commit (Single Atomic Transaction)"]
     
     Step2 --> Dismantle["Dismantle Ephemeral Preview Overlay"]
@@ -128,14 +128,17 @@ Emitted if an error occurs during stream transmission:
 
 ## 6. Failure Recovery & Quota Idempotency
 
-### 6.1 Idempotent Quota Refund
-When a session is cancelled or fails, `refundAIReservation(operationId, reason)` is triggered:
-- **Condition:** Updates `status = 'refunded'` WHERE `operation_id = operationId AND status = 'reserved'`.
-- **Idempotency:** Subsequent refund calls with the same `operationId` find `status == 'refunded'` and immediately return `{ refunded: false, reason: "already_refunded" }`, eliminating double-refund risks.
-- **Period Key Safety:** Reverts daily/weekly usage counters on the EXACT `periodKey` (UTC date) recorded at reservation time, preventing counter mismatches across midnight boundaries.
+### 6.1 Server-Authoritative Quota Settlement (v1.39.0 / Phase 11)
+Client financial authority is revoked: `refundAIReservation` and `commitAIReservation` are strictly internal server functions encapsulated in `src/server/services/ai-settlement-service.ts` (`server-only`) and cannot be invoked by clients. Settlement is driven authoritatively by `/api/ai/stream`:
+- **Pre-TTFT System Failure / Disconnect (`ttftMs === null`):** Server triggers internal `refundAIReservation(operationId, reason)`:
+  - **Condition:** Updates `status = 'refunded'` WHERE `operation_id = operationId AND status = 'reserved'`.
+  - **Idempotency:** Subsequent calls find `status == 'refunded'` or `'committed'` and return `{ refunded: false, reason: "already_refunded" | "already_committed" }`, eliminating double-refund risks.
+  - **Period Key Safety:** Reverts daily/weekly usage counters on the EXACT `periodKey` (UTC date) recorded at reservation time, preventing counter mismatches across midnight boundaries.
+- **Post-TTFT Disconnect / Stream Completion (`ttftMs !== null`):** Server autonomously executes `commitAIReservation(operationId)` before `{ type: "done" }` or upon socket disconnect, settling quota as consumed for generated tokens.
+- **Decoupled Document Commit (`commitAIFileOperation`):** User acceptance commits the file independently of whether the reservation was already settled as `committed` by the server stream handler.
 
 ### 6.2 Stale Reservation Sweeper (TTL)
-`expireStaleReservations()` queries all `ai_reservations` where `status = 'reserved'` AND `expires_at <= now()`. It transitions them to `expired` and restores the quota, ensuring abandoned client tabs do not leak quota balances.
+`expireStaleReservations()` in `ai-settlement-service.ts` queries all `ai_reservations` where `status = 'reserved'` AND `expires_at <= now()`. It transitions them to `expired` and restores the quota, ensuring abandoned client tabs do not leak quota balances. Authorized via `CRON_SECRET` on `/api/cron/expire-reservations`.
 
 ### 6.3 Streaming Terminality & Watchdogs (v1.5.0 Amendment)
 

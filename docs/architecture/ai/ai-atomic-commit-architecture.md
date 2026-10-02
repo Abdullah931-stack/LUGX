@@ -31,8 +31,10 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
      - **Local & CI PostgreSQL**: Uses `pg.Pool` (`node-postgres`) to execute native ACID transactions without WebSocket overhead or artificial mocks.
    - Evaluated dynamically via a lazy proxy singleton to support test-environment binding (`TEST_DATABASE_URL`).
 
-5. **Idempotency via `operationId`**:
-   - If a commit is retried after a network partition where the reservation was already marked `committed`, the endpoint idempotently returns the current committed version/ETag instead of applying redundant version increments or throwing unhandled errors.
+5. **Idempotency & Decoupled File Commit (Phase 11)**:
+   - In Phase 11, the server marks the quota reservation as `committed` during stream execution (prior to the terminal `{ type: "done" }` frame or upon post-TTFT completion).
+   - Document commit idempotency in `commitAIFileOperation` is therefore decoupled from the reservation's active status: the server inspects the target file's current version and content. If `currentFile.version > expectedVersion` or `(currentFile.version === expectedVersion && currentFile.content === resultContent)`, the commit returns idempotent success (`already_committed`) without redundant version increments.
+   - If `currentFile.version === expectedVersion && currentFile.content !== resultContent`, the server executes the atomic file write and version increment inside `txDb.transaction`, guaranteeing consistent document persistence even when the reservation was already settled.
 
 6. **Server-First Commit & Markdown Source of Truth**:
    - The client editor maintains ephemeral preview buffers during generation using pure Markdown.

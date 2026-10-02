@@ -56,9 +56,9 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
 - **Resolution (2026-09-19):**
   - Resolved via the Canonical Dual-Side Inversion Protocol in Phase 20 technical debt round.
   - In `src/app/api/ai/stream/route.ts`, implemented `handleClientDisconnect`: when client aborts post-TTFT (after tokens were streamed), the server autonomously settles the reservation via `commitAIReservation(operationId)`, while early disconnects pre-TTFT are refunded (`refundAIReservation`).
-  - In `src/hooks/use-ai-stream.ts`, updated `stopStream()` to abort immediately (0ms) and dismantle ghost decorations instantly without awaiting a synchronous network round-trip, dispatching `settleReservationAsConsumed` as non-blocking defense-in-depth.
-  - Upstream Gemini model generation terminates instantly at socket level, eliminating token bleed and reducing UI stop latency to 0ms.
-  - Verified via dedicated test suite `src/test/ai/ai-stream-abort-latency.test.ts` alongside all existing AI decision suites (100% passing across 72 test files and 914 tests).
+  - In Phase 11 (2026-10-02), client financial authority was completely revoked: client hook `useAIStream` was stripped of all settlement RPC invocations (`commitAIReservation`, `settleReservationAsConsumed`). `stopStream()` aborts immediately (0ms) and dismantles ghost decorations instantly without dispatching any network settlement calls, leaving 100% of stream settlement to the server stream handler (`cancel()` and `req.signal.aborted`).
+  - Upstream Gemini model generation terminates instantly at socket level, eliminating token bleed and guaranteeing 0ms UI stop latency.
+  - Verified via dedicated test suites `src/test/ai/ai-stream-abort-latency.test.ts`, `src/test/ai/ai-client-authority-revocation.test.ts`, and `src/test/ai/ai-authoritative-stream-settlement.test.ts`.
 
 ## TD-06 — Dead `'error'` member in the `SyncStatus` union — ✅ RESOLVED (2026-08-25)
 

@@ -1,5 +1,47 @@
 # Changelog - LUGX Project
 
+## [1.39.0] - 2026-10-02 (Phase 11: AI Service & Deterministic Server Settlement)
+
+### Added & Hardened - Revocation of Client Financial Authority, Server-Authoritative Stream Settlement, Replay Defense & Decoupled File Commit
+
+- **Revocation of Client Financial Authority (`src/server/actions/ai-ops.ts`, `src/server/actions/ai-commit.ts`, `src/server/services/ai-settlement-service.ts`):**
+  - Remediates audit findings `LUGX-001, LUGX-002, LUGX-006, LUGX-021, LUGX-030`.
+  - Completely stripped `refundAIReservation`, `commitAIReservation`, `reserveAndUpdateUsage`, and `refundUsage` from public `"use server"` Server Action boundaries, eliminating client-side manipulation of quota balances and database reservations.
+  - Encapsulated atomic reservation and settlement business logic inside new dedicated service `src/server/services/ai-settlement-service.ts`, strictly guarded by `import "server-only"`.
+  - Retained only safe read-only operations as public server actions (`getUserTier`, `getTodayUsage`, `getAIQuota`, and authenticated `getAIReservationStatus`).
+
+- **Server-Authoritative Streaming Settlement (`src/app/api/ai/stream/route.ts`, `src/hooks/use-ai-stream.ts`):**
+  - Remediates audit findings `LUGX-007, LUGX-008, LUGX-009, LUGX-029, LUGX-031, LUGX-032, LUGX-033, LUGX-067`.
+  - **Commit Before Done Frame:** The stream route autonomously commits the reservation (`commitAIReservation(operationId)`) server-side immediately prior to enqueuing the terminal `{ type: "done" }` NDJSON frame.
+  - **Pre-TTFT vs. Post-TTFT Failure Settlement:**
+    - If upstream model generation fails or client disconnects before the first token (`ttftMs === null`), the server automatically refunds the quota reservation (`refundAIReservation`).
+    - If connection drops or errors occur after tokens were streamed (`ttftMs !== null`), the server autonomously settles the reservation as committed, accounting for consumed provider compute.
+  - **Zero-Latency Client Stop:** Cleansed `useAIStream` of all client-side settlement RPC invocations. `stopStream()` aborts instantly (0ms latency) without awaiting network round-trips, letting server stream cancellation handles settle state autonomously.
+
+- **Replay Attack Defense & Request Fingerprint Validation (`src/server/services/ai-settlement-service.ts`, `src/app/api/ai/stream/route.ts`):**
+  - Remediates audit findings `LUGX-115, LUGX-116, LUGX-117, LUGX-118, LUGX-119, LUGX-120`.
+  - Implemented deterministic SHA-256 fingerprinting: `request_hash = sha256(userId + ":" + operation + ":" + fileId + ":" + text)`.
+  - Enforced anti-replay validation: Reusing an existing `operationId` with divergent payload parameters or from a different user session is detected as a replay attack and rejected with `HTTP 409 Conflict` (`Replay attack detected: operationId reused with divergent payload`).
+
+- **Decoupled Document Persistence & Idempotency (`src/server/actions/ai-commit.ts`):**
+  - Remediates audit findings `LUGX-121, LUGX-122, LUGX-123`.
+  - Decoupled `commitAIFileOperation` from requiring active pending `reserved` status, allowing the user's manual "Accept" action to succeed even after the server committed the quota reservation on stream completion.
+  - Implemented document-level idempotency: if `currentFile.version > expectedVersion` or `(currentFile.version === expectedVersion && currentFile.content === resultContent)`, the commit returns idempotent success (`already_committed`) without redundant version increments or transaction rollbacks.
+
+- **Gemini HTTP 400 Key-Failure Error Classification (`src/lib/ai/key-rotation.ts`):**
+  - Remediates audit findings `LUGX-135, LUGX-148`.
+  - Updated `classifyGeminiError` to inspect Google ErrorInfo details and message strings for API key invalidation/suspension signatures (`API_KEY_INVALID`, `SERVICE_DISABLED`, `CONSUMER_SUSPENDED`, `billing not enabled`, `has not been used in project ... before or it is disabled`).
+  - Classifies these errors as `category: 'authentication'` with `retryableWithKey: true`, triggering immediate key rotation to available pool keys instead of prematurely terminating requests as non-rotatable client faults.
+
+- **Comprehensive Automated Verification:**
+  - Added 4 dedicated unit/integration test suites:
+    - `src/test/ai/ai-client-authority-revocation.test.ts` (4/4 passed)
+    - `src/test/ai/ai-stream-replay-prevention.test.ts` (3/3 passed)
+    - `src/test/ai/ai-authoritative-stream-settlement.test.ts` (4/4 passed)
+    - `src/test/ai/ai-key-rotation-400.test.ts` (5/5 passed)
+  - 100% green across all 17 AI test files (156 tests) and 8 editor test files (86 tests).
+  - 0 TypeScript compiler errors (`npx tsc --noEmit`).
+
 ## [1.38.0] - 2026-10-02 (Phase 10: Encrypted Content Governance, fileId Mandate & Export Warning)
 
 ### Added & Hardened - AI Stream Gatekeeper, Governed Plaintext Export & SyntaxTree Parse Synchronization
