@@ -38,6 +38,22 @@ All redirect parameters entering the authentication pipeline are strictly valida
 
 To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `file-ops.ts`, `import-file.ts`, and `stream/route.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
 
+### 1.3 Zero-Knowledge Encrypted Content Governance & AI Route Hardening (LUGX-085, LUGX-004, LUGX-017)
+
+To prevent unintentional data leakage or uninspected transmission of client-side encrypted vault files, the platform enforces strict server-side and UI governance barriers:
+
+1. **Mandatory `fileId` on AI Streaming (`/api/ai/stream` / LUGX-085):**
+   - Every AI request must specify a valid, non-empty `fileId` string.
+   - If `fileId` is missing or invalid, the route immediately fails closed with HTTP `400 Bad Request` and error code `MISSING_FILE_ID`.
+   - The route verifies document existence and user ownership against PostgreSQL (`schema.files`).
+   - If `targetFile.isEncrypted = true`, the route checks `userVaultProfiles.allowAIOnEncryptedFiles`. If not explicitly enabled by the user, the stream is rejected with HTTP `403 Forbidden` (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) with zero quota consumed and zero prompt data transmitted to Gemini.
+   - Quota reservation (`reserveAndUpdateUsage`) is strictly coupled to the validated non-null `fileId`.
+
+2. **Governed Document Export & Plaintext Warning Modal (`ExportWarningModal` / `export-service.ts` / LUGX-004, LUGX-017):**
+   - When exporting documents from the editor (`handleExport`), encrypted files trigger an interactive security modal (`ExportWarningModal`) before any unencrypted payload can be written to disk.
+   - The library layer (`src/lib/export/export-service.ts`) enforces defense-in-depth: calling `exportDocument` with `isEncrypted = true` and `confirmedPlaintextExport = false` immediately returns `{ success: false, errorCode: 'ENCRYPTED_EXPORT_UNCONFIRMED' }`.
+   - Plaintext download executes only after explicit user confirmation in the dialog.
+
 Defense-in-depth note: proxy gating complements — never replaces — the
 per-route `getUser()` checks performed inside every API route and server action
 (see [`file-ownership-and-versioning.md`](../sync/file-ownership-and-versioning.md) and [`../../records/closures/phase-11-to-15-core-infrastructure/phase-12-auth-ownership-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-12-auth-ownership-closure.md)).
@@ -287,6 +303,9 @@ npx vitest run src/test/auth/log-sanitizer.test.ts                              
 npx vitest run src/test/vault/vault-crypto.test.ts                                                   # Phase 1 crypto worker, AAD, RAM wiping & BIP-39
 npx vitest run src/test/vault/vault-storage.test.ts                                                  # Phase 2 database schema, migrations & transparent encrypted IDB
 npx vitest run src/test/auth/auth-redirect.test.ts                                                   # open redirect & OAuth security
+npx vitest run src/test/ai/ai-stream-fileid-governance.test.ts                                         # Mandatory fileId & AI encryption gatekeeper (LUGX-085)
+npx vitest run src/test/export/export-governance.test.ts                                              # Encrypted document export governance (LUGX-004)
+npx vitest run src/test/export/export-warning-modal.test.tsx                                         # Plaintext export warning modal UI interaction
 npx vitest run --config vitest.live.config.mts src/test/server/cross-user-ownership.test.ts         # cross-user isolation & atomic sync (live DB)
 npx vitest run --config vitest.live.config.mts src/test/api/api-files-putguard.live.test.ts        # auth + rate-limit + version guards (live DB)
 npx vitest run --config vitest.live.config.mts src/test/server/file-ops.ownership.test.ts          # ownership isolation (live DB)

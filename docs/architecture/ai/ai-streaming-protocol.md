@@ -127,9 +127,9 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 - **Risk**: High-speed token stream (50+ tokens/sec) causing DOM destruction and recreation on every chunk, leading to layout thrashing and stutter.
 - **Protection**: `CMStreamingGhostWidget` implements `updateDOM(dom)` to update the live preview text node and action states in-place, achieving 60fps render stability.
 
-### 4.4 Payload Validation & Size Ceiling (`MAX_INPUT_CHARS`)
-- **Risk**: Massive payloads or non-string inputs causing high CPU regex evaluation during word counting and quota reservation.
-- **Protection**: `route.ts` validates payload types (`typeof text === 'string'`) and enforces `MAX_INPUT_CHARS = 100_000` returning clean `400 Bad Request`.
+### 4.4 Payload Validation, Size Ceiling (`MAX_INPUT_CHARS`) & Mandatory `fileId` (LUGX-085)
+- **Risk**: Massive payloads or non-string inputs causing high CPU regex evaluation during word counting, or omitting `fileId` to bypass Zero-Knowledge gatekeeping inspection.
+- **Protection**: `route.ts` validates payload types (`typeof prompt === 'string'`), enforces `MAX_INPUT_CHARS = 100_000` returning clean `400 Bad Request`, and mandates a valid non-empty `fileId` returning HTTP `400 Bad Request` (`MISSING_FILE_ID`) if missing or whitespace-only.
 
 ### 4.5 Non-Abortable Committing State Guard
 - **Risk**: User clicking Cancel while `commitAIFileOperation` is in-flight on the server database, leading to server-commit success but client-side rollback (causing version desynchronization and HTTP 412 conflicts).
@@ -146,7 +146,7 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 ### 4.8 Zero-Knowledge AI Gatekeeper & User Privacy Opt-In (`allowAIOnEncryptedFiles`)
 - **Risk**: Automated or accidental invocation of external AI models on end-to-end encrypted files, breaching Zero-Knowledge guarantees and leaking private plaintext.
 - **Protection**:
-  - **Server Route Gatekeeper (`/api/ai/stream`)**: When `targetFile.isEncrypted === true`, checks `userVaultProfiles.allowAIOnEncryptedFiles`. If `false` (default) or profile missing: immediately rejects with HTTP 403 `AI_PROHIBITED_ON_ENCRYPTED_FILES` prior to token consumption or quota reservation.
+  - **Server Route Gatekeeper (`/api/ai/stream`)**: Requests require a verified non-empty `fileId` belonging to the authenticated user (LUGX-085). When `targetFile.isEncrypted === true`, checks `userVaultProfiles.allowAIOnEncryptedFiles`. If `false` (default) or profile missing: immediately rejects with HTTP 403 `AI_PROHIBITED_ON_ENCRYPTED_FILES` prior to token consumption or quota reservation.
   - **Strict Transport Isolation**: When user explicitly opts in, decrypted plaintext in browser RAM is streamed over TLS directly to the AI provider without server persistence.
   - **Re-Encryption on Commit**: `commitAIFileOperation` strictly rejects plaintext commits to encrypted files if `encryptionMetadata.iv` is omitted. The editor orchestrator re-encrypts generated Markdown in browser RAM with the Master Key before committing over the network.
   - **UI Shield Badge**: `AIToolbar` renders an amber privacy badge (`data-testid="ai-encrypted-badge"`) disabling AI actions when opting in is disabled on encrypted files.
@@ -163,6 +163,7 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 ## 5. Verification & Test Evidence
 
 The implementation is verified with automated tests covering all parser, FSM, and adversarial edge cases:
+- `src/test/ai/ai-stream-fileid-governance.test.ts`: 7 tests verifying mandatory `fileId` payload enforcement, missing/empty 400 rejection (`MISSING_FILE_ID`), non-owned/missing document 404 isolation, encrypted document 403 gatekeeping, and authorized streaming pass-through.
 - `src/test/ai/ai-stream-parser.test.ts`: 9 tests covering NDJSON framing, multi-byte UTF-8, incomplete EOF (`failed_incomplete_stream`), duplicate `done`, unknown frames, buffer overflow (`stream_buffer_overflow`), and signal aborts.
 - `src/test/ai/ai-stream-session.test.ts`: 12 tests covering canonical FSM lifecycle, terminal state identification, illegal transitions, generation/version mismatch assertions, conflict rollback, and preview buffer boundaries.
 - `src/test/ai/ai-client.test.ts`: 11 tests covering multi-tier cascading fallback hierarchy (`getModelHierarchy`), in-flight model failover on 503 overload, and HTTP 503 service unavailable response generation with `Retry-After: 30`.

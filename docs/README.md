@@ -14,7 +14,7 @@ automated tests remain the single source of truth for all technical claims.
 docs/
 ├── README.md                          ← you are here (structural master index)
 ├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
-├── CHANGELOG.md                       ← release history (v1.0.0 through v1.35.1)
+├── CHANGELOG.md                       ← release history (v1.0.0 through v1.38.0)
 ├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-12)
 ├── METRICS.json                       ← automated single source of truth for test & suite metrics
 │
@@ -40,10 +40,10 @@ docs/
 │   └── ui-streaming-requirements.md
 │
 ├── Plans/                             ← active official technical execution roadmaps (English)
-│   └── COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md ← unified technical remediation & hardening plan (Active: Phases 1–7 closed, 8–23 planned)
+│   └── COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md ← unified technical remediation & hardening plan (Active: Phases 1–10 closed, 11–23 planned)
 │
 ├── records/                           ← engineering records, incidents, audits, closures & plans archive
-│   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md)
+│   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md, codemirror-syntax-tree-parse-budget-race.md)
 │   ├── audits/                        ← verification audit records (W10-Final-Closure-Round.md, unified-security-and-engineering-audit.md)
 │   ├── closures/                      ← official milestone & phase closure dossiers (Phases 1–20, Core Hardening)
 │   │   ├── phase-01-to-06-markdown-editor/
@@ -51,7 +51,7 @@ docs/
 │   │   ├── phase-16-vault-encryption/
 │   │   ├── phase-17-to-20-production-readiness/
 │   │   ├── extensions/                ← pdf worker extraction & vault import closure
-│   │   └── core-hardening/            ← core hardening dossiers (Phase 1: metrics, Phase 2: link audit, Phase 3: skipped tests, Phase 4: Redis, Phase 5: contracts dictionary, Phase 6: pure state reducers, Phase 7: PostgreSQL schema & atomic transactions)
+│   │   └── core-hardening/            ← core hardening dossiers (Phase 1–10: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance)
 │   ├── plans/                         ← completed historical execution plans (technical-execution, hybrid-vault, markdown-editor, M6)
 │   └── archive/                       ← superseded, halted, or abandoned specs & plans (core-hardening-pre-stage-2, legacy snapshots)
 │
@@ -78,7 +78,7 @@ docs/
 | :--- | :--- |
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
-| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.35.1 |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.38.0 |
 | [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-12) |
 | [METRICS.json](./METRICS.json) | Centralized single source of truth for test suite counts and verification numbers |
 
@@ -139,7 +139,7 @@ docs/
 | :--- | :--- |
 | [editor-ui-enhancements.md](./guides/editor/editor-ui-enhancements.md) | UI restructuring, copy/move file ops, dynamic statistics, text direction management menu, code block LTR locking, unified typography |
 | [search-replace-feature.md](./guides/editor/search-replace-feature.md) | Editor search/replace behavior, debounce logic, shortcuts |
-| [data-export-guide.md](./guides/editor/data-export-guide.md) | Data export module architecture, Markdown & Plain Text strategies, factory patterns, and validation rules |
+| [data-export-guide.md](./guides/editor/data-export-guide.md) | Data export subsystem architecture, Zero-Knowledge plaintext governance barrier, Markdown & Plain Text strategies, factory patterns, and validation rules |
 
 #### AI Configuration (`guides/ai/`)
 
@@ -163,7 +163,7 @@ docs/
 
 | Document | Scope | Status |
 | :--- | :--- | :--- |
-| [COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md](./Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) | Unified technical remediation & hardening plan (23 isolated SRP phases, 100% audit findings closure) | 🟢 Active (Phases 1–8 Closed, 9–23 Planned) |
+| [COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md](./Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) | Unified technical remediation & hardening plan (23 isolated SRP phases, 100% audit findings closure) | 🟢 Active (Phases 1–10 Closed, 11–23 Planned) |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -176,6 +176,7 @@ docs/
 | Document | Scope / Date |
 | :--- | :--- |
 | [test-database-safety.md](./records/incidents/test-database-safety.md) | Unscoped test delete incident record, root cause, placeholder UUID architecture & cleanup guards — closed 2026-08-23 |
+| [codemirror-syntax-tree-parse-budget-race.md](./records/incidents/codemirror-syntax-tree-parse-budget-race.md) | Lezer parser incremental parse-budget race under test concurrency, ensureSyntaxTree AST synchronization — closed 2026-10-02 |
 
 #### Audits (`records/audits/`)
 
@@ -193,7 +194,7 @@ docs/
 | [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
 | [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
 | [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report; [ad-hoc automated test & CI ecosystem harmonization closure](./records/closures/extensions/ad-hoc-test-and-ci-ecosystem-alignment-closure.md) |
-| [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), Phase 6 (pure state reducers & contractual safety nets), Phase 7 (PostgreSQL schema hardening, migrations & atomic interactive transactions), and Phase 8 (server-authoritative identity, resource ownership guards, cycle detection & optimistic concurrency on deletions: [phase-08 closure dossier](./records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md)) |
+| [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), Phase 6 (pure state reducers & contractual safety nets), Phase 7 (PostgreSQL schema hardening, migrations & atomic interactive transactions), Phase 8 (server-authoritative identity, resource ownership guards, cycle detection & optimistic concurrency on deletions: [phase-08 closure dossier](./records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md)), Phase 9 (cryptographic key hierarchy, standard AAD contexts & adaptive dual-try recovery migration: [phase-09 closure dossier](./records/closures/core-hardening/phase-09-crypto-hierarchy-and-adaptive-migration-closure.md)), and Phase 10 (encrypted content governance, mandatory fileId & export warning modal: [phase-10 closure dossier](./records/closures/core-hardening/phase-10-encrypted-content-governance-closure.md)) |
 
 #### Completed Plans (`records/plans/`)
 
@@ -255,7 +256,7 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (69 files, 894 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (72 files, 914 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 118 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)

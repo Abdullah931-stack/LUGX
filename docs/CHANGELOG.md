@@ -1,5 +1,23 @@
 # Changelog - LUGX Project
 
+## [1.38.0] - 2026-10-02 (Phase 10: Encrypted Content Governance, fileId Mandate & Export Warning)
+
+### Added & Hardened - AI Stream Gatekeeper, Governed Plaintext Export & SyntaxTree Parse Synchronization
+
+- **Mandatory `fileId` on AI Streaming (`src/app/api/ai/stream/route.ts`):**
+  - Remediates audit finding `LUGX-085` (optional `fileId` bypass in AI route gatekeeper).
+  - Enforced strict `fileId` validation in request body, rejecting missing or empty values with HTTP 400 (`MISSING_FILE_ID`).
+  - Added server-side check against `userVaultProfiles.allowAIOnEncryptedFiles`: encrypted documents reject AI streaming requests with HTTP 403 (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) unless explicitly opted in by the user.
+
+- **Governed Document Export & Warning Modal (`src/lib/export/export-service.ts`, `src/components/export/export-warning-modal.tsx`):**
+  - Remediates audit findings `LUGX-004, LUGX-017, LUGX-019`.
+  - Added `exportDocument` facade enforcing fail-closed checks (`ENCRYPTED_EXPORT_UNCONFIRMED`) when attempting to export encrypted documents without explicit confirmation.
+  - Implemented `ExportWarningModal` in the editor workspace, alerting users before decrypted plaintext is written to local storage.
+
+- **CodeMirror 6 AST Parse Budget Synchronization (`src/components/editor/markdown/editor-adapter.ts`):**
+  - Resolved parallel test race condition in `getHeadingCount()` by replacing bare `syntaxTree(state)` with `ensureSyntaxTree(state, doc.length, 100) || syntaxTree(state)`.
+  - Guarantees 100% deterministic AST parsing up to document end under heavy CPU and test concurrency.
+
 ## [1.37.0] - 2026-10-02 (Phase 9: Cryptographic Key Hierarchy, Standard AAD Contexts & Adaptive Dual-Try Recovery Migration)
 
 ### Added & Hardened - Canonical AAD Contexts, Zero-Lockout Adaptive Recovery Migration & Monotonic Lock Epoch Protection

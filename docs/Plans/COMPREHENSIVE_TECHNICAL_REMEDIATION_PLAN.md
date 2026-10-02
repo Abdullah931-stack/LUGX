@@ -307,7 +307,7 @@ Eliminate AAD context mismatch during recovery phrase unwrapping through dual-tr
 
 ---
 
-### [Phase 10: Encrypted Content Governance, fileId Mandate & Export Warning] — Status: ⏳ PLANNED
+### [Phase 10: Encrypted Content Governance, fileId Mandate & Export Warning] — Status: 🟢 COMPLETED
 > **Execution Origin:** Core Hardening Plan - Phase 5  
 > **Single Responsibility (SRP):** Enforce strict contractual gates across AI streaming and export services to prevent unauthorized decryption or transmission of encrypted content.
 

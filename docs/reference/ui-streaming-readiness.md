@@ -24,7 +24,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | **G8** | Multi-byte UTF-8 split boundary tests, NDJSON line framing tests, and 412 conflict tests. | `src/test/ai/ai-stream-parser.test.ts`<br>`src/test/ai/ai-stream-session.test.ts`<br>`src/test/editor/editor-atomic-commit.test.ts` | **Implemented** |
 | **G9** | Editor orchestration and authoritative write integration tests with zero regression. | `src/test/editor/editor-orchestration.integration.test.ts`<br>[`docs/architecture/sync/editor-sync-orchestration.md`](../architecture/sync/editor-sync-orchestration.md) | **Validated** |
 | **G10** | Feature Flag gating (`AI_STREAMING_ENABLED = false` by default) with zero sensitive prompt leakage in server logs. | `src/config/features.config.ts`<br>`src/app/api/ai/stream/route.ts` | **Implemented & Enforced (v1.5.0)** — the route now branches on the flag with `processWithAI` as a buffered NDJSON fallback |
-| **G11** | Zero-Knowledge AI Safety Gatekeeper: amber UI privacy badge (`ai-encrypted-badge`), HTTP 403 pre-reservation route check (`AI_PROHIBITED_ON_ENCRYPTED_FILES`), and commit IV re-encryption guard. | `src/components/editor/ai-toolbar.tsx`<br>`src/hooks/use-editor-orchestrator.ts`<br>`src/app/api/ai/stream/route.ts`<br>`src/server/actions/ai-commit.ts` | **Implemented & Enforced (v1.25.0)** |
+| **G11** | Zero-Knowledge AI Safety Gatekeeper: Mandatory non-empty `fileId` with HTTP 400 (`MISSING_FILE_ID`), database ownership check, amber UI badge (`ai-encrypted-badge`), server-side check against `userVaultProfiles.allowAIOnEncryptedFiles` rejecting encrypted files with HTTP 403 (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) unless opted-in, and commit IV re-encryption guard. | `src/components/editor/ai-toolbar.tsx`<br>`src/hooks/use-editor-orchestrator.ts`<br>`src/app/api/ai/stream/route.ts`<br>`src/server/actions/ai-commit.ts`<br>`src/test/ai/ai-stream-fileid-governance.test.ts` | **Implemented & Hardened (v1.38.0)** |
 
 ---
 
@@ -85,6 +85,20 @@ stateDiagram-v2
 ## 5. NDJSON Framing Protocol Specification
 
 The `/api/ai/stream` endpoint streams framed newline-delimited JSON (NDJSON) events over an HTTP response with headers `Content-Type: application/x-ndjson; charset=utf-8`:
+
+### 5.0 Request Contract & Gatekeeper Validation
+Requests to `/api/ai/stream` must provide the following JSON payload:
+- `prompt` (string, required): The prompt text (max 100,000 characters).
+- `operationId` (string, required): RFC 4122 UUID identifying the reservation for idempotency.
+- `fileId` (string, required): Target document UUID. Missing or empty values fail closed with HTTP `400 Bad Request` (`MISSING_FILE_ID`).
+- `context` (string, optional): Context string for generation.
+
+#### Server-Side Validation Pipeline:
+1. **Authentication:** Validates server session with `getUser()`. Returns HTTP 401 if unauthenticated.
+2. **Mandatory fileId Check (LUGX-085):** Rejects missing/empty `fileId` with HTTP 400 (`MISSING_FILE_ID`).
+3. **Database Ownership & State:** Queries `schema.files` for `id = fileId` AND `userId = user.id` AND `deletedAt IS NULL`. Missing files return HTTP 404.
+4. **Zero-Knowledge Gatekeeper:** If `targetFile.isEncrypted`, queries `schema.userVaultProfiles`. If `allowAIOnEncryptedFiles` is not explicitly `true`, rejects with HTTP 403 (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) before token consumption or quota reservation.
+5. **Quota Reservation:** Passes validated non-null `fileId` into `reserveAndUpdateUsage`.
 
 ### 5.1 Meta Event
 Emitted immediately upon successful quota reservation before AI generation starts:

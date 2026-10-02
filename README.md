@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-69%20Suites%20·%20894%2F894%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 820 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-72%20Suites%20·%20914%2F914%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 820 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20118%2F118%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 89 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -302,7 +302,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (69 test files, 894 tests)
+# Execute unit/contract test suites (72 test files, 914 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 118 tests)
