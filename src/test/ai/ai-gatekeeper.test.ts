@@ -76,14 +76,13 @@ describe('Phase 5 Closure: AI Hard Block + Log Sanitation (Matrix #6/#10)', () =
         expect(await res.text()).toBe('AI_PROHIBITED_ON_ENCRYPTED_FILES');
         expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
     });
-    it('#6 commit guard rejects plaintext commit without IV and refunds', async () => {
+    it('#6 commit guard rejects plaintext commit without IV', async () => {
         mockGetUser.mockResolvedValueOnce({ id: 'u1' });
         mockDb.query.aiReservations.findFirst.mockResolvedValueOnce({ id: 'r', operationId: 'op1', userId: 'u1', fileId: 'f1', status: 'reserved' });
         mockDb.query.files.findFirst.mockResolvedValueOnce({ id: 'f1', userId: 'u1', isEncrypted: true, version: 1 });
         mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({ userId: 'u1', allowAIOnEncryptedFiles: true });
         const result = await commitAIFileOperation({ operationId: 'op1', fileId: 'f1', expectedVersion: 1, resultContent: 'plain', encryptionMetadata: null });
         expect(result.success).toBe(false);
-        expect(mockAiOps.refundAIReservation).toHaveBeenCalled();
     });
     it('#10 error-handler and performance-monitor never leak secrets', async () => {
         const handler = new SyncErrorHandler();

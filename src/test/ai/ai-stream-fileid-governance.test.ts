@@ -24,12 +24,12 @@ const mockDb = vi.hoisted(() => ({
     },
 }));
 
-const mockAiOps = vi.hoisted(() => ({
+const mockSettlement = vi.hoisted(() => ({
     getUserTier: vi.fn().mockResolvedValue('pro'),
-    reserveAndUpdateUsage: vi.fn().mockResolvedValue({ reserved: true }),
+    reserveAIQuota: vi.fn().mockResolvedValue({ reserved: true }),
     refundAIReservation: vi.fn().mockResolvedValue({ success: true }),
     commitAIReservation: vi.fn().mockResolvedValue({ success: true }),
-    refundUsage: vi.fn().mockResolvedValue({ success: true }),
+    computeRequestHash: vi.fn().mockReturnValue('mock_hash'),
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -58,7 +58,7 @@ vi.mock('@/server/db', () => ({
     },
 }));
 
-vi.mock('@/server/actions/ai-ops', () => mockAiOps);
+vi.mock('@/server/services/ai-settlement-service', () => mockSettlement);
 
 vi.mock('@/lib/ai/client', () => ({
     streamWithAI: vi.fn().mockResolvedValue(
@@ -109,7 +109,7 @@ describe('Phase 10: AI Stream fileId Mandate & Zero-Knowledge Barrier (LUGX-085)
         expect(res.status).toBe(400);
         const text = await res.text();
         expect(text).toContain('MISSING_FILE_ID');
-        expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
+        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
     });
 
     it('rejects requests where fileId is null with HTTP 400 and MISSING_FILE_ID', async () => {
@@ -127,7 +127,7 @@ describe('Phase 10: AI Stream fileId Mandate & Zero-Knowledge Barrier (LUGX-085)
         expect(res.status).toBe(400);
         const text = await res.text();
         expect(text).toContain('MISSING_FILE_ID');
-        expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
+        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
     });
 
     it('rejects requests where fileId is empty whitespace or non-string with HTTP 400', async () => {
@@ -145,7 +145,7 @@ describe('Phase 10: AI Stream fileId Mandate & Zero-Knowledge Barrier (LUGX-085)
         expect(res.status).toBe(400);
         const text = await res.text();
         expect(text).toContain('MISSING_FILE_ID');
-        expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
+        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
     });
 
     it('returns HTTP 404 when fileId does not exist or does not belong to user', async () => {
@@ -165,7 +165,7 @@ describe('Phase 10: AI Stream fileId Mandate & Zero-Knowledge Barrier (LUGX-085)
         expect(res.status).toBe(404);
         const text = await res.text();
         expect(text).toBe('File not found');
-        expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
+        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
     });
 
     it('rejects encrypted file with HTTP 403 when allowAIOnEncryptedFiles is false', async () => {
@@ -193,7 +193,7 @@ describe('Phase 10: AI Stream fileId Mandate & Zero-Knowledge Barrier (LUGX-085)
         expect(res.status).toBe(403);
         const text = await res.text();
         expect(text).toBe('AI_PROHIBITED_ON_ENCRYPTED_FILES');
-        expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
+        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
     });
 
     it('permits encrypted file when allowAIOnEncryptedFiles is explicitly true', async () => {
@@ -219,7 +219,7 @@ describe('Phase 10: AI Stream fileId Mandate & Zero-Knowledge Barrier (LUGX-085)
 
         const res = await aiStreamRoute(req);
         expect(res.status).toBe(200);
-        expect(mockAiOps.reserveAndUpdateUsage).toHaveBeenCalledWith(
+        expect(mockSettlement.reserveAIQuota).toHaveBeenCalledWith(
             'user_123',
             'improve',
             expect.any(Number),
@@ -250,7 +250,7 @@ describe('Phase 10: AI Stream fileId Mandate & Zero-Knowledge Barrier (LUGX-085)
         const res = await aiStreamRoute(req);
         expect(res.status).toBe(200);
         expect(mockDb.query.userVaultProfiles.findFirst).not.toHaveBeenCalled();
-        expect(mockAiOps.reserveAndUpdateUsage).toHaveBeenCalledWith(
+        expect(mockSettlement.reserveAIQuota).toHaveBeenCalledWith(
             'user_123',
             'correct',
             expect.any(Number),

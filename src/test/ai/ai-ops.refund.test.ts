@@ -23,7 +23,7 @@ import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup"
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { AIOperation } from "@/lib/ai/prompts";
 import { TIER_LIMITS } from "@/config/tiers.config";
-import { reserveAndUpdateUsage, refundAIReservation } from "@/server/actions/ai-ops";
+import { reserveAndUpdateUsage, refundAIReservation } from "@/server/services/ai-settlement-service";
 
 const TEST_USER_ID = "12121212-1212-1212-1212-121212121212"; // unique per suite — NOT shared with softdelete tests (parallel workers)
 const TIER = "pro";

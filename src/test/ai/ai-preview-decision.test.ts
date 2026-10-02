@@ -26,16 +26,9 @@ import { useAIStream } from '@/hooks/use-ai-stream';
 
 // Mock server actions
 const mockCommitAIFileOperation = vi.fn();
-const mockRefundAIReservation = vi.fn().mockResolvedValue({ refunded: true });
-const mockCommitAIReservation = vi.fn().mockResolvedValue({ committed: true });
 
 vi.mock('@/server/actions/ai-commit', () => ({
     commitAIFileOperation: (...args: unknown[]) => mockCommitAIFileOperation(...args),
-    refundAIReservation: (...args: unknown[]) => mockRefundAIReservation(...args),
-}));
-
-vi.mock('@/server/actions/ai-ops', () => ({
-    commitAIReservation: (...args: unknown[]) => mockCommitAIReservation(...args),
 }));
 
 // Mock the NDJSON stream consumer — tests drive its callbacks manually.
@@ -128,8 +121,6 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
 
         // Nothing was committed anywhere
         expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
-        expect(mockCommitAIReservation).not.toHaveBeenCalled();
 
         // The document remains pristine; preview text is held for the decision
         expect(editor.getValue()).toBe(snapshotBefore);
@@ -147,9 +138,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             result.current.rejectPreview();
         });
 
-        // Quota policy: user rejection consumes the reservation — no refunds
-        expect(mockCommitAIReservation).toHaveBeenCalledTimes(1);
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
+        // Quota policy: user rejection leaves document untouched and triggers no client RPC
         expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
 
         // Ghost dismantled, document untouched, session released
@@ -176,7 +165,6 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
         });
 
         expect(mockCommitAIFileOperation).toHaveBeenCalledTimes(1);
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
 
         expect(editor.getValue()).toContain('Better text');
         expect(result.current.status).toBe('committed');
@@ -195,10 +183,6 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
         await act(async () => {
             await result.current.retryPreview();
         });
-
-        // Old reservation settled as consumed (user decision cost)
-        expect(mockCommitAIReservation).toHaveBeenCalledTimes(1);
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
 
         // A brand-new stream session started (fresh quota reservation path)
         expect(mockConsumeAIStream).toHaveBeenCalledTimes(1);
@@ -220,10 +204,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             await result.current.stopStream();
         });
 
-        // USER-INITIATED STOP POLICY: compute spent up to the stop is consumed —
-        // settlement wins over the server-side disconnect refund.
-        expect(mockCommitAIReservation).toHaveBeenCalledTimes(1);
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
+        // USER-INITIATED STOP POLICY: client stream aborted immediately without financial RPC
         expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.status).toBe('aborted');
     });

@@ -5,12 +5,10 @@
  *
  * Validates:
  * 1. A pending-operation record surviving a HARD reload (where React cleanup
- *    never runs) is queried from the server on the next mount.
- * 2. preview_ready orphan: quota settled as CONSUMED (policy v1.6.0) and the
- *    preview is NEVER applied to the document nor treated as committed.
- * 3. generating orphan: the lost reservation is refunded ('reload_recovery').
- * 4. Already-settled / unknown operations cause zero mutations, record cleared.
- * 5. SPA teardown (unmount cleanup) settles as consumed and clears the record.
+ *    never runs) is cleared safely from client storage on next mount.
+ * 2. Abandoned preview is NEVER applied to the document nor committed.
+ * 3. Client hook does not invoke financial refund/commit RPCs (Server-Authoritative).
+ * 4. SPA teardown (unmount cleanup) aborts active fetch and clears the local record cleanly.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -20,20 +18,10 @@ import { useAIStream } from "@/hooks/use-ai-stream";
 
 const STORE_KEY = "textai_pending_ai_operations";
 
-const mockGetAIReservationStatus = vi.fn();
-const mockCommitAIReservation = vi.fn();
-const mockRefundAIReservation = vi.fn();
 const mockCommitAIFileOperation = vi.fn();
 
 vi.mock("@/server/actions/ai-commit", () => ({
     commitAIFileOperation: (...args: unknown[]) => mockCommitAIFileOperation(...args),
-    refundAIReservation: (...args: unknown[]) => mockRefundAIReservation(...args),
-}));
-
-vi.mock("@/server/actions/ai-ops", () => ({
-    commitAIReservation: (...args: unknown[]) => mockCommitAIReservation(...args),
-    refundAIReservation: (...args: unknown[]) => mockRefundAIReservation(...args),
-    getAIReservationStatus: (...args: unknown[]) => mockGetAIReservationStatus(...args),
 }));
 
 type ConsumeCallbacks = {
@@ -93,65 +81,44 @@ function createMockAdapter(initial = ""): EditorAdapter {
     };
 }
 
-function seedRecord(record: { operationId: string; fileId: string; phase: string }): void {
-    const raw = window.sessionStorage.getItem(STORE_KEY);
-    const all = raw ? JSON.parse(raw) : {};
-    all[record.operationId] = { ...record, updatedAt: Date.now() };
-    window.sessionStorage.setItem(STORE_KEY, JSON.stringify(all));
+function seedRecord(record: { operationId: string; fileId: string; phase: "generating" | "preview_ready" }) {
+    const raw = sessionStorage.getItem(STORE_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    map[record.operationId] = {
+        ...record,
+        updatedAt: Date.now(),
+    };
+    sessionStorage.setItem(STORE_KEY, JSON.stringify(map));
 }
 
-function readRecords(): Record<string, { operationId: string; phase: string }> {
-    const raw = window.sessionStorage.getItem(STORE_KEY);
+function readRecords(): Record<string, { operationId: string; fileId: string; phase: string }> {
+    const raw = sessionStorage.getItem(STORE_KEY);
     return raw ? JSON.parse(raw) : {};
 }
 
-describe("Phase 11: hard-reload recovery of pending AI operations", () => {
+describe("Phase 11: Hard-Reload Recovery & Server-Authoritative Settlement", () => {
     let editor: EditorAdapter;
 
     beforeEach(() => {
-        window.sessionStorage.clear();
         vi.clearAllMocks();
-        mockCommitAIReservation.mockResolvedValue({ committed: true });
-        mockRefundAIReservation.mockResolvedValue({ refunded: true });
-        captured = {} as ConsumeCallbacks;
-
+        sessionStorage.clear();
         editor = createMockAdapter(initialContent);
 
         mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
             captured = options;
             options.onMeta?.({ sessionId: "s1", operationId: "op1" });
             options.onChunk?.("Partial ", "Partial ");
-            // Stream intentionally left open unless the test completes it.
         });
     });
 
-    it("reload during preview_ready: queries the operation, consumes quota, NEVER applies the preview", async () => {
+    it("reload during preview_ready: clears orphan from local storage, NEVER applies the preview", async () => {
         seedRecord({ operationId: "op_reload_preview", fileId: "file-1", phase: "preview_ready" });
-        mockGetAIReservationStatus.mockResolvedValue({
-            found: true,
-            status: "reserved",
-            operation: "improve",
-            periodKey: "2026-08-24",
-            reservedUnits: 150,
-            committedUnits: 0,
-            refundedUnits: 0,
-            expiresAt: new Date().toISOString(),
-        });
 
         const { result } = renderHook(() =>
             useAIStream({ onProgrammaticTransaction: (fn) => fn() })
         );
 
-        await waitFor(() =>
-            expect(mockGetAIReservationStatus).toHaveBeenCalledWith("op_reload_preview")
-        );
-        // Policy v1.6.0: completed-but-undecided generation is consumed, never refunded
-        await waitFor(() =>
-            expect(mockCommitAIReservation).toHaveBeenCalledWith("op_reload_preview")
-        );
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
-
-        // Record cleared after successful settlement
+        // Record cleared on mount
         await waitFor(() => expect(readRecords()["op_reload_preview"]).toBeUndefined());
 
         // The abandoned preview was NEVER applied to the document or UI state
@@ -160,67 +127,23 @@ describe("Phase 11: hard-reload recovery of pending AI operations", () => {
         expect(editor.getValue()).toBe(initialContent);
     });
 
-    it("reload during generation: refunds the lost reservation as reload_recovery", async () => {
+    it("reload during generation: clears orphan from local storage without crashing", async () => {
         seedRecord({ operationId: "op_reload_generating", fileId: "file-1", phase: "generating" });
-        mockGetAIReservationStatus.mockResolvedValue({
-            found: true,
-            status: "reserved",
-            operation: "correct",
-            periodKey: "2026-08-24",
-            reservedUnits: 120,
-            committedUnits: 0,
-            refundedUnits: 0,
-            expiresAt: new Date().toISOString(),
-        });
 
         renderHook(() => useAIStream({ onProgrammaticTransaction: (fn) => fn() }));
 
-        await waitFor(() =>
-            expect(mockRefundAIReservation).toHaveBeenCalledWith(
-                "op_reload_generating",
-                "reload_recovery"
-            )
-        );
-        expect(mockCommitAIReservation).not.toHaveBeenCalled();
         await waitFor(() => expect(readRecords()["op_reload_generating"]).toBeUndefined());
     });
 
-    it("already-settled operations are left untouched and their records cleared", async () => {
-        seedRecord({ operationId: "op_already_settled", fileId: "file-1", phase: "preview_ready" });
-        mockGetAIReservationStatus.mockResolvedValue({
-            found: true,
-            status: "committed",
-            operation: "improve",
-            periodKey: "2026-08-24",
-            reservedUnits: 150,
-            committedUnits: 150,
-            refundedUnits: 0,
-            expiresAt: new Date().toISOString(),
-        });
-
-        renderHook(() => useAIStream({ onProgrammaticTransaction: (fn) => fn() }));
-
-        await waitFor(() =>
-            expect(mockGetAIReservationStatus).toHaveBeenCalledWith("op_already_settled")
-        );
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        expect(mockCommitAIReservation).not.toHaveBeenCalled();
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
-        expect(readRecords()["op_already_settled"]).toBeUndefined();
-    });
-
-    it("unknown operation ids are reported not_found, cleared, and never crash the mount", async () => {
+    it("unknown operation ids are cleared and never crash the mount", async () => {
         seedRecord({ operationId: "op_unknown", fileId: "file-1", phase: "generating" });
-        mockGetAIReservationStatus.mockResolvedValue({ found: false, reason: "not_found" });
 
         renderHook(() => useAIStream({ onProgrammaticTransaction: (fn) => fn() }));
 
         await waitFor(() => expect(readRecords()["op_unknown"]).toBeUndefined());
-        expect(mockCommitAIReservation).not.toHaveBeenCalled();
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
     });
 
-    it("SPA flow: the tracked record advances to preview_ready and unmount cleanup settles and clears it", async () => {
+    it("SPA flow: tracked record advances to preview_ready and unmount cleanup clears it without financial RPC", async () => {
         const { result, unmount } = renderHook(() =>
             useAIStream({ onProgrammaticTransaction: (fn) => fn() })
         );
@@ -237,7 +160,6 @@ describe("Phase 11: hard-reload recovery of pending AI operations", () => {
         });
         await waitFor(() => expect(result.current.isStreaming).toBe(true));
 
-        // Tracked as generating while streaming
         const trackedId = Object.keys(readRecords())[0];
         expect(trackedId).toBeDefined();
         expect(readRecords()[trackedId].phase).toBe("generating");
@@ -248,13 +170,9 @@ describe("Phase 11: hard-reload recovery of pending AI operations", () => {
         await waitFor(() => expect(result.current.status).toBe("preview_ready"));
         expect(readRecords()[trackedId].phase).toBe("preview_ready");
 
-        // SPA navigation: React cleanup settles as consumed and clears the record
+        // SPA navigation: React cleanup aborts session and clears local record
         unmount();
-        await waitFor(() =>
-            expect(mockCommitAIReservation).toHaveBeenCalledWith(trackedId)
-        );
         await waitFor(() => expect(Object.keys(readRecords())).toHaveLength(0));
-        // Document pristine: preview was parked, never applied
         expect(editor.getValue()).toBe(initialContent);
     });
 });

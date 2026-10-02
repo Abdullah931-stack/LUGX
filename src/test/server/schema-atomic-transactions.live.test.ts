@@ -18,7 +18,7 @@ import * as schema from "@/server/db/schema";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { txDb } from "@/server/db/transactional";
 import { runMigrations } from "@/test/db.setup";
-import { reserveAndUpdateUsage, refundAIReservation } from "@/server/actions/ai-ops";
+import { reserveAndUpdateUsage, refundAIReservation } from "@/server/services/ai-settlement-service";
 import { upsertSubscription } from "@/server/actions/subscription-actions";
 
 const USER_A_ID = "71717171-7171-7171-7171-717171717171";

@@ -14,11 +14,11 @@ import { describe, it, expect, afterAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
+import { getAIReservationStatus } from "@/server/actions/ai-ops";
 import {
     reserveAndUpdateUsage,
     commitAIReservation,
-    getAIReservationStatus,
-} from "@/server/actions/ai-ops";
+} from "@/server/services/ai-settlement-service";
 import { getUser } from "@/lib/supabase/server";
 
 const { USER_ID, OTHER_USER_ID } = vi.hoisted(() => ({

@@ -22,7 +22,8 @@ import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup"
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { generateETagSync } from "@/lib/sync/etag-generator";
-import { commitAIFileOperation, refundAIReservation } from "@/server/actions/ai-commit";
+import { commitAIFileOperation } from "@/server/actions/ai-commit";
+import { refundAIReservation } from "@/server/services/ai-settlement-service";
 import { getUser } from "@/lib/supabase/server";
 
 // Wire up getUser to authenticate as the real test user

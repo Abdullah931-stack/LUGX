@@ -22,7 +22,7 @@ import {
     reserveAndUpdateUsage,
     commitAIReservation,
     refundAIReservation,
-} from "@/server/actions/ai-ops";
+} from "@/server/services/ai-settlement-service";
 
 // Placeholder-pattern UUID so guarded cleanup can never touch a real account.
 const USER_ID = "17171717-1717-1717-1717-171717171717";

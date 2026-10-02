@@ -25,7 +25,7 @@ import {
     getFile,
     toggleFileEncryption,
 } from "@/server/actions/file-ops";
-import { reserveAndUpdateUsage } from "@/server/actions/ai-ops";
+import { reserveAndUpdateUsage } from "@/server/services/ai-settlement-service";
 import { commitAIFileOperation } from "@/server/actions/ai-commit";
 import { createUserVaultProfile } from "@/server/actions/vault-actions";
 import { POST as aiStreamPOST } from "@/app/api/ai/stream/route";

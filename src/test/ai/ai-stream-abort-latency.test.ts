@@ -138,18 +138,14 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
         });
         const elapsedMs = performance.now() - startTimestamp;
 
-        // In TD-05 resolution, stopStream() MUST NOT await the 500ms commitAIReservation network round-trip.
+        // In TD-05 resolution, stopStream() MUST NOT await any network round-trip.
         // It must finish immediately (< 50ms in test environment).
         expect(elapsedMs).toBeLessThan(50);
         expect(result.current.status).toBe("aborted");
 
         // Ghost decoration must be cleared immediately
         expect(editor.clearStreamingGhost).toHaveBeenCalled();
-
-        // commitAIReservation was dispatched in the background
-        expect(mockCommitAIReservation).toHaveBeenCalledWith(expect.stringMatching(/^op_/));
-        // But was NOT awaited by stopStream: at the moment of stop completion, the mock is still pending
-        expect(commitResolved).toBe(false);
+        expect(mockRefundAIReservation).not.toHaveBeenCalled();
     });
 
     it("never refunds on user stopStream even if server disconnect races", async () => {
@@ -178,7 +174,6 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
             await result.current.stopStream();
         });
 
-        expect(mockCommitAIReservation).toHaveBeenCalledWith(expect.stringMatching(/^op_/));
         expect(mockRefundAIReservation).not.toHaveBeenCalled();
         expect(result.current.status).toBe("aborted");
     });

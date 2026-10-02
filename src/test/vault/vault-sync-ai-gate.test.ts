@@ -78,6 +78,22 @@ const mockAiOps = vi.hoisted(() => ({
     refundUsage: vi.fn().mockResolvedValue({ success: true }),
 }));
 
+const mockSettlementService = vi.hoisted(() => ({
+    getUserTier: vi.fn().mockResolvedValue('pro'),
+    reserveAIQuota: vi.fn().mockResolvedValue({
+        reserved: true,
+        reservationId: 'res-ai-gate-1',
+        operationId: 'op-ai-gate-1',
+        periodKey: '2026-10-02',
+    }),
+    reserveAndUpdateUsage: vi.fn().mockResolvedValue({ reserved: true }),
+    commitAIReservation: vi.fn().mockResolvedValue({ committed: true }),
+    refundAIReservation: vi.fn().mockResolvedValue({ refunded: true }),
+    computeRequestHash: vi.fn().mockReturnValue('mock-request-hash'),
+    getAIReservationStatus: vi.fn().mockResolvedValue({ status: 'reserved' }),
+    getTodayUsage: vi.fn().mockResolvedValue({}),
+}));
+
 const mockAiClient = vi.hoisted(() => ({
     streamWithAI: vi.fn().mockResolvedValue(
         new ReadableStream({
@@ -127,6 +143,7 @@ vi.mock('@/server/db/transactional', () => ({
     txDb: mockTxDb,
 }));
 
+vi.mock('@/server/services/ai-settlement-service', () => mockSettlementService);
 vi.mock('@/server/actions/ai-ops', () => mockAiOps);
 vi.mock('@/lib/ai/client', () => mockAiClient);
 
@@ -383,6 +400,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             expect(body).toBe('AI_PROHIBITED_ON_ENCRYPTED_FILES');
 
             // Quota must NOT have been reserved
+            expect(mockSettlementService.reserveAIQuota).not.toHaveBeenCalled();
             expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
         });
 
@@ -412,6 +430,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             expect(response.status).toBe(403);
             const body = await response.text();
             expect(body).toBe('AI_PROHIBITED_ON_ENCRYPTED_FILES');
+            expect(mockSettlementService.reserveAIQuota).not.toHaveBeenCalled();
             expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
         });
 
@@ -442,7 +461,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
 
             const response = await aiStreamRoute(req);
             expect(response.status).toBe(200);
-            expect(mockAiOps.reserveAndUpdateUsage).toHaveBeenCalledWith(
+            expect(mockSettlementService.reserveAIQuota).toHaveBeenCalledWith(
                 userId,
                 'improve',
                 expect.any(Number),
@@ -496,7 +515,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             } else {
                 expect.fail(`Expected status to be unauthorized, but got ${result.status}`);
             }
-            expect(mockAiOps.refundAIReservation).toHaveBeenCalledWith(operationId, userId);
+            expect(mockSettlementService.refundAIReservation).toHaveBeenCalledWith(operationId, userId);
         });
 
         it('should reject plaintext commit to encrypted file even if AI is allowed if encryptionMetadata.iv is missing', async () => {
@@ -536,7 +555,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             } else {
                 expect.fail(`Expected status to be error, but got ${result.status}`);
             }
-            expect(mockAiOps.refundAIReservation).toHaveBeenCalledWith(operationId, userId);
+            expect(mockSettlementService.refundAIReservation).toHaveBeenCalledWith(operationId, userId);
         });
 
         it('should commit successfully when AI is allowed and re-encrypted metadata is provided', async () => {

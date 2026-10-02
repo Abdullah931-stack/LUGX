@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET as expireReservationsGET, POST as expireReservationsPOST } from '@/app/api/cron/expire-reservations/route';
-import * as aiOps from '@/server/actions/ai-ops';
+import * as aiSettlement from '@/server/services/ai-settlement-service';
 
-vi.mock('@/server/actions/ai-ops', () => ({
+vi.mock('@/server/services/ai-settlement-service', () => ({
     expireStaleReservations: vi.fn(),
 }));
 
@@ -30,7 +30,7 @@ describe('Cron: Expire Stale Reservations (/api/cron/expire-reservations) — TD
         const data = await res.json();
         expect(data.success).toBe(false);
         expect(data.error).toBe('Unauthorized');
-        expect(aiOps.expireStaleReservations).not.toHaveBeenCalled();
+        expect(aiSettlement.expireStaleReservations).not.toHaveBeenCalled();
     });
 
     it('should reject request with 401 Unauthorized when Bearer token is invalid', async () => {
@@ -46,11 +46,11 @@ describe('Cron: Expire Stale Reservations (/api/cron/expire-reservations) — TD
         const data = await res.json();
         expect(data.success).toBe(false);
         expect(data.error).toBe('Unauthorized');
-        expect(aiOps.expireStaleReservations).not.toHaveBeenCalled();
+        expect(aiSettlement.expireStaleReservations).not.toHaveBeenCalled();
     });
 
     it('should execute expireStaleReservations and return 200 with expiredCount when authorized', async () => {
-        vi.mocked(aiOps.expireStaleReservations).mockResolvedValueOnce(5);
+        vi.mocked(aiSettlement.expireStaleReservations).mockResolvedValueOnce(5);
 
         const req = new NextRequest('http://localhost:3000/api/cron/expire-reservations', {
             method: 'GET',
@@ -65,11 +65,11 @@ describe('Cron: Expire Stale Reservations (/api/cron/expire-reservations) — TD
         expect(data.success).toBe(true);
         expect(data.expiredCount).toBe(5);
         expect(data.timestamp).toBeDefined();
-        expect(aiOps.expireStaleReservations).toHaveBeenCalledTimes(1);
+        expect(aiSettlement.expireStaleReservations).toHaveBeenCalledTimes(1);
     });
 
     it('should execute via POST method and return 200 when authorized', async () => {
-        vi.mocked(aiOps.expireStaleReservations).mockResolvedValueOnce(3);
+        vi.mocked(aiSettlement.expireStaleReservations).mockResolvedValueOnce(3);
 
         const req = new NextRequest('http://localhost:3000/api/cron/expire-reservations', {
             method: 'POST',
@@ -83,11 +83,11 @@ describe('Cron: Expire Stale Reservations (/api/cron/expire-reservations) — TD
         const data = await res.json();
         expect(data.success).toBe(true);
         expect(data.expiredCount).toBe(3);
-        expect(aiOps.expireStaleReservations).toHaveBeenCalledTimes(1);
+        expect(aiSettlement.expireStaleReservations).toHaveBeenCalledTimes(1);
     });
 
     it('should return 500 when expireStaleReservations throws an internal error', async () => {
-        vi.mocked(aiOps.expireStaleReservations).mockRejectedValueOnce(new Error('DB Connection Dropped'));
+        vi.mocked(aiSettlement.expireStaleReservations).mockRejectedValueOnce(new Error('DB Connection Dropped'));
 
         const req = new NextRequest('http://localhost:3000/api/cron/expire-reservations', {
             method: 'GET',

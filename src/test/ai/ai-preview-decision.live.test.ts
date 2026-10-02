@@ -20,7 +20,7 @@ import { createMarkdownExtensions } from "@/components/editor/markdown/markdown-
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
-import { reserveAndUpdateUsage } from "@/server/actions/ai-ops";
+import { reserveAndUpdateUsage } from "@/server/services/ai-settlement-service";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER_ID })) }));
 

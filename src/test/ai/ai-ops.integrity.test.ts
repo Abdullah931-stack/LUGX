@@ -22,12 +22,12 @@ import crypto from "node:crypto";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { getTodayUsage } from "@/server/actions/ai-ops";
 import {
-    getTodayUsage,
     reserveAndUpdateUsage,
     refundAIReservation,
     commitAIReservation,
-} from "@/server/actions/ai-ops";
+} from "@/server/services/ai-settlement-service";
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
 let dbAvailable = false;
@@ -187,7 +187,7 @@ describe("usage table integrity under concurrency", () => {
         );
 
         // All 20 requests returned reserved: true
-        expect(results.every((r) => r.reserved)).toBe(true);
+        expect(results.every((r: { reserved: boolean }) => r.reserved)).toBe(true);
 
         // Check real database usage row: ONLY charged 75 words, NOT 20 * 75 = 1500 words!
         const usageRow = await testDb.query.usage.findFirst({
