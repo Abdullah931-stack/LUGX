@@ -672,7 +672,7 @@ describe('Phase 1: Crypto Worker, Defensive RAM Sanitization & Key Management', 
             storeB.setMasterKey(keyB);
             expect(storeB.isUnlocked()).toBe(true);
 
-            const internalRawRef = storeB.getMasterKeyRaw() as Uint8Array;
+            const internalRawRef = (storeB as any).masterKeyRaw as Uint8Array;
             expect(internalRawRef).toBeDefined();
             expect(internalRawRef.some((b) => b !== 0)).toBe(true);
 
