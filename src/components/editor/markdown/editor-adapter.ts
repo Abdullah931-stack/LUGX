@@ -1,7 +1,7 @@
 import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
-import { syntaxTree } from "@codemirror/language";
+import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import { EditorAdapter, EditorMode, EditorSelection, DirectionSettings } from "./types";
 import {
     livePreviewPlugin,
@@ -226,7 +226,8 @@ export class CodeMirrorEditorAdapter implements EditorAdapter {
 
     getHeadingCount(): number {
         let count = 0;
-        const tree = syntaxTree(this.view.state);
+        const docLen = this.view.state.doc.length;
+        const tree = ensureSyntaxTree(this.view.state, docLen, 100) || syntaxTree(this.view.state);
         tree.iterate({
             enter(node) {
                 if (node.name.startsWith("ATXHeading") || node.name.startsWith("SetextHeading")) {
