@@ -1,5 +1,41 @@
 # Changelog - LUGX Project
 
+## [1.32.4] - 2026-10-02 (Phase 13: Redis Fail-Closed Policies, Hermetic Test Isolation & Overlapping Cron Protection)
+
+### Added & Hardened - Dual-Mode Rate Limiting, Upstash REST CI Proxy, Distributed Cron Locking & Hermetic Test Isolation
+
+- **Per-Tier Fail-Closed & Conditional ZADD Limiting (`src/lib/rate-limit.ts`, `src/lib/redis.ts`):**
+  - Remediates audit finding `LUGX-079`.
+  - Configured explicit per-tier policies: `fail-closed` for sensitive routes (`AI_STREAM`, `AUTH`) returning HTTP 503 Service Unavailable with `Retry-After: 10`, and `fail-open` for offline-first continuity (`SYNC_API`, `FILE_API`).
+  - Implemented conditional `zadd`: pipeline checks current token count first via `zcard`, executing `zadd` strictly when under the limit to prevent the client retry lock trap.
+  - Added `isRedisConfigured()` preventing DNS resolution timeouts to `placeholder-redis.upstash.io` in unconfigured environments.
+
+- **CI Upstash REST Compatibility & Protocol Translation (`.github/workflows/ci.yml`, `src/test/infrastructure/redis-mock-server.ts`):**
+  - Remediates audit finding `LUGX-093`.
+  - Deployed `hiett/serverless-redis-http:latest` service container in Stage 4 on port 8079 to translate `@upstash/redis` HTTP REST requests to Redis RESP commands.
+  - Upgraded in-process `UpstashHttpMockServer` to support full Sorted Set primitives (`zadd`, `zcard`, `zremrangebyscore`, `zcount`) for hermetic local testing without Docker dependencies.
+
+- **Distributed Cron Lock & Overlap Protection (`src/lib/cron/lock.ts`, `src/app/api/cron/*`, `.github/workflows/cron.yml`):**
+  - Remediates audit findings `LUGX-096, LUGX-120`.
+  - Implemented `acquireCronLock(jobName, ttlSeconds)` leveraging atomic Redis `SET ... NX EX` with in-memory TTL fallback.
+  - Guarded `/api/cron/expire-reservations` and `/api/cron/purge-deleted` with exclusive distributed locks, safely skipping overlapping executions with HTTP 200 `{ success: true, skipped: true }`.
+  - Exported `POST = GET` on `/api/cron/purge-deleted` for full method parity with scheduler webhooks.
+  - Decoupled `purge-deleted` and `expire-reservations` into independent GitHub Actions jobs, preserved error response bodies with `--fail-with-body`, and introduced a backlog drain loop.
+
+- **Hermetic Test Isolation & Worker Concurrency Regulation (`.env.test`, `src/test/load-test-env.ts`, `vitest.config.mts`, `vitest.live.config.mts`):**
+  - Enforced strict architectural boundary: Unit tests (`npm run test`) never load `.env.local` or `.env` and run exclusively with hermetic dummy placeholders (`placeholder-redis`, dummy DB).
+  - External credentials (isolated Neon test database branch and live Upstash Redis) are loaded strictly and exclusively when running live integration tests (`npm run test:live`).
+  - Added `maxWorkers: 3` to `vitest.config.mts` on Windows developer environments to prevent CPU/memory starvation and eliminate forks worker spawn timeouts.
+
+- **Comprehensive Automated Verification:**
+  - Added `src/test/infrastructure/cron-overlap.test.ts` (4/4 tests passed).
+  - Hardened `src/test/infrastructure/rate-limit.test.ts` (11/11 tests passed).
+  - Hardened `src/test/infrastructure/cron-expire-reservations.test.ts` (6/6 tests passed).
+  - Ran `src/test/infrastructure/cron-expire-reservations.live.test.ts` (3/3 live tests passed on Neon).
+  - Ran `src/test/infrastructure/redis-live-integration.test.ts` (6/6 live tests passed).
+  - All 78 unit test suites and 957 tests passing 100%.
+  - All 21 live integration test suites and 117 tests passing 100%.
+
 ## [1.40.0] - 2026-10-02 (Phase 12: Stripe 1:N Subscriptions, Idempotency & Webhook Hardening)
 
 ### Added & Hardened - Stripe 1:N Subscriptions, Dynamic MAX(tier) Derivation, Webhook Retry Mandate & Customer Portal

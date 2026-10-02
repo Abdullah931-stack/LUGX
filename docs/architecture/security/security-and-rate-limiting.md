@@ -62,42 +62,46 @@ per-route `getUser()` checks performed inside every API route and server action
 
 ## 2. Rate Limiting (`src/lib/rate-limit.ts`)
 
-A per-user **sliding-window counter** backed by Upstash Redis. Configuration:
+A per-user **sliding-window counter** backed by Upstash Redis with explicit per-tier failure modes (hardened in Phase 13 / LUGX-079). Configuration:
 
 ```ts
 export const RATE_LIMITS = {
-    SYNC_API:  { limit: 100, windowSeconds: 15 * 60 }, // sync endpoint
-    FILE_API:  { limit: 200, windowSeconds: 15 * 60 }, // single-file GET/PUT/DELETE
-    GENERAL:   { limit: 300, windowSeconds: 15 * 60 },
-    AUTH:      { limit: 20,  windowSeconds: 15 * 60 }, // sign-in/sign-up brute-force guard
-    AI_STREAM: { limit: 30,  windowSeconds: 60 },      // AI streaming burst protection
+    SYNC_API:  { limit: 100, windowSeconds: 15 * 60, failureMode: 'fail-open' as const },
+    FILE_API:  { limit: 200, windowSeconds: 15 * 60, failureMode: 'fail-open' as const },
+    GENERAL:   { limit: 300, windowSeconds: 15 * 60, failureMode: 'fail-open' as const },
+    AUTH:      { limit: 20,  windowSeconds: 15 * 60, failureMode: 'fail-closed' as const },
+    AI_STREAM: { limit: 30,  windowSeconds: 60,      failureMode: 'fail-closed' as const },
 } as const;
 ```
 
 Exported limiter instances and their consumers:
 
-| Instance | Key prefix | Used by |
-| :--- | :--- | :--- |
-| `syncApiRateLimiter` | `sync` | `GET /api/files/sync` |
-| `fileApiRateLimiter` | `file` | `GET` / `PUT` / `DELETE /api/files/[id]` |
-| `authRateLimiter` | `auth` | authentication endpoints |
-| `aiStreamRateLimiter` | `ai-stream` | `POST /api/ai/stream` |
+| Instance | Key prefix | Failure Policy | Used by |
+| :--- | :--- | :--- | :--- |
+| `syncApiRateLimiter` | `sync` | `fail-open` | `GET /api/files/sync` |
+| `fileApiRateLimiter` | `file` | `fail-open` | `GET` / `PUT` / `DELETE /api/files/[id]` |
+| `authRateLimiter` | `auth` | `fail-closed` | authentication endpoints |
+| `aiStreamRateLimiter` | `ai-stream` | `fail-closed` | `POST /api/ai/stream` |
 
 ### 2.1 Dual-Mode Failure Architecture (Fail-Open vs. Fail-Closed)
 
-The platform deliberately decouples service availability and key protection through an explicit dual-mode strategy:
+The platform enforces explicit, deterministic failure policies per service tier:
 
-1. **Fail-Open (General Application & Sync Endpoints):**
-   - Implemented in `RateLimiter.limit()` for `sync`, `file`, `auth`, and `ai-stream`.
-   - If Upstash Redis is unreachable or returns an error, the limiter logs a warning and returns `{ success: true }`.
+1. **Fail-Closed (AI Streaming & Authentication Endpoints / LUGX-079):**
+   - Implemented in `RateLimiter.limit()` for `ai-stream` and `auth`.
+   - If Upstash Redis is unreachable, errors, or unconfigured, the limiter immediately rejects the request returning `{ success: false, isDegraded: true }`.
+   - The route handler emits **HTTP 503 Service Unavailable** with a `Retry-After: 10` header and body `{ error: "Service Unavailable", message: "Rate limiting service is temporarily unavailable. Request blocked under fail-closed security policy." }`.
+   - **Rationale:** Protects upstream LLM provider quotas and keys from rapid bursts during Redis outages, and prevents brute-force credential stuffing attacks against authentication endpoints.
+2. **Fail-Open (General Application & Sync Endpoints):**
+   - Implemented in `RateLimiter.limit()` for `sync`, `file`, and `general`.
+   - If Upstash Redis is unreachable or returns an error, the limiter logs a warning and returns `{ success: true, isDegraded: true }`.
    - **Rationale:** Protects offline-first architecture; temporary infrastructure issues on Redis never lock legitimate users out of reading, editing, or synchronizing local documents.
-2. **Fail-Closed (AI Key Rotation & Circuit Breakers):**
-   - Implemented in [`src/lib/ai/key-rotation.ts`](../../../src/lib/ai/key-rotation.ts) via `RedisUnavailableError`.
-   - If Redis connection fails during multi-key pool inspection or health probes, the AI provider subsystem fails closed.
-   - **Rationale:** Prevents catastrophic quota exhaustion, silent billing spikes, or rogue requests against Gemini provider keys when distributed rate limiting state cannot be verified.
-3. **Database-Enforced ACID User Quotas:**
+3. **Conditional Token Consumption (LUGX-079):**
+   - The limiter executes a 2-phase pipeline: Phase 1 evaluates `zremrangebyscore` and `zcard`. Phase 2 executes `zadd` strictly if `currentCount < limit`.
+   - Rejected requests never append members to the sorted set, completely eliminating the client retry lock trap.
+4. **Database-Enforced ACID User Quotas:**
    - User consumption limits (words, daily summarize, ToPrompt) are tracked and enforced in PostgreSQL via `schema.usage` and `schema.aiReservations` with atomic SQL condition guards (`reserveAndUpdateUsage`).
-4. **Hybrid Fail-Open Distributed Lock (Stripe Webhook Concurrency / Phase 21):**
+5. **Hybrid Fail-Open Distributed Lock (Stripe Webhook Concurrency / Phase 21):**
    - Implemented in `src/app/api/stripe/webhook/route.ts` via in-flight Redis lock `stripe:lock:${eventId}` (`nx: true, ex: 30`) bounded by a 1500ms watchdog (`withTimeout`).
    - If Redis is unreachable or times out, the lock fails open to PostgreSQL ACID transactions (`executeSubscriptionTransition`) and database-level idempotency (`subscription_events`).
    - Authoritative specification: [`docs/guides/billing/stripe-integration.md`](../../guides/billing/stripe-integration.md).
@@ -106,8 +110,8 @@ Response contract:
 
 - Success responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining`,
   `X-RateLimit-Reset` (set by `addRateLimitHeaders()`), and `X-Correlation-ID`.
-- Exhaustion returns **429** from `rateLimitExceededResponse()` with a
-  `Retry-After` header and body `{ error, message, retryAfter }`.
+- Normal exhaustion returns **429 Too Many Requests** from `rateLimitExceededResponse()` with a `Retry-After` header.
+- Fail-closed outage rejection returns **503 Service Unavailable** with `X-RateLimit-Degraded: 1` and `Retry-After: 10`.
 
 Endpoint-level details: [`../../reference/sync-api.md`](../../reference/sync-api.md).
 
@@ -259,9 +263,18 @@ sequenceDiagram
 
 ---
 
-## 5. Protected Maintenance Crons
+## 5. Protected Maintenance Crons & Distributed Locking
 
-### 5.1 Soft-Delete Tombstone Purge (`src/app/api/cron/purge-deleted/route.ts`)
+Scheduled maintenance routes execute background pruning and quota reclamation. To guarantee zero concurrency races across horizontal serverless instances and external schedulers, all cron handlers are protected by distributed locks (`src/lib/cron/lock.ts`) and constant-time bearer authentication.
+
+### 5.1 Distributed Cron Lock Architecture (`src/lib/cron/lock.ts` / LUGX-096, LUGX-120)
+
+- **Atomic Key Acquisition (`acquireCronLock`):** Utilizes Upstash Redis `SET cron:lock:<jobName> <workerId> NX EX <ttlSeconds>`. The atomic command ensures only a single execution instance can hold the lock during the designated TTL window.
+- **In-Memory Fallback:** If Redis is unconfigured or unreachable, the subsystem degrades gracefully to an in-memory lock table tracking active jobs with expiration timestamps, preventing concurrent invocations in single-node/local runtimes.
+- **Safe Overlap Skipping:** When a lock cannot be acquired because a previous execution is still running, handlers immediately return HTTP 200 `{ success: true, skipped: true, reason: "Overlapping execution prevented by distributed lock", timestamp: ... }`. Schedulers do not fail or retry aggressively.
+- **Automatic & Manual Release:** The lock exposes a `.release()` method called in route `finally` blocks, while the TTL automatically expires the lock if a process crashes ungracefully.
+
+### 5.2 Soft-Delete Tombstone Purge (`src/app/api/cron/purge-deleted/route.ts`)
 
 Permanent purge of soft-delete tombstones past retention:
 
@@ -269,15 +282,17 @@ Permanent purge of soft-delete tombstones past retention:
 | :--- | :--- |
 | Retention window | 30 days (`RETENTION_DAYS`) after `deleted_at` |
 | Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; verified via constant-time `crypto.timingSafeEqual` comparison (LUGX-136), failing closed with 401 when unset, mismatched, or malformed |
+| Concurrency Lock | Protected by `acquireCronLock("purge-deleted", 600)` with safe HTTP 200 `{ skipped: true }` overlap skipping |
 | Bounded batches | Deletes at most **500 rows per run** via a `WITH doomed AS (… LIMIT 500) DELETE … USING` CTE (Drizzle's builder has no `.limit()`) |
+| Method Parity | Full support for both `GET` and `POST` methods (`export const POST = GET;`) |
 | Idempotency | Re-running only deletes rows already past the cutoff |
-| Scheduling | Invoked externally (GitHub Actions daily workflow `.github/workflows/cron.yml`); failures never break the CI pipeline |
+| Scheduling | Invoked externally (GitHub Actions daily workflow `.github/workflows/cron.yml` with decoupled jobs and backlog drain loop) |
 
 The application itself never hard-deletes user content outside this route — all
 user-facing deletions are tombstones
 ([`records/incidents/test-database-safety.md`](../../records/incidents/test-database-safety.md)).
 
-### 5.2 Stale Quota Reservation Expiration (`src/app/api/cron/expire-reservations/route.ts` / TD-02)
+### 5.3 Stale Quota Reservation Expiration (`src/app/api/cron/expire-reservations/route.ts` / TD-02)
 
 Automated expiration of leaked or orphaned in-flight AI quota reservations:
 
@@ -287,16 +302,19 @@ Automated expiration of leaked or orphaned in-flight AI quota reservations:
 | Target status | Records with status `'reserved'` in `ai_usage_history` |
 | Transition | Updated atomically to status `'expired'` via `expireStaleReservations` |
 | Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; verified via constant-time `crypto.timingSafeEqual` comparison (LUGX-136), failing closed with 401 when unset, mismatched, or malformed |
+| Concurrency Lock | Protected by `acquireCronLock("expire-reservations", 300)` with safe HTTP 200 `{ skipped: true }` overlap skipping |
+| Method Parity | Full support for both `GET` and `POST` methods (`export const POST = GET;`) |
 | Idempotency | Strictly idempotent; only transitions matching unfinalized reservations |
-| Scheduling | Invoked externally via GitHub Actions scheduled workflow `.github/workflows/cron.yml` |
-| Response format | JSON `{ success: true, count: number, message: string }` with HTTP 200 |
+| Scheduling | Invoked externally via GitHub Actions scheduled workflow `.github/workflows/cron.yml` (independent job with `--fail-with-body`) |
+| Response format | JSON `{ success: true, expiredCount: number, timestamp: string }` with HTTP 200 |
 
 ---
 
 ## 6. Verification
 
 ```bash
-npx vitest run src/test/infrastructure/rate-limit.test.ts                                            # In-memory sliding window & IP fallback
+npx vitest run src/test/infrastructure/rate-limit.test.ts                                            # Dual-mode fail-closed vs fail-open & conditional ZADD
+npx vitest run src/test/infrastructure/cron-overlap.test.ts                                         # Distributed cron lock contention & overlap prevention
 npx vitest run src/test/auth/correlation.test.ts                                                     # Header parsing, UUID generation & CRLF sanitization
 npx vitest run src/test/infrastructure/cron-expire-reservations.test.ts                              # CRON_SECRET auth, status transitions & failure isolation
 npx vitest run src/test/auth/log-sanitizer.test.ts                                                   # Log hygiene, word-boundary isolation & RAM zeroing

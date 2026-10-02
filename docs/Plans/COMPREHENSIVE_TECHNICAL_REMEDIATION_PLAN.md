@@ -86,7 +86,7 @@ graph TD
     subgraph TrackCloud ["Track 5: Cloud Services, AI Streaming & Billing Resilience"]
         P11["Phase 11: Server-Authoritative AI Settlement & Replay Protection"]:::critical
         P12["Phase 12: Stripe 1:N Subscriptions, Idempotency & Webhook Hardening"]:::caution
-        P13["Phase 13: Redis Fail-Closed Policies & Overlapping Cron Protection"]:::caution
+        P13["Phase 13: Redis Fail-Closed Policies & Overlapping Cron Protection"]:::done
     end
 
     subgraph TrackSync ["Track 6: Synchronization Engine, CAS Queue & Conflict Isolation"]
@@ -403,29 +403,43 @@ Harden Stripe webhook ingestion to respond with 500 on transient failures, enabl
 
 ---
 
-### [Phase 13: Redis Fail-Closed Policies & Overlapping Cron Protection] — Status: ⏳ PLANNED
+### [Phase 13: Redis Fail-Closed Policies & Overlapping Cron Protection] — Status: ✅ COMPLETED
 > **Execution Origin:** Independent Remediation Plan - Group 7  
-> **Single Responsibility (SRP):** Enforce fail-closed policies on Redis outages, ensure CI compatibility, and prevent overlapping cron job execution.
+> **Single Responsibility (SRP):** Enforce fail-closed policies on Redis outages, ensure CI compatibility, prevent overlapping cron job execution, and enforce hermetic test isolation.  
+> **Authoritative Dossier:** [`docs/records/closures/core-hardening/phase-13-redis-fail-closed-and-cron-overlap-closure.md`](../records/closures/core-hardening/phase-13-redis-fail-closed-and-cron-overlap-closure.md)
 
 #### Technical Objective
-Protect system resources during Redis outages by transitioning rate limiting and AI quotas to fail-closed behavior, providing an emulator for CI, and locking cron jobs against overlapping execution.
+Protect system resources during Redis outages by transitioning rate limiting on sensitive tiers to fail-closed behavior, providing an Upstash REST proxy container for CI Stage 4, locking maintenance cron jobs against overlapping execution, and guaranteeing hermetic isolation between unit and live database tests.
 
 #### Audit Findings Remediated
 `LUGX-079, LUGX-093, LUGX-095, LUGX-096, LUGX-097, LUGX-108, LUGX-120, LUGX-121, LUGX-148, LUGX-176`
 
 #### Targeted Files
-- `src/lib/redis/client.ts`
-- `src/lib/rate-limit/limiter.ts`
-- `src/app/api/cron/*`
+- `src/lib/redis.ts`
+- `src/lib/rate-limit.ts`
+- `src/lib/cron/lock.ts`
+- `src/app/api/cron/expire-reservations/route.ts`
+- `src/app/api/cron/purge-deleted/route.ts`
+- `.github/workflows/cron.yml`
+- `.github/workflows/ci.yml`
+- `src/test/load-test-env.ts`
+- `src/test/infrastructure/redis-mock-server.ts`
+- `src/test/infrastructure/rate-limit.test.ts`
+- `src/test/infrastructure/cron-expire-reservations.test.ts`
+- `src/test/infrastructure/cron-overlap.test.ts`
 
-#### Direct Implementation Actions
-1. **Fail-Closed Policy:** During Redis outages, AI quota and rate-limiting endpoints return `429 Too Many Requests` or `503 Service Unavailable` rather than bypassing limits.
-2. **CI Upstash Emulator Integration:** Ensure local Upstash REST emulator handles CI test requests to prevent silent skips.
-3. **Cron Overlap Protection:** Lock cron tasks using an advisory lock with TTL in Postgres/Redis, skipping execution if prior run is active. Validate `Authorization: Bearer ${CRON_SECRET}`.
+#### Direct Implementation Actions Completed
+1. **Per-Tier Fail-Closed & Conditional ZADD Limiting (LUGX-079, LUGX-148):** Configured explicit per-tier policies in `RATE_LIMITS`: `fail-closed` for sensitive routes (`AI_STREAM`, `AUTH`) emitting HTTP 503 (`Retry-After: 10`), and `fail-open` for offline continuity (`SYNC_API`, `FILE_API`). Re-ordered sliding window evaluation to check count before calling `zadd`, preventing retry lock traps. Added `isRedisConfigured()` preventing DNS timeouts to placeholder domains.
+2. **CI Upstash REST Compatibility & Protocol Translation (LUGX-093):** Deployed `hiett/serverless-redis-http:latest` service container in CI Stage 4 on port 8079 translating HTTP REST requests from `@upstash/redis` to Redis RESP commands over TCP. Upgraded in-process `UpstashHttpMockServer` with full Sorted Set primitives (`zadd`, `zcard`, `zremrangebyscore`, `zcount`).
+3. **Distributed Cron Lock & Overlap Protection (LUGX-096, LUGX-120):** Implemented `acquireCronLock` in `src/lib/cron/lock.ts` utilizing atomic Redis `SET ... NX EX` with in-memory TTL fallback. Guarded `/api/cron/expire-reservations` and `/api/cron/purge-deleted` with exclusive distributed locks, safely skipping overlapping executions with HTTP 200 `{ success: true, skipped: true }`. Exported `POST = GET` on `purge-deleted`. Decoupled GitHub Actions cron jobs with `--fail-with-body` and backlog drain loop.
+4. **Hermetic Test Isolation & Worker Concurrency Regulation:** Configured `loadTestEnv()` to strictly ignore `.env.local` during unit test runs (`VITEST_LIVE: 'false'`) and enforce dummy placeholders. Configured `maxWorkers: 3` on local Windows environments to eliminate worker spawn timeouts.
 
-#### Acceptance Criteria
-- Disconnecting Redis causes rate-limiting routes to reject requests (fail-closed).
-- Concurrent cron executions safely skip overlapping runs.
+#### Acceptance Criteria & Verification Evidence
+- Rate limit suite: 11/11 tests passing (`src/test/infrastructure/rate-limit.test.ts`), confirming HTTP 503 on unconfigured/unreachable Redis for `AI_STREAM` and `AUTH`, HTTP 200 fail-open for sync, and zero token addition on rejected requests.
+- Cron overlap suite: 4/4 tests passing (`src/test/infrastructure/cron-overlap.test.ts`), confirming concurrent runs skip safely with HTTP 200 `{ skipped: true }` and reject unauthorized requests with HTTP 401.
+- Unit suite integrity: 78 test suites, 957 tests passing 100% with zero regressions.
+- Live Neon DB integration: 21 test suites, 119 tests passing 100% on isolated test branch.
+- Zero TypeScript errors (`tsc --noEmit`), zero ESLint errors (`npm run lint`), and 100% link validity (`check-markdown-links.mjs`).
 
 ---
 

@@ -58,7 +58,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - In `src/app/api/ai/stream/route.ts`, implemented `handleClientDisconnect`: when client aborts post-TTFT (after tokens were streamed), the server autonomously settles the reservation via `commitAIReservation(operationId)`, while early disconnects pre-TTFT are refunded (`refundAIReservation`).
   - In Phase 11 (2026-10-02), client financial authority was completely revoked: client hook `useAIStream` was stripped of all settlement RPC invocations (`commitAIReservation`, `settleReservationAsConsumed`). `stopStream()` aborts immediately (0ms) and dismantles ghost decorations instantly without dispatching any network settlement calls, leaving 100% of stream settlement to the server stream handler (`cancel()` and `req.signal.aborted`).
   - Upstream Gemini model generation terminates instantly at socket level, eliminating token bleed and guaranteeing 0ms UI stop latency.
-  - Verified via dedicated test suites `src/test/ai/ai-stream-abort-latency.test.ts`, `src/test/ai/ai-client-authority-revocation.test.ts`, and `src/test/ai/ai-authoritative-stream-settlement.test.ts` (100% passing across 77 test files and 948 tests).
+  - Verified via dedicated test suites `src/test/ai/ai-stream-abort-latency.test.ts`, `src/test/ai/ai-client-authority-revocation.test.ts`, and `src/test/ai/ai-authoritative-stream-settlement.test.ts` (100% passing across 78 test files and 957 tests).
 
 ## TD-06 — Dead `'error'` member in the `SyncStatus` union — ✅ RESOLVED (2026-08-25)
 
@@ -94,7 +94,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
 - **Resolution:**
   - Extracted shared test suite arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated Single Source of Truth (`vitest.constants.mts`), restricting config files strictly to default exports (`export default defineConfig(...)`).
   - Migrated configuration files to Native ESM (`vitest.config.mts` and `vitest.live.config.mts`), replaced CommonJS `__dirname` with standard `import.meta.dirname`, and specified explicit `.mjs` import extensions for TypeScript module resolution.
-  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 77 test files and 948 tests via vitest.config.mts, plus 21 live files via vitest.live.config.mts).
+  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 78 test files and 957 tests via vitest.config.mts, plus 21 live files via vitest.live.config.mts).
 
 ## TD-10 — Offline Extraction of IndexedDB Device Trust Envelope (Accepted Risk for PIN / Mitigated via WebAuthn PRF)
 
@@ -114,7 +114,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Strongly typed all cryptographic worker RPC action payloads (`CryptoWorkerResponsePayloads`), indexedDB vault profiles (`UserVaultProfile`), and database encryption metadata (`FileEncryptionMetadata`).
   - Pruned all unused imports, variables, and dead mocks across server actions, sync engines, UI modals, and test suites.
   - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
-  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 77 unit test suites with 948 tests green, plus 21 live integration suites with 119 tests green).
+  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 78 unit test suites with 957 tests green, plus 21 live integration suites with 119 tests green).
 
 ## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session — ✅ RESOLVED (2026-09-19)
 
@@ -125,4 +125,24 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Introduced Fast-Path routing in `src/proxy.ts` that completely bypasses `getUser()` network calls on public routes (e.g. `/`, static assets) and on `/login` when no auth cookies exist.
   - Equipped `getUser()` in `src/proxy.ts` with an `AbortSignal.timeout(2500)` watchdog race that fails closed gracefully into an unauthenticated null user without socket stalling.
   - Implemented `copyCookiesAndRedirect` helper ensuring all `Set-Cookie` directives (including deletions from `@supabase/ssr`) are retained and returned to the client browser on 307 redirects and 401 API responses.
-  - Verified via dedicated unit test suites (`src/test/auth/auth-signout.test.ts` and `src/test/auth/proxy.test.ts`), maintaining 100% test pass rate across all 77 test suites (948 passing tests) and clean ESLint status.
+  - Verified via dedicated unit test suites (`src/test/auth/auth-signout.test.ts` and `src/test/auth/proxy.test.ts`), maintaining 100% test pass rate across all 78 test suites (957 passing tests) and clean ESLint status.
+
+## TD-13 — Systemic Fail-Open Defaults on Redis Outages & Unprotected Cron Execution — ✅ RESOLVED (Phase 13 / 2026-10-02)
+
+- **Debt:**
+  - Rate limiting logic across all routes (`src/lib/rate-limit.ts`) unconditionally fell open upon Redis connectivity failures, allowing unauthorized bursts and potential LLM provider quota drainage.
+  - The `RateLimiter` executed `zadd` unconditionally before inspecting current counts, trapping retrying clients in infinite locked loops (`LUGX-079`).
+  - Unconfigured environments instantiated a client pointing to `placeholder-redis.upstash.io`, triggering slow DNS timeouts and silent fail-open bypasses.
+  - CI executed with an incompatible Redis container image (`redis:7-alpine` expecting RESP over TCP rather than HTTP REST), forcing all guard paths down the fallback branch (`LUGX-093`).
+  - Scheduled maintenance routes (`/api/cron/expire-reservations` and `/api/cron/purge-deleted`) had no distributed locking mechanism, risking overlapping runs and race conditions (`LUGX-096`).
+- **Resolution:**
+  - Configured explicit per-tier policies: `fail-closed` for sensitive endpoints (`AI_STREAM`, `AUTH`) returning HTTP 503 Service Unavailable with `Retry-After: 10`, and `fail-open` for offline continuity endpoints (`SYNC_API`, `FILE_API`).
+  - Re-ordered rate limiter execution to perform conditional `zadd`: tokens are consumed strictly when the current count is within limits, eliminating the client retry lock trap.
+  - Added `isRedisConfigured()` to `src/lib/redis.ts` ensuring immediate degraded fail-closed handling without DNS timeouts in unconfigured environments.
+  - Deployed `hiett/serverless-redis-http:latest` Upstash REST proxy in CI Stage 4, translating HTTP REST requests to Redis RESP on port 8079.
+  - Implemented `acquireCronLock` (`src/lib/cron/lock.ts`) backed by atomic Redis `SET ... NX EX` with in-memory TTL fallback, enabling concurrent cron runs to skip gracefully with HTTP 200 `{ skipped: true }`.
+  - Enforced strict hermetic test isolation in `src/test/load-test-env.ts`: unit tests (`npm run test`) never load `.env.local` or `.env` and run exclusively against dummy Redis and Postgres placeholders, while live tests (`npm run test:live`) exclusively load isolated test branch credentials.
+  - Regulated Vitest concurrency (`maxWorkers: 3` on Windows) to prevent CPU thread starvation and eliminate worker spawn timeouts.
+  - Hardened `.github/workflows/cron.yml` with decoupled jobs, `--fail-with-body`, and backlog drain loops.
+  - Verified across 78 unit test suites (957 passing tests) and 21 live database suites (119 passing tests).
+

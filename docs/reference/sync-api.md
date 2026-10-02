@@ -307,11 +307,13 @@ counter backed by Upstash Redis, keyed per user:
 
 | Limiter | Applied to | Limit | Window | Fallback Policy |
 |---------|-----------|-------|--------|-----------------|
-| `syncApiRateLimiter` | `GET /api/files/sync` | **100 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
-| `fileApiRateLimiter` | `GET` / `PUT /api/files/:id` | **200 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
-| `aiStreamRateLimiter` | `POST /api/ai/stream` | **30 requests** | **60 seconds** | Fail-Open on rate limiter; Fail-Closed on ACID quota deduction |
+| `syncApiRateLimiter` | `GET /api/files/sync` | **100 requests** | **15 minutes** | Fail-Open (Redis outage allows requests to preserve offline-first continuity) |
+| `fileApiRateLimiter` | `GET` / `PUT` / `DELETE /api/files/:id` | **200 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
+| `generalRateLimiter` | General application endpoints | **300 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
+| `authRateLimiter` | Authentication endpoints | **20 requests** | **15 minutes** | Fail-Closed (Redis outage returns HTTP 503 Service Unavailable) |
+| `aiStreamRateLimiter` | `POST /api/ai/stream` | **30 requests** | **60 seconds** | Fail-Closed (Redis outage returns HTTP 503 Service Unavailable) |
 
-### Response (429 Too Many Requests)
+### Response (429 Too Many Requests — Exhaustion)
 ```http
 HTTP/1.1 429 Too Many Requests
 Retry-After: <seconds>
@@ -323,7 +325,20 @@ X-RateLimit-Reset: <epoch-seconds>
 {
   "error": "Too Many Requests",
   "message": "Rate limit exceeded. Please try again later.",
-  "retryAfter": <epoch-seconds>
+  "retryAfter": <seconds>
+}
+```
+
+### Response (503 Service Unavailable — Fail-Closed Degradation)
+```http
+HTTP/1.1 503 Service Unavailable
+Retry-After: 10
+X-Correlation-ID: <uuid>
+X-RateLimit-Degraded: 1
+
+{
+  "error": "Service Unavailable",
+  "message": "Rate limiting service is temporarily unavailable. Request blocked under fail-closed security policy."
 }
 ```
 
@@ -340,9 +355,11 @@ POST /api/cron/expire-reservations
 Authorization: Bearer <CRON_SECRET>
 ```
 
-- **Authentication:** Shared secret `Authorization: Bearer $CRON_SECRET`.
+- **Authentication:** Shared secret `Authorization: Bearer $CRON_SECRET` verified via constant-time `crypto.timingSafeEqual`.
+- **Distributed Concurrency Lock:** Protected by `acquireCronLock("expire-reservations", 300)` via atomic Redis `SET ... NX EX` with in-memory TTL fallback. Overlapping executions safely skip execution.
 - **Batch Processing:** Bounded batch processing (`limit: 100`) preventing serverless execution timeouts.
-- **Response (200 OK):**
+- **Method Parity:** Full support for both `GET` and `POST` methods (`export const POST = GET;`).
+- **Normal Execution Response (200 OK):**
   ```json
   {
     "success": true,
@@ -350,10 +367,48 @@ Authorization: Bearer <CRON_SECRET>
     "timestamp": "2026-09-18T01:30:00.000Z"
   }
   ```
+- **Overlapping Execution Response (200 OK):**
+  ```json
+  {
+    "success": true,
+    "skipped": true,
+    "reason": "Overlapping execution prevented by distributed lock",
+    "timestamp": "2026-09-18T01:30:00.000Z"
+  }
+  ```
 
 ### 2. GET / POST `/api/cron/purge-deleted` (Soft-Delete Tombstone Purge)
 
 Permanent deletion of soft-deleted file tombstones older than 30 days (`RETENTION_DAYS`), bounded to batches of 500 rows.
+
+```http
+POST /api/cron/purge-deleted
+Authorization: Bearer <CRON_SECRET>
+```
+
+- **Authentication:** Shared secret `Authorization: Bearer $CRON_SECRET` verified via constant-time `crypto.timingSafeEqual`.
+- **Distributed Concurrency Lock:** Protected by `acquireCronLock("purge-deleted", 600)` via atomic Redis `SET ... NX EX` with in-memory TTL fallback. Overlapping executions safely skip execution.
+- **Method Parity:** Full support for both `GET` and `POST` methods (`export const POST = GET;`).
+- **Normal Execution Response (200 OK):**
+  ```json
+  {
+    "success": true,
+    "deleted": 12,
+    "cutoff": "2026-09-02T00:00:00.000Z",
+    "retentionDays": 30,
+    "batchLimit": 500,
+    "done": true
+  }
+  ```
+- **Overlapping Execution Response (200 OK):**
+  ```json
+  {
+    "success": true,
+    "skipped": true,
+    "reason": "Overlapping execution prevented by distributed lock",
+    "timestamp": "2026-09-18T01:30:00.000Z"
+  }
+  ```
 
 
 ---

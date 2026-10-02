@@ -19,7 +19,7 @@ remain in place as a **second layer of defense**, not a substitute.
 
 | File | Role |
 |---|---|
-| `src/test/load-test-env.ts` | Pure env loader used by `vitest.setup.ts`. Priority: shell `TEST_DATABASE_URL` > `.env.test.local` > `.env.test` > `.env.local` > `.env`. Then hard-binds `DATABASE_URL = TEST_DATABASE_URL`. |
+| `src/test/load-test-env.ts` | Dual-mode hermetic environment loader. For LIVE suites (`VITEST_LIVE: 'true'`), loads `.env.test.local`, `.env.local` (override: true), and binds `DATABASE_URL = TEST_DATABASE_URL`. For UNIT suites (`VITEST_LIVE: 'false'`), strictly ignores `.env.local`/`.env`, loads only `.env.test.local`/`.env.test`, and enforces dummy placeholders for Upstash Redis and Postgres to guarantee complete network isolation. |
 | `src/test/test-db-guard.ts` | Pure fail-closed guard (`assertSafeTestDatabaseUrl`) + identity helpers (`extractDbHost`, `extractNeonEndpointId`). No pg imports — unit-testable. |
 | `src/test/test-db.ts` | Calls the guard BEFORE creating the pg Pool and prints the branch identity line. |
 | `drizzle.config.test.ts` | `drizzle-kit push` target resolved from `TEST_DATABASE_URL ?? DATABASE_URL`. |
@@ -94,6 +94,12 @@ To guarantee 100% isolation when integration test suites run against a shared te
 - Resilient Hierarchical Cleanup: `cleanupTestUsers` in `src/test/test-db.ts` explicitly deletes dependent child rows (`subscriptions`, `ai_reservations`, `files`, `usage`, `user_vault_profiles`) prior to removing user records, and guards against transient lock contention with an exponential backoff retry loop.
 - Suites seed their test user rows in `beforeEach` with `onConflictDoNothing()`, preventing cross-suite `CASCADE` deletions when sibling test suites tear down.
 
+### CI Upstash REST Service Container & Worker Concurrency (Phase 13 / LUGX-093)
+
+- **Stage 4 Upstash REST Proxy Container (`.github/workflows/ci.yml`):** CI executes `hiett/serverless-redis-http:latest` on port 8079 alongside `redis:7-alpine` on port 6379, bridging HTTP REST commands from `@upstash/redis` to Redis RESP commands over TCP. This eliminates protocol mismatches and ensures rate limit and distributed locking assertions execute against live Redis services in CI.
+- **In-Process Sorted Set Mock (`src/test/infrastructure/redis-mock-server.ts`):** Developer unit testing leverages an in-process `UpstashHttpMockServer` implementing full Sorted Set commands (`zadd`, `zcard`, `zremrangebyscore`, `zcount`), enabling fast hermetic verification without external daemon requirements.
+- **Worker Concurrency Regulation (`vitest.config.mts`):** Default unit test execution enforces `maxWorkers: process.env.CI ? 4 : 3`. On Windows developer workstations, capping workers to 3 prevents CPU thread pool saturation and V8 worker spawn timeouts.
+
 The Pool is never created unless **all** of the following hold:
 
 1. `TEST_DATABASE_URL` is configured (mandatory locally AND in CI).
@@ -132,7 +138,7 @@ to a live URL; push failures surface immediately).
 
 ## 5. Evidence of isolation
 
-- **Active Unit & Contract Suite (`npm run test`):** **77 files / 948 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Unit & Contract Suite (`npm run test`):** **78 files / 957 tests — all passed (100% pass rate)**, zero LIVE files included.
 - **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 119 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
