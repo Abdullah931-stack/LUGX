@@ -80,31 +80,37 @@ export async function POST(req: NextRequest) {
             return withCorrelation(new NextResponse(`Payload too large: text exceeds ${MAX_INPUT_CHARS} characters limit`, { status: 400 }));
         }
 
-        // File ownership verification if fileId is supplied
-        if (fileId !== undefined && fileId !== null) {
-            if (typeof fileId !== "string" || !fileId.trim()) {
-                return withCorrelation(new NextResponse("Invalid request: fileId must be a non-empty string", { status: 400 }));
-            }
+        // PHASE 10 / LUGX-085: Mandatory fileId validation to block unauthenticated / uninspected AI streaming
+        if (fileId === undefined || fileId === null) {
+            return withCorrelation(
+                new NextResponse("MISSING_FILE_ID: fileId is required for AI stream operations", { status: 400 })
+            );
+        }
+        if (typeof fileId !== "string" || !fileId.trim()) {
+            return withCorrelation(
+                new NextResponse("Invalid request: fileId must be a non-empty string (MISSING_FILE_ID)", { status: 400 })
+            );
+        }
 
-            const targetFile = await db.query.files.findFirst({
-                where: and(
-                    eq(schema.files.id, fileId.trim()),
-                    eq(schema.files.userId, user.id),
-                    isNull(schema.files.deletedAt)
-                ),
+        const cleanFileId = fileId.trim();
+        const targetFile = await db.query.files.findFirst({
+            where: and(
+                eq(schema.files.id, cleanFileId),
+                eq(schema.files.userId, user.id),
+                isNull(schema.files.deletedAt)
+            ),
+        });
+        if (!targetFile) {
+            return withCorrelation(new NextResponse("File not found", { status: 404 }));
+        }
+
+        // Zero-Knowledge AI Gatekeeper: prohibit AI on encrypted files unless user explicitly opted in
+        if (targetFile.isEncrypted) {
+            const vaultProfile = await db.query.userVaultProfiles.findFirst({
+                where: eq(schema.userVaultProfiles.userId, user.id),
             });
-            if (!targetFile) {
-                return withCorrelation(new NextResponse("File not found", { status: 404 }));
-            }
-
-            // Zero-Knowledge AI Gatekeeper: prohibit AI on encrypted files unless user explicitly opted in
-            if (targetFile.isEncrypted) {
-                const vaultProfile = await db.query.userVaultProfiles.findFirst({
-                    where: eq(schema.userVaultProfiles.userId, user.id),
-                });
-                if (!vaultProfile?.allowAIOnEncryptedFiles) {
-                    return withCorrelation(new NextResponse("AI_PROHIBITED_ON_ENCRYPTED_FILES", { status: 403 }));
-                }
+            if (!vaultProfile?.allowAIOnEncryptedFiles) {
+                return withCorrelation(new NextResponse("AI_PROHIBITED_ON_ENCRYPTED_FILES", { status: 403 }));
             }
         }
 
@@ -126,7 +132,7 @@ export async function POST(req: NextRequest) {
             tier,
             {
                 operationId: operationId!,
-                fileId: fileId || null,
+                fileId: cleanFileId,
             }
         );
         reservationDurationMs = performance.now() - resStart;
