@@ -2,7 +2,7 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
+Last reviewed: 2026-10-03 (v1.43.1 — TD-15 dependency security audit gate registration).
 
 ---
 
@@ -160,3 +160,18 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Excised destructive rollback from network push failure catches; checkpoints are cleanly discarded via `removeCheckpoint()`, preserving offline edits for backoff retries.
   - Verified via dedicated test suite `src/test/sync/sync-cas-concurrency.test.ts` (9/9 passing) and 100% pass across all 79 unit test suites (966 tests) and 21 live database suites (119 tests).
 
+## TD-15 — Latent Upstream AST Recursion DoS in Dev Linter Toolchain (`braces` <= 3.0.3)
+
+- **Debt:** Security advisory `GHSA-vfj7-8cjw-p6xm` / `CVE-2026-93687` flags an uncontrolled recursion stack-exhaustion denial-of-service vulnerability (`CWE-674`) in `braces <= 3.0.3`. The library is a transitive dependency of `eslint-config-next@16.3.8` via `@next/eslint-plugin-next@16.3.8` -> `fast-glob@3.3.1` -> `micromatch@4.0.8`.
+- **Decision Owner:** Project Owner & Developer.
+- **Decision Rationale:**
+  - This is an unpatched latent vulnerability discovered retroactively in a pre-existing dependency; no official patched version (`> 3.0.3`) has been published to the npm registry yet.
+  - Forced automated remediation (`npm audit fix --force`) would downgrade `eslint-config-next` to `14.2.35`, breaking compatibility with Next.js 16, React 19, and ESLint 9.
+  - The library is isolated strictly within `devDependencies` and is completely excluded from production runtime bundles (`next build` / `next start`).
+  - Production runtime dependencies are 100% clean (`npm audit --omit=dev` verifies 0 vulnerabilities).
+  - The vulnerability has zero network attack surface in this repository, as `fast-glob` is used only during local/CI linting to match filesystem source paths.
+- **Implemented Mitigation:**
+  - Deployed `scripts/ci-audit.mjs` in CI Stage 1 (`quality-gate`). The audit script enforces a strict zero-tolerance fail-closed gate on all production dependencies while maintaining a developer-managed allowlist for audited, unpatched dev-toolchain latent advisories.
+  - If any vulnerability touches production runtime or any unexpected advisory appears in devDependencies, CI fails immediately.
+- **Conditions to Revisit / Reverse:**
+  - When `micromatch/braces` publishes a patched version (`>= 3.0.4`) or when Next.js updates `@next/eslint-plugin-next` with a safe glob dependency. Upon release, upgrade dependencies and remove `GHSA-vfj7-8cjw-p6xm` from the allowlist in `scripts/ci-audit.mjs`.

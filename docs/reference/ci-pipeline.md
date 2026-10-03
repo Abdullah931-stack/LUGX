@@ -25,11 +25,11 @@ Phase 3 introduces:
 ```mermaid
 flowchart TD
     subgraph S1 ["Stage 1: Quality & Security Gate"]
-        QG["ESLint 9 · tsc --noEmit · npm audit · sync-doc-metrics · check-markdown-links"]
+        QG["ESLint 9 · tsc --noEmit · ci-audit.mjs (prod fail-closed + dev allowlist) · sync-doc-metrics · check-markdown-links"]
     end
 
     subgraph S2 ["Stage 2: Pure Unit Contracts"]
-        UC["npm run test (67 files, 820 tests)<br/>Zero DB / Zero Network"]
+        UC["npm run test (81 files, 980 tests)<br/>Zero DB / Zero Network"]
     end
 
     subgraph S3 ["Stage 3: Schema Integrity"]
@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph S4 ["Stage 4: Concurrency & DB Isolation"]
-        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (19 suites, 89 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
+        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 119 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
     end
 
     subgraph S5 ["Stage 5: Production Build"]
@@ -67,7 +67,7 @@ flowchart TD
 
 | Stage | Identifier | Runner / Service | Commands & Tools | Isolation & Security Guarantees |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Quality & Security** | `quality-gate` | `ubuntu-latest` | `npm ci`, `npm run lint`, `npx tsc --noEmit`, `npm audit --audit-level=high`, `sync-doc-metrics.mjs --check`, `check-markdown-links.mjs` | Zero external network calls; static analysis, type checking, security audit, and documentation metrics/link synchronization. |
+| **1. Quality & Security** | `quality-gate` | `ubuntu-latest` | `npm ci`, `npm run lint`, `npx tsc --noEmit`, `node scripts/ci-audit.mjs`, `sync-doc-metrics.mjs --check`, `check-markdown-links.mjs` | Zero external network calls; static analysis, type checking, security audit with developer allowlist (TD-15), and documentation metrics/link synchronization. |
 | **2. Pure Unit Contracts** | `unit-contracts` | `ubuntu-latest` | `npm run test` | Hermetic execution via `vitest.config.mts`; strictly excludes all `LIVE_TEST_FILES`. |
 | **3. Schema Integrity** | `migration-integrity` | `ubuntu-latest` + `postgres:16-alpine` | `scripts/verify-migrations.mjs`, `npx drizzle-kit push --config drizzle.config.test.ts --force` | Validates clean schema application and confirms zero drift between Drizzle ORM schema and SQL migration files. |
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | `ubuntu-latest` + `postgres:16-alpine` + `redis:7-alpine` | `npm run test:live` | Runs 21 live integration suites against isolated containers; enforces `TEST_DB_FORBIDDEN_HOSTS` to block accidental production connections. |

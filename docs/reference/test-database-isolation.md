@@ -189,7 +189,7 @@ The repository runs a deterministic multi-stage CI pipeline on GitHub Actions co
 
 | Stage | Job Name | Isolation & Execution Guarantees |
 |---|---|---|
-| **1. Quality Gate** | `quality-gate` | Pure static verification: ESLint 9, TypeScript strictness (`tsc --noEmit`), dependency vulnerability audits (`npm audit`), documentation metrics check (`sync-doc-metrics.mjs --check`), and internal link validation (`check-markdown-links.mjs`). |
+| **1. Quality Gate** | `quality-gate` | Pure static verification: ESLint 9, TypeScript strictness (`tsc --noEmit`), dependency vulnerability audit gate (`scripts/ci-audit.mjs`: production fail-closed + dev allowlist), documentation metrics check (`sync-doc-metrics.mjs --check`), and internal link validation (`check-markdown-links.mjs`). |
 | **2. Pure Unit Contracts** | `unit-contracts` | Runs `npm run test` strictly excluding `LIVE_TEST_FILES` (zero database or network dependencies, < 20s runtime). |
 | **3. Schema Integrity** | `migration-integrity` | Ephemeral `postgres:16-alpine` service container verifies sequential migration application (`scripts/verify-migrations.mjs`) and Drizzle schema sync (`drizzle-kit push --config drizzle.config.test.ts --force`). |
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | Runs `npm run test:live` against isolated PostgreSQL 16 + Redis 7 service containers with `TEST_DB_FORBIDDEN_HOSTS` configured to reject production hosts, verifying lost-update guards, AI quota idempotency, and Stripe ledger deduplication. |

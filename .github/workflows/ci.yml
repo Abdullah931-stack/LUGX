@@ -59,7 +59,7 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Dependency Security Audit
-        run: npm audit --audit-level=high
+        run: node scripts/ci-audit.mjs
 
       - name: Verify Documentation Metrics & SSOT Sync
         run: node scripts/sync-doc-metrics.mjs --check

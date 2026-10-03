@@ -1,5 +1,32 @@
 # Changelog - LUGX Project
 
+## [1.43.1] - 2026-10-03 (Phase 15.1: Deterministic Dependency Security Audit Gate)
+
+### Security & CI - Production Fail-Closed Audit Gate with Developer-Managed Allowlist (TD-15)
+
+- **Root Cause:**
+  - Advisory `GHSA-vfj7-8cjw-p6xm` / `CVE-2026-93687` (`braces <= 3.0.3`, `CWE-674`) disclosed upstream in a pre-existing transitive dev dependency (`eslint-config-next` → `@next/eslint-plugin-next` → `fast-glob` → `micromatch` → `braces`).
+  - `npm audit --audit-level=high` failed CI Stage 1 (`quality-gate`); no patched version published; `npm audit fix --force` would downgrade `eslint-config-next` to `14.2.35` (incompatible with Next.js 16 / ESLint 9).
+
+- **Security Audit Gate (`scripts/ci-audit.mjs`):**
+  - Tier 1: `npm audit --omit=dev` — any production advisory fails CI (zero-tolerance, no allowlist).
+  - Tier 2: full-tree audit compared against an ID-exact `ALLOWLIST` keyed by GHSA ID; any unapproved advisory fails CI.
+  - Each allowlist entry carries `debtId`, `scope`, and `reason`; approved advisories are printed as CI notices.
+  - Unparseable `npm audit` output throws and fails CI.
+
+- **CI & Tooling (`.github/workflows/ci.yml`, `package.json`):**
+  - Replaced `npm audit --audit-level=high` with `node scripts/ci-audit.mjs` in the `Dependency Security Audit` step.
+  - Added `npm run audit:ci` script.
+
+- **Documentation:**
+  - Registered `TD-15` in `docs/TECHNICAL_DEBT_REGISTER.md` with revisit condition (`braces >= 3.0.4` or upstream chain change).
+  - Synced `docs/reference/ci-pipeline.md` (Stage 1 table + diagram; stale unit/live counts corrected to 81/980 and 21/119), `docs/reference/test-database-isolation.md`, and `docs/README.md` verification commands.
+  - Added closure dossier `docs/records/closures/core-hardening/phase-15-1-ci-dependency-security-audit-gate-closure.md`.
+
+- **Verification:**
+  - `node scripts/ci-audit.mjs`: exit 0 — 0 production vulnerabilities; 1 approved dev advisory (TD-15); 0 unapproved.
+  - No `src/**` changes; test baseline unchanged (81 unit suites / 980 tests; 21 live suites / 119 tests).
+
 ## [1.43.0] - 2026-10-03 (Phase 15: Durable IDB Conflict Quarantine, Diff3 Hardening & Tab Isolation)
 
 ### Added & Hardened - Durable Conflict Quarantine in IndexedDB, Hunt-McIlroy Diff3 Engine & User-Scoped Tab Channels
