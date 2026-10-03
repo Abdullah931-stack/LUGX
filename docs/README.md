@@ -51,7 +51,7 @@ docs/
 │   │   ├── phase-16-vault-encryption/
 │   │   ├── phase-17-to-20-production-readiness/
 │   │   ├── extensions/                ← pdf worker extraction & vault import closure
-│   │   └── core-hardening/            ← core hardening dossiers (Phase 1–13: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Redis fail-closed & cron overlap)
+│   │   └── core-hardening/            ← core hardening dossiers (Phase 1–14: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Stripe 1:N, Redis fail-closed & cron overlap, local sync queue CAS)
 │   ├── plans/                         ← completed historical execution plans (technical-execution, hybrid-vault, markdown-editor, M6)
 │   └── archive/                       ← superseded, halted, or abandoned specs & plans (core-hardening-pre-stage-2, legacy snapshots)
 │
@@ -78,8 +78,8 @@ docs/
 | :--- | :--- |
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
-| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.41.0 |
-| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-13) |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.42.0 |
+| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-14) |
 | [METRICS.json](./METRICS.json) | Centralized single source of truth for test suite counts and verification numbers |
 
 ---
@@ -163,7 +163,7 @@ docs/
 
 | Document | Scope | Status |
 | :--- | :--- | :--- |
-| [COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md](./Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) | Unified technical remediation & hardening plan (23 isolated SRP phases, 100% audit findings closure) | 🟢 Active (Phases 1–10 Closed, 11–23 Planned) |
+| [COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md](./Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) | Unified technical remediation & hardening plan (23 isolated SRP phases, 100% audit findings closure) | 🟢 Active (Phases 1–14 Closed, 15–23 Planned) |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -194,7 +194,7 @@ docs/
 | [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
 | [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
 | [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report; [ad-hoc automated test & CI ecosystem harmonization closure](./records/closures/extensions/ad-hoc-test-and-ci-ecosystem-alignment-closure.md) |
-| [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), Phase 6 (pure state reducers & contractual safety nets), Phase 7 (PostgreSQL schema hardening, migrations & atomic interactive transactions), Phase 8 (server-authoritative identity, resource ownership guards, cycle detection & optimistic concurrency on deletions: [phase-08 closure dossier](./records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md)), Phase 9 (cryptographic key hierarchy, standard AAD contexts & adaptive dual-try recovery migration: [phase-09 closure dossier](./records/closures/core-hardening/phase-09-crypto-hierarchy-and-adaptive-migration-closure.md)), Phase 10 (encrypted content governance, mandatory fileId & export warning modal: [phase-10 closure dossier](./records/closures/core-hardening/phase-10-encrypted-content-governance-closure.md)), Phase 11 (AI service, server-authoritative settlement, replay defense & decoupled commit: [phase-11 closure dossier](./records/closures/core-hardening/phase-11-ai-service-and-server-settlement-closure.md)), and Phase 13 (Redis fail-closed policies, conditional ZADD, Upstash REST CI proxy, distributed cron locking & hermetic test isolation: [phase-13 closure dossier](./records/closures/core-hardening/phase-13-redis-fail-closed-and-cron-overlap-closure.md)) |
+| [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), Phase 6 (pure state reducers & contractual safety nets), Phase 7 (PostgreSQL schema hardening, migrations & atomic interactive transactions), Phase 8 (server-authoritative identity, resource ownership guards, cycle detection & optimistic concurrency on deletions: [phase-08 closure dossier](./records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md)), Phase 9 (cryptographic key hierarchy, standard AAD contexts & adaptive dual-try recovery migration: [phase-09 closure dossier](./records/closures/core-hardening/phase-09-crypto-hierarchy-and-adaptive-migration-closure.md)), Phase 10 (encrypted content governance, mandatory fileId & export warning modal: [phase-10 closure dossier](./records/closures/core-hardening/phase-10-encrypted-content-governance-closure.md)), Phase 11 (AI service, server-authoritative settlement, replay defense & decoupled commit: [phase-11 closure dossier](./records/closures/core-hardening/phase-11-ai-service-and-server-settlement-closure.md)), Phase 13 (Redis fail-closed policies, conditional ZADD, Upstash REST CI proxy, distributed cron locking & hermetic test isolation: [phase-13 closure dossier](./records/closures/core-hardening/phase-13-redis-fail-closed-and-cron-overlap-closure.md)), and Phase 14 (local sync queue, monotonic localRevision, Lean CAS & pure queued-only coalescing: [phase-14 closure dossier](./records/closures/core-hardening/phase-14-local-sync-queue-and-atomic-cas-closure.md)) |
 
 #### Completed Plans (`records/plans/`)
 
@@ -256,7 +256,7 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm audit --audit-level=high # dependency security audit (zero high/critical vulnerabilities)
-npm run test            # pure unit, contract, and vault cryptographic test suites (78 files, 957 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (79 files, 966 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 119 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)

@@ -167,6 +167,10 @@ ETag: "new-etag-value"
 }
 ```
 
+> **Client-Side Lean CAS Invariant:** When receiving a `200 OK` response with `{ id, etag, version }`, the client (`IndexedDBManager.commitFileAndOperationSync` or `markFileClean`) evaluates Lean Compare-And-Swap (CAS) gating:
+> - If `file.localRevision === sentRevision`: the file is cleanly marked `isDirty = false`, recording `etag`, `version`, and updating `baseSnapshot`.
+> - If `file.localRevision > sentRevision`: concurrent local modifications occurred while the network request was in flight (LUGX-010). The client adopts server `version` and `etag` in `baseSnapshot` to prevent false 412 conflicts on subsequent pushes, but **strictly retains `isDirty = true`** on the file to ensure the newer edits are queued and pushed.
+
 #### Response (412 Precondition Failed - Conflict)
 ```http
 HTTP/1.1 412 Precondition Failed

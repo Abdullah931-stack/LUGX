@@ -1,6 +1,41 @@
 # Changelog - LUGX Project
 
-## [1.32.4] - 2026-10-02 (Phase 13: Redis Fail-Closed Policies, Hermetic Test Isolation & Overlapping Cron Protection)
+## [1.42.0] - 2026-10-03 (Phase 14: Local Sync Queue & Atomic CAS with localRevision)
+
+### Added & Hardened - Lean CAS Concurrency Control, Monotonic localRevision, Strict Operation Coalescing & Non-Destructive Push Resilience
+
+- **Lean CAS (Compare-And-Swap) Concurrency Control (`src/lib/sync/indexeddb.ts`, `src/lib/sync/sync-manager.ts`):**
+  - Remediates audit findings `LUGX-010, LUGX-011`.
+  - Added atomic CAS check in `IndexedDBManager.commitFileAndOperationSync` and `markFileClean` comparing `sentRevision` with `file.localRevision`.
+  - If `file.localRevision === sentRevision`: confirmed push sets `isDirty = false`, updating server `version` and `etag`.
+  - If `file.localRevision > sentRevision`: local edits occurred while the request was in flight. Retains **`isDirty = true`** and updates server `version`, guaranteeing the newer local edits are never lost and will be delivered on the subsequent sync cycle.
+  - Passes server-returned `version` atomically to eliminate false 412 conflicts and subsequent edit drops.
+
+- **Monotonic Revision Tracking in Client Hook (`src/hooks/use-sync.ts`, `src/lib/sync/idb-types.ts`):**
+  - Remediates audit finding `LUGX-010`.
+  - Added `localRevision?: number` to `IDBFile` and `sentRevision?: number` to `IDBOperation`.
+  - Updated `saveLocal` to monotonically increment `localRevision` on every local modification, binding the revision to the coalesced operation record in IndexedDB.
+
+- **Dedicated & Strict Operation Coalescing Module (`src/lib/sync/coalescing.ts`, `src/lib/sync/index.ts`):**
+  - Remediates audit finding `LUGX-040`.
+  - Extracted pure `canCoalesce` and `coalesceOperations` logic into standalone module `src/lib/sync/coalescing.ts`.
+  - Restricts coalescing strictly to operations in `queued` status (`synced === false`).
+  - Prohibits coalescing into active in-flight `syncing` operations, eliminating concurrent mutation races.
+  - Prohibits merging into operations trapped in `conflict`, `failed`, or `dead_letter` states, preventing fresh user edits from getting stranded.
+  - Resets `attempts` to 0, clears backoff timers (`nextRetryAt = undefined`), and updates `localRevision` on merged operations.
+
+- **Non-Destructive Push Failure Resilience (`src/lib/sync/sync-manager.ts`):**
+  - Remediates audit finding `LUGX-013`.
+  - Excised destructive `rollback.rollback` invocations from network push error handlers in `processSingleOperation` and `pushFile`.
+  - Transient network disconnects preserve local dirty state and schedule backoff retry without overwriting user edits with pre-push checkpoints.
+
+- **Comprehensive Automated Verification (`src/test/sync/sync-cas-concurrency.test.ts`):**
+  - Created dedicated concurrency test suite (9/9 tests passed).
+  - Verified Lean CAS clean transitions, in-flight mutation protection, queued-only coalescing, and non-destructive push failure handling.
+  - Zero regressions across core sync suites: `sync-indexeddb.test.ts` (14/14), `sync-manager.test.ts` (36/36), `sync-rollback.test.ts` (22/22), `use-sync.test.ts` (14/14), `contracts.test.ts` (20/20).
+  - 0 TypeScript errors (`tsc --noEmit`), 0 ESLint errors (`npm run lint`), 100% metrics synchronization (79 suites / 966 tests), and 100% Markdown link integrity.
+
+## [1.41.0] - 2026-10-02 (Phase 13: Redis Fail-Closed Policies & Overlapping Cron Protection)
 
 ### Added & Hardened - Dual-Mode Rate Limiting, Upstash REST CI Proxy, Distributed Cron Locking & Hermetic Test Isolation
 

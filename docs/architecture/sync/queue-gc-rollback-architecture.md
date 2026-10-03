@@ -68,6 +68,10 @@ export interface IDBOperation {
     userId?: string;
     fileId: string;
     baseVersion?: number;
+    /** Monotonically increasing local revision within the client session */
+    localRevision?: number;
+    /** Last revision known to be dispatched or acknowledged in flight */
+    sentRevision?: number;
     status?: OperationStatus;
     attempts?: number;
     nextRetryAt?: number;
@@ -88,61 +92,88 @@ export interface IDBOperation {
 ```
 
 ### 3.3. IndexedDB Object Stores & Index Schema
-- **`files` Store:** Key: `id` (string), Indexes: `lastModified`, `isDirty`.
+- **`files` Store:** Key: `id` (string), Indexes: `lastModified`, `isDirty`. Fields include `localRevision` (monotonic revision counter for CAS gating), `baseSnapshot`, `isEncrypted`, and `encryptionMetadata`.
 - **`operations` Store:** Key: `id` (string), Indexes: `fileId`, `timestamp`, `status`, `nextRetryAt`.
 - **`sync_metadata` Store:** Key: `id` (string).
 
 ---
 
-## 4. Multi-Store Transactional Atomicity (`src/lib/sync/indexeddb.ts`)
+## 4. Multi-Store Transactional Atomicity & Lean CAS (`src/lib/sync/indexeddb.ts`)
 
-### 4.1. The Atomic Commit Invariant
+### 4.1. The Atomic Commit Invariant & Lean CAS Concurrency Control
 When an operation succeeds on the server with HTTP 200 OK, updating the file state and operation record in separate transactions introduces a vulnerability window: if the browser terminates between the two writes, the file is clean but the operation remains `syncing` (later re-queued on startup).
 
-To guarantee strict ACID compliance, `IndexedDBManager` provides `commitFileAndOperationSync`:
+Furthermore, without Compare-And-Swap (CAS) gating, blindly setting `file.isDirty = false` upon push completion introduces **in-flight lost updates** (LUGX-010): any user edits typed while the HTTP request was in flight are wiped clean and never pushed to the server.
+
+To guarantee strict ACID compliance and prevent in-flight lost updates, `IndexedDBManager` provides `commitFileAndOperationSync` and `markFileClean` with **Lean CAS gating**:
 
 ```typescript
 async commitFileAndOperationSync(
     fileId: string,
     newEtag: string,
     opId: string,
-    attempts: number
+    attempts: number,
+    newVersion?: number,
+    sentRevision?: number
 ): Promise<void> {
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction([IDB_CONFIG.STORES.FILES, IDB_CONFIG.STORES.OPERATIONS], 'readwrite');
-        const filesStore = tx.objectStore(IDB_CONFIG.STORES.FILES);
-        const opsStore = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+    const file = await this.getFile(fileId);
+    const op = await this.getOperation(opId);
 
-        const fileReq = filesStore.get(fileId);
-        fileReq.onsuccess = () => {
-            const file = fileReq.result as IDBFile;
-            if (file) {
-                file.isDirty = false;
-                file.etag = newEtag;
-                file.lastSyncedAt = Date.now();
-                filesStore.put(file);
+    if (file) {
+        const hasNewerLocalEdits =
+            sentRevision !== undefined &&
+            file.localRevision !== undefined &&
+            file.localRevision > sentRevision;
+
+        if (newVersion !== undefined) {
+            file.version = newVersion;
+        }
+        file.etag = newEtag;
+
+        if (hasNewerLocalEdits) {
+            // Lean CAS: In-flight mutations occurred while operation was in flight.
+            // Retain isDirty = true and update baseSnapshot etag/version without overwriting current dirty content.
+            file.isDirty = true;
+            if (file.baseSnapshot) {
+                file.baseSnapshot.etag = newEtag;
+                if (newVersion !== undefined) {
+                    file.baseSnapshot.version = newVersion;
+                }
             }
-        };
+        } else {
+            // No in-flight modifications: cleanly mark file clean
+            file.isDirty = false;
+            file.lastSyncedAt = Date.now();
+            file.baseSnapshot = {
+                content: file.content,
+                etag: newEtag,
+                version: file.version,
+                title: file.title,
+                parentFolderId: file.parentFolderId,
+                isEncrypted: file.isEncrypted,
+                encryptionMetadata: file.encryptionMetadata,
+            };
+        }
+    }
 
-        const opReq = opsStore.get(opId);
-        opReq.onsuccess = () => {
-            const op = opReq.result as IDBOperation;
-            if (op) {
-                op.status = 'synced';
-                op.synced = true;
-                op.attempts = attempts;
-                op.lastError = undefined;
-                opsStore.put(op);
-            }
-        };
+    if (op) {
+        op.status = 'synced';
+        op.synced = true;
+        op.attempts = attempts;
+        op.lastError = undefined;
+        if (sentRevision !== undefined) {
+            op.sentRevision = sentRevision;
+        }
+    }
 
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error || new Error('Atomic sync transaction aborted'));
-    });
+    // Persist atomically in IndexedDB multi-store transaction
+    const encryptedFile = file ? await this.encryptFileForStorage(file) : null;
+    const encryptedOp = op ? await this.encryptOperationForStorage(op) : null;
+    // ... write to FILES and OPERATIONS stores in single transaction ...
 }
 ```
+
+The standalone `markFileClean(id, newEtag, newVersion?, sentRevision?)` method enforces the exact same Lean CAS comparison against `file.localRevision`.
 
 ---
 
@@ -178,6 +209,33 @@ const pendingFileIds = new Set([...queuedOps, ...syncingOps].map(o => o.fileId))
 const filesToPush = dirtyFiles.filter(f => !pendingFileIds.has(f.id));
 ```
 Files with active queue items are never pushed via the fallback dirty push loop, eliminating payload duplication and lock contention.
+
+### 5.5. Deterministic Operation Coalescing (`src/lib/sync/coalescing.ts`)
+To prevent unbounded operation queue growth and eliminate state pollution bugs (LUGX-040), client operations in IndexedDB are coalesced using pure functions:
+
+```typescript
+export function canCoalesce(existingOp: IDBOperation, incomingOp: IDBOperation): boolean {
+    if (existingOp.fileId !== incomingOp.fileId) return false;
+    if (existingOp.synced) return false;
+
+    // Strict state check: ONLY allow coalescing with 'queued' status (LUGX-040).
+    // Prohibits mutating operations actively 'syncing' across the network (eliminates LUGX-010).
+    // Prohibits inheriting 'conflict', 'failed', or 'dead_letter' terminal error states.
+    const status = existingOp.status || 'queued';
+    if (status !== 'queued') return false;
+
+    // Compatible operation types
+    if (existingOp.operationType === 'update' && incomingOp.operationType === 'update') return true;
+    if (existingOp.operationType === 'create' && incomingOp.operationType === 'update') return true;
+
+    return false;
+}
+```
+
+When `canCoalesce` returns true, `coalesceOperations(existingOp, incomingOp)`:
+- Adopts latest content from incoming operation.
+- Advances `localRevision` to `Math.max(existing.localRevision ?? 0, incoming.localRevision ?? 0)`.
+- Resets attempt counters (`attempts: 0`, `nextRetryAt: undefined`, `lastError: undefined`) to guarantee immediate prompt sync on fresh user edits.
 
 ---
 
@@ -217,6 +275,15 @@ await this.idb.resetSyncingOperations();
    }
    ```
 3. **Forensic Isolation:** If rollback fails due to storage error or missing state, the operation is updated to `status = 'rollback_failed'` in IndexedDB. This flags the error and permanently prevents GC deletion until inspected.
+
+### 8.2. Non-Destructive Push Failure Resilience (LUGX-013)
+Network push failures during `processSingleOperation` or `pushFile` **strictly do NOT invoke `rollback.rollback`**. 
+Executing rollback on transient network errors or offline disconnects was a critical architectural defect that restored stale pre-push snapshots over fresh offline edits. 
+
+Instead, the sync engine:
+1. Discards the in-memory checkpoint via `this.rollback.removeCheckpoint(checkpointId)`.
+2. Preserves the local dirty file state in IndexedDB (`isDirty = true`).
+3. Retains the operation in `status: 'failed'` with exponential backoff timers (`nextRetryAt`) scheduled for retry upon network re-establishment.
 
 ---
 

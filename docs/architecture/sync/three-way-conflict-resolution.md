@@ -33,13 +33,13 @@ flowchart TD
 
 ### 2.2 Base Snapshot Persistence (`src/lib/sync/indexeddb.ts`)
 - Before any local mutation is committed to the local queue, the engine captures a frozen snapshot of the current synchronized base (`content`, `title`, `version`, `etag`) into the `files` store.
-- Supports **Create-to-Update Coalescing** in `coalesceOperation` to collapse rapid pending operations without breaking version references.
+- Supports **Create-to-Update Coalescing** via pure module `coalescing.ts` (`canCoalesce`, `coalesceOperations`) strictly restricted to operations in `queued` status, preserving base version references while preventing pollution of in-flight or error states (LUGX-040).
 
 ### 2.3 False Conflict Elimination (`src/lib/sync/sync-manager.ts` & `src/hooks/use-sync.ts`)
 - **Metadata Drift Invariant:** When receiving a `412 Precondition Failed` response or encountering dirty local state, if `localContent === serverContent` or `compareETags(localEtag, serverEtag)` is true:
   - The conflict is categorized as a false conflict caused by metadata drift.
   - The engine silently adopts the authoritative server `version` and `etag`.
-  - The file and all pending queue operations are marked as `synced: true, isDirty: false`.
+  - The file and its matching operation are committed via Lean CAS `commitFileAndOperationSync(..., sentRevision)` to ensure concurrent in-flight edits are not lost (retaining `isDirty = true` if `localRevision > sentRevision`, LUGX-010).
   - The UI modal dialog is suppressed, preventing infinite dialog loops.
 
 ### 2.4 Markdown Conflict Resolution UI (`src/components/sync/conflict-dialog.tsx`)

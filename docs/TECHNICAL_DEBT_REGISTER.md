@@ -58,7 +58,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - In `src/app/api/ai/stream/route.ts`, implemented `handleClientDisconnect`: when client aborts post-TTFT (after tokens were streamed), the server autonomously settles the reservation via `commitAIReservation(operationId)`, while early disconnects pre-TTFT are refunded (`refundAIReservation`).
   - In Phase 11 (2026-10-02), client financial authority was completely revoked: client hook `useAIStream` was stripped of all settlement RPC invocations (`commitAIReservation`, `settleReservationAsConsumed`). `stopStream()` aborts immediately (0ms) and dismantles ghost decorations instantly without dispatching any network settlement calls, leaving 100% of stream settlement to the server stream handler (`cancel()` and `req.signal.aborted`).
   - Upstream Gemini model generation terminates instantly at socket level, eliminating token bleed and guaranteeing 0ms UI stop latency.
-  - Verified via dedicated test suites `src/test/ai/ai-stream-abort-latency.test.ts`, `src/test/ai/ai-client-authority-revocation.test.ts`, and `src/test/ai/ai-authoritative-stream-settlement.test.ts` (100% passing across 78 test files and 957 tests).
+  - Verified via dedicated test suites `src/test/ai/ai-stream-abort-latency.test.ts`, `src/test/ai/ai-client-authority-revocation.test.ts`, and `src/test/ai/ai-authoritative-stream-settlement.test.ts` (100% passing across 79 test files and 966 tests).
 
 ## TD-06 — Dead `'error'` member in the `SyncStatus` union — ✅ RESOLVED (2026-08-25)
 
@@ -94,7 +94,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
 - **Resolution:**
   - Extracted shared test suite arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated Single Source of Truth (`vitest.constants.mts`), restricting config files strictly to default exports (`export default defineConfig(...)`).
   - Migrated configuration files to Native ESM (`vitest.config.mts` and `vitest.live.config.mts`), replaced CommonJS `__dirname` with standard `import.meta.dirname`, and specified explicit `.mjs` import extensions for TypeScript module resolution.
-  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 78 test files and 957 tests via vitest.config.mts, plus 21 live files via vitest.live.config.mts).
+  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 79 test files and 966 tests via vitest.config.mts, plus 21 live files via vitest.live.config.mts).
 
 ## TD-10 — Offline Extraction of IndexedDB Device Trust Envelope (Accepted Risk for PIN / Mitigated via WebAuthn PRF)
 
@@ -114,7 +114,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Strongly typed all cryptographic worker RPC action payloads (`CryptoWorkerResponsePayloads`), indexedDB vault profiles (`UserVaultProfile`), and database encryption metadata (`FileEncryptionMetadata`).
   - Pruned all unused imports, variables, and dead mocks across server actions, sync engines, UI modals, and test suites.
   - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
-  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 78 unit test suites with 957 tests green, plus 21 live integration suites with 119 tests green).
+  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 79 unit test suites with 966 tests green, plus 21 live integration suites with 119 tests green).
 
 ## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session — ✅ RESOLVED (2026-09-19)
 
@@ -125,7 +125,7 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Introduced Fast-Path routing in `src/proxy.ts` that completely bypasses `getUser()` network calls on public routes (e.g. `/`, static assets) and on `/login` when no auth cookies exist.
   - Equipped `getUser()` in `src/proxy.ts` with an `AbortSignal.timeout(2500)` watchdog race that fails closed gracefully into an unauthenticated null user without socket stalling.
   - Implemented `copyCookiesAndRedirect` helper ensuring all `Set-Cookie` directives (including deletions from `@supabase/ssr`) are retained and returned to the client browser on 307 redirects and 401 API responses.
-  - Verified via dedicated unit test suites (`src/test/auth/auth-signout.test.ts` and `src/test/auth/proxy.test.ts`), maintaining 100% test pass rate across all 78 test suites (957 passing tests) and clean ESLint status.
+  - Verified via dedicated unit test suites (`src/test/auth/auth-signout.test.ts` and `src/test/auth/proxy.test.ts`), maintaining 100% test pass rate across all 79 test suites (966 passing tests) and clean ESLint status.
 
 ## TD-13 — Systemic Fail-Open Defaults on Redis Outages & Unprotected Cron Execution — ✅ RESOLVED (Phase 13 / 2026-10-02)
 
@@ -143,6 +143,20 @@ Last reviewed: 2026-09-19 (Phase 20 closure & 7-stage CI hermeticity round).
   - Implemented `acquireCronLock` (`src/lib/cron/lock.ts`) backed by atomic Redis `SET ... NX EX` with in-memory TTL fallback, enabling concurrent cron runs to skip gracefully with HTTP 200 `{ skipped: true }`.
   - Enforced strict hermetic test isolation in `src/test/load-test-env.ts`: unit tests (`npm run test`) never load `.env.local` or `.env` and run exclusively against dummy Redis and Postgres placeholders, while live tests (`npm run test:live`) exclusively load isolated test branch credentials.
   - Regulated Vitest concurrency (`maxWorkers: 3` on Windows) to prevent CPU thread starvation and eliminate worker spawn timeouts.
-  - Hardened `.github/workflows/cron.yml` with decoupled jobs, `--fail-with-body`, and backlog drain loops.
   - Verified across 78 unit test suites (957 passing tests) and 21 live database suites (119 passing tests).
+
+## TD-14 — In-Flight Lost Updates, Queue Coalescing Pollution & Destructive Push Failure Rollbacks — ✅ RESOLVED (Phase 14 / 2026-10-03)
+
+- **Debt:**
+  - Upon server push completion (`HTTP 200 OK`), the sync engine unconditionally set `file.isDirty = false`, wiping newer local modifications typed while the HTTP request was in flight (`LUGX-010`).
+  - `coalesceOperation` merged incoming edits into any non-synced operation, including `syncing` (triggering network race conditions) or `conflict`, `failed`, and `dead_letter` (trapping fresh user edits in terminal error states) (`LUGX-040`).
+  - Server push completion ignored server `version`, causing subsequent edits to fail with false HTTP 412 conflicts resolved by dropping edits (`LUGX-011`).
+  - Network push failure handlers executed `rollback.rollback`, destructively restoring pre-push snapshots over fresh offline edits (`LUGX-013`).
+- **Resolution:**
+  - Introduced monotonic `localRevision` counter in `IDBFile`, incremented on every `saveLocal` mutation.
+  - Implemented Lean CAS (Compare-And-Swap) gating in `commitFileAndOperationSync` and `markFileClean` comparing `sentRevision` vs `localRevision`: if `localRevision > sentRevision`, updates `etag`/`version` in `baseSnapshot` but strictly retains `isDirty: true`, ensuring newer in-flight edits are preserved and pushed on the next pass.
+  - Extracted pure `src/lib/sync/coalescing.ts` module with `canCoalesce` restricting merges strictly to `status === 'queued'`, advancing `localRevision` and resetting retry counters.
+  - Passed authoritative server `version` to atomic CAS commits to keep client aligned with server state.
+  - Excised destructive rollback from network push failure catches; checkpoints are cleanly discarded via `removeCheckpoint()`, preserving offline edits for backoff retries.
+  - Verified via dedicated test suite `src/test/sync/sync-cas-concurrency.test.ts` (9/9 passing) and 100% pass across all 79 unit test suites (966 tests) and 21 live database suites (119 tests).
 

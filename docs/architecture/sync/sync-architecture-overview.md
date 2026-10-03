@@ -106,7 +106,8 @@ sequenceDiagram
         Sync->>API: PUT /api/files/:id (If-Match: etag)
         alt 200 OK
             API-->>Sync: Success { etag, version }
-            Sync->>IDB: markFileClean(fileId)
+            Sync->>IDB: markFileClean(fileId, etag, version, sentRevision)
+            Note over IDB: Lean CAS Check: If localRevision > sentRevision,<br/>retains isDirty=true to protect in-flight user edits
         else 412 Conflict
             API-->>Sync: serverVersion
             alt File is Encrypted and Vault is Locked
@@ -218,14 +219,20 @@ await concurrencyManager.withLock(fileId, async () => {
 });
 ```
 
-### 3. Checkpoint/Rollback
+### 3. Checkpoint/Rollback & Network Failure Resilience
 ```typescript
 const checkpoint = await rollback.createCheckpoint(fileId, 'pre_sync');
 try {
-  await riskyOperation();
+  await riskyInternalOperation();
 } catch {
+  // Rollback is strictly for internal storage/pipeline exceptions
   await rollback.rollback(checkpoint);
 }
+
+// IMPORTANT: Network push failures strictly do NOT invoke rollback (LUGX-013).
+// Invoking rollback on network error would destructively wipe fresh offline edits.
+// Instead, checkpoints are discarded via removeCheckpoint() and dirty state is preserved:
+this.rollback.removeCheckpoint(checkpointId);
 ```
 
 ### 4. Tab Wakeup Auto-Healing & Local Durability (`useEditorOrchestrator`)
@@ -243,7 +250,7 @@ if (document.visibilityState === "visible" && pendingLocalSyncRef.current) {
 
 | Error Type | Response |
 |------------|----------|
-| `NETWORK_ERROR` | Retry with exponential backoff |
+| `NETWORK_ERROR` | Retry with exponential backoff (preserves local edits; zero destructive rollback) |
 | `CONFLICT_ERROR` | Show ConflictDialog |
 | `RATE_LIMIT_ERROR` | Wait + Retry |
 | `AUTH_ERROR` | Redirect to login |
@@ -269,7 +276,7 @@ function EditorPage({ fileId }: { fileId: string }) {
     pendingCount,     // number of dirty files awaiting sync
     sync,             // () => Promise<SyncResult>
     syncFile,         // (fileId: string) => Promise<void>
-    saveLocal,        // (file: Partial<IDBFile> & { id, content }) => Promise<void>
+    saveLocal,        // (file: Partial<IDBFile> & { id, content }) => Promise<void> (increments monotonic localRevision)
     loadLocal,        // (fileId: string) => Promise<IDBFile | null>
     markDirty,        // (fileId: string) => Promise<void>
   } = useSync({
