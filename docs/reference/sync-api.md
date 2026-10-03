@@ -466,14 +466,22 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 
 ### 2. Resolution Lifecycle & Invariants
 1. **Base Snapshot Requirement:** Automatic 3-way merge is rejected with `manual_resolution_required` if `baseSnapshot` is missing or unreadable, preventing blind overwrites.
-2. **Deterministic Merge Engine:**
-   - Non-overlapping line/block changes are cleanly merged.
+2. **Hunt-McIlroy / Pierce Diff3 Engine (`diff3.ts` & `conflict-resolver.ts`):**
+   - Implements deterministic token-based 3-way line merge with half-open intervals `[start, end)`.
+   - Eliminates token erasure bugs on repeated lines (e.g. duplicate lines `D\nC\nC`, `LUGX-045`) and adjacent empty lines.
+   - Non-overlapping line/block changes are cleanly merged (`merged_clean`).
    - Overlapping regions insert explicit Git-style conflict markers (`<<<<<<< LOCAL ... ======= ... >>>>>>> REMOTE`).
    - Title (`title`) and Move (`parentFolderId`) metadata are merged independently.
    - Delete conflicts (remote delete vs local edit) produce `delete_conflict` requiring explicit "Restore" or "Delete" selection.
-3. **Single Authoritative Write:** After user resolution (Local, Server, 3-Way Merge, or Restore), exactly one write request is dispatched to the server containing `expectedVersion: serverVersion.version`.
-4. **Verified State Transition:** Editor state (MarkdownEditor / EditorAdapter) and IndexedDB cache are only transitioned to clean (`isDirty: false`) after receiving 200 OK confirmation from the server.
-5. **Autosave Lockout:** Autosave is strictly inhibited whenever an unresolved conflict is active.
+   - **Ciphertext Execution Guard:** Strictly enforces that Diff3 runs exclusively on decrypted plaintext. Passing raw encrypted payloads or Base64 ciphertexts triggers an immediate fail-closed guard error.
+3. **Durable IDB Conflict Quarantine (`src/lib/idb/conflict-store.ts` & `src/lib/sync/indexeddb.ts`):**
+   - Upon encountering HTTP 412 or 409 conflict, the file is persisted in IndexedDB with `syncStatus = 'conflict'` and `conflictData: { serverVersion, localVersion, baseVersion, detectedAt }`.
+   - Quarantined conflicts survive page reloads and browser crashes without data loss.
+4. **Pull Protection Guard:** `SyncManager.pullFile` strictly refuses to overwrite, modify, or delete (via tombstone) any file in `syncStatus === 'conflict'` or quarantined within `ConflictStore`.
+5. **Single Authoritative Write:** After user resolution (Local, Server, 3-Way Merge, or Restore), exactly one write request is dispatched to the server containing `expectedVersion: serverVersion.version`.
+6. **Verified State Transition:** Editor state (MarkdownEditor / EditorAdapter) and IndexedDB cache are only transitioned to clean (`isDirty: false`, `syncStatus = 'synced'`) after receiving 200 OK confirmation from the server. If local resolution is selected, `isDirty = true` and `syncStatus = 'dirty'` are preserved to trigger subsequent sync push.
+7. **Autosave Lockout:** Autosave is strictly inhibited whenever an unresolved conflict is active.
+8. **User-Scoped Multi-Tab Isolation (`src/lib/sync/tab-sync.ts` & `src/lib/sync/cross-tab-sync.ts`):** Broadcast channels are scoped per authenticated user (`lugx_sync_${userId}`) to prevent cross-tenant event bleed, filtering echo messages (`senderTabId !== currentTabId`) and only advancing clean tab versions.
 
 ---
 

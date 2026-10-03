@@ -13,10 +13,12 @@ graph TD
         SyncMgr --> Push["Push Engine"]
         SyncMgr --> Pull["Pull Engine"]
         Push & Pull --> IDBMgr["IndexedDB Manager (textai_db_{userId})"]
-        IDBMgr --> IDBFiles["Files Store (Markdown / Encrypted Envelopes)"]
+        IDBMgr --> IDBFiles["Files Store (Markdown / Encrypted Envelopes / syncStatus)"]
         IDBMgr --> IDBOps["Operations Store (Delta Logs)"]
         IDBMgr --> IDBMeta["Sync Metadata Store (Cached Profiles & Device Trust)"]
-        SyncMgr -.->|"Quarantine locked conflicts"| Quarantine["pendingEncryptedConflicts (CONFLICT_LOCKED)"]
+        SyncMgr --> ConflictStore["ConflictStore (Durable IDB Quarantine)"]
+        ConflictStore --> IDBFiles
+        SyncMgr -.->|"Volatile quarantine locked conflicts"| Quarantine["pendingEncryptedConflicts (CONFLICT_LOCKED)"]
     end
 
     SyncMgr <-->|"HTTP REST (If-Match / If-None-Match / Strong ETags / X-Correlation-ID / Rate Limits)"| APILayer["API Gateway Layer (/api/files & /api/ai)"]
@@ -47,8 +49,11 @@ graph TD
 
 | Component | Responsibility |
 |-----------|----------------|
-| `SyncManager` | Push/Pull coordination, non-blocking sync with bounded `CONFLICT_LOCKED` quarantine governance (`MAX_QUARANTINED_CONFLICTS = 100`), `QuarantineDiagnostics` metrics, atomic multi-tier conflict discard, `sync_duration` telemetry tracking, and reactive unlock auto-resolution |
-| `ConflictResolver` | Conflict detection, 3-way merge orchestration (LCS delta engine), and false conflict elimination |
+| `SyncManager` | Push/Pull coordination, non-blocking sync with bounded `CONFLICT_LOCKED` quarantine governance (`MAX_QUARANTINED_CONFLICTS = 100`), durable IDB quarantine, pull overwrite protection, `sync_duration` telemetry tracking, and reactive unlock auto-resolution |
+| `ConflictStore` (`conflict-store.ts`) | Durable IndexedDB conflict quarantine manager, persisting 412/409 conflict envelopes (`syncStatus = 'conflict'`) with local, server, and base snapshots across browser restarts |
+| `ConflictResolver` (`conflict-resolver.ts`) | Conflict detection, 3-way merge orchestration, ciphertext execution guard, and false conflict elimination |
+| `Diff3 Engine` (`diff3.ts`) | Deterministic Hunt-McIlroy / Pierce 3-way merge engine on plaintext tokens, eliminating line-erasure anomalies on repeated and empty lines |
+| `UserTabSync` (`tab-sync.ts` & `cross-tab-sync.ts`) | User-scoped cross-tab channel (`lugx_sync_${userId}`) preventing cross-tenant bleed, managing lock broadcasts and clean-state dirty guards |
 | `SyntaxValidator` (`syntax-validator.ts`) | Centralized post-merge Markdown syntax integrity verification (code fence pairing, GFM table alignment, null-byte prevention) |
 | `LogSanitizer` (`log-sanitizer.ts`) | Zero-Knowledge log/metric hygiene, token boundary regex masking, DAG cycle-breaking, and sanitized stack preservation |
 | `SyncErrorHandler` (`error-handler.ts`) | Centralized typed error management, recovery strategies, and listener callbacks with automatic log sanitization |

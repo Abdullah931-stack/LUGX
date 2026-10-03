@@ -24,16 +24,18 @@ flowchart TD
 
 ## 2. Core Architectural Components
 
-### 2.1 Three-Way Merge Engine (`src/lib/sync/conflict-resolver.ts`)
+### 2.1 Three-Way Merge Engine (`src/lib/sync/conflict-resolver.ts` & `src/lib/sync/diff3.ts`)
 - **Base Version Invariant:** A valid `baseSnapshot` is required to perform three-way merging. If the base snapshot is missing or corrupted, blind automated merging is strictly rejected, and the status transitions to `manual_resolution_required`.
-- **Linear Memory LCS with Prefix/Suffix Trimming:** Replaced naive 2D matrix allocation with a flat `Int32Array` buffer combined with linear Common Prefix & Suffix trimming, reducing memory allocation by >99% and executing merges in sub-millisecond time even on large documents (2,000+ lines).
-- **Half-Open Interval Boundary Slicing:** Employs strict half-open intervals `[start, end)` for chunk reconciliation, preventing duplication, truncation, or false conflicts on adjacent boundary lines.
-- **Markdown Line & CRLF Normalization:** Normalizes all line-break variants (`\r\n`, `\r`) to standard `\n` line delimiters, eliminating false byte conflicts across operating systems.
+- **Hunt-McIlroy / Pierce Deterministic Diff3 Engine (`src/lib/sync/diff3.ts`):** Hardened line-based 3-way merge engine built on LCS indices and half-open intervals `[start, end)`. Eliminates token erasure bugs on duplicate and repeated lines (such as duplicate letters `D\nC\nC` in `LUGX-045`) and adjacent empty lines.
+- **Ciphertext Execution Guard:** Strictly enforces that Diff3 runs exclusively on decrypted plaintext. Passing raw encrypted payloads or Base64 ciphertexts triggers an immediate fail-closed guard error.
+- **Linear Memory LCS with Prefix/Suffix Trimming:** Flat `Int32Array` buffers combined with linear Common Prefix & Suffix trimming, reducing memory allocation by >99% and executing merges in sub-millisecond time even on large documents (2,000+ lines).
 - **Markdown Syntax Integrity Validator (`validateMarkdownSyntaxIntegrity` in `src/lib/sync/syntax-validator.ts`):** Centralized integrity validator imported by `ConflictResolver`. Evaluates candidate 3-way merge outputs for balanced fenced code blocks (``` and ~~~), valid GFM table delimiters with full support for escaped pipes (`\|`), null-byte elimination, and forbidden conflict marker residue. If merge output corrupts syntax, automated merge is cancelled and safely escalated to interactive conflict resolution.
 
-### 2.2 Base Snapshot Persistence (`src/lib/sync/indexeddb.ts`)
-- Before any local mutation is committed to the local queue, the engine captures a frozen snapshot of the current synchronized base (`content`, `title`, `version`, `etag`) into the `files` store.
-- Supports **Create-to-Update Coalescing** via pure module `coalescing.ts` (`canCoalesce`, `coalesceOperations`) strictly restricted to operations in `queued` status, preserving base version references while preventing pollution of in-flight or error states (LUGX-040).
+### 2.2 Base Snapshot Persistence & Durable Conflict Quarantine (`src/lib/sync/indexeddb.ts` & `src/lib/idb/conflict-store.ts`)
+- **Base Snapshot Capture:** Before any local mutation is committed to the local queue, the engine captures a frozen snapshot of the current synchronized base (`content`, `title`, `version`, `etag`) into the `files` store.
+- **Durable Conflict Quarantine (Phase 15):** When an HTTP 412 / 409 conflict is detected, the file is quarantined in IndexedDB with `syncStatus = 'conflict'` and `conflictData: { serverVersion, localVersion, baseVersion, detectedAt }`. This state survives page reloads and browser restarts without data loss.
+- **Pull Protection Guard:** `SyncManager.pullFile` strictly refuses to overwrite, modify, or delete (via tombstone) any file in `syncStatus === 'conflict'` or quarantined within `ConflictStore`.
+- **Resolution State Transition:** Resolving via `ConflictStore.resolveConflict` cleans quarantine and transitions state to `synced` (when adopting server version) or `dirty` with `isDirty = true` (when retaining local edits, ensuring subsequent push passes re-attempt upload, LUGX-003).
 
 ### 2.3 False Conflict Elimination (`src/lib/sync/sync-manager.ts` & `src/hooks/use-sync.ts`)
 - **Metadata Drift Invariant:** When receiving a `412 Precondition Failed` response or encountering dirty local state, if `localContent === serverContent` or `compareETags(localEtag, serverEtag)` is true:
@@ -46,11 +48,11 @@ flowchart TD
 - **Direct Markdown Comparison:** Displays side-by-side comparison columns, visual diff blocks (`DiffLine`), and the interactive merge editor operating on pure Markdown source text.
 - **Deterministic Submission:** Submits resolved Markdown text directly with `normalizeMarkdownSource` normalization upon authoritative submission.
 
-### 2.5 Cross-Tab Synchronization & Volatile RAM Purge Guard (`src/lib/sync/cross-tab-sync.ts`, `src/lib/sync/session-key-store.ts`, `src/hooks/use-editor-orchestrator.ts`)
-- Uses `BroadcastChannel('textai_cross_tab_sync')` to propagate save, conflict resolution, and vault lock events across browser tabs.
+### 2.5 User-Scoped Cross-Tab Synchronization (`src/lib/sync/cross-tab-sync.ts` & `src/lib/sync/tab-sync.ts`)
+- **User Scoping (`lugx_sync_${userId}`):** Broadcast channels are scoped per authenticated user (`lugx_sync_${userId}`) to prevent multi-tenant event bleeding across tab sessions (`LUGX-109`). Seamlessly falls back to `textai_cross_tab_sync` for ambient/unauthenticated contexts.
 - **Dirty State Guard:** Sibling tabs only advance their in-memory `fileVersionRef` if the current tab is clean (`!isDirty && !hasUnresolvedConflict`), preventing silent overwrites of un-saved local drafts.
 - **Volatile RAM Purge Synchronization:** When a vault lock occurs in any tab (manual lock or inactivity timeout), `sessionKeyStore.lock(true)` dispatches a `vault_locked` broadcast message. Sibling tabs zero their volatile Master Key buffers in RAM (`buffer.fill(0)`), purge keys, and lock the vault UI.
-- **Local Auto-Lock & Debounced Auto-Save Cancellation:** The originating tab subscribes directly to `sessionKeyStore.subscribe()`. When local auto-lock fires, `debouncedAutoSave.cancel()` is immediately invoked, preventing background timer races from writing plaintext or corrupted drafts after vault lock.
+- **Anti-Echo Filter:** Each browser tab instance possesses a unique `currentTabId`; messages broadcast with `senderTabId === currentTabId` are filtered out to prevent self-echo feedback loops.
 
 ### 2.6 Zero-Knowledge Encrypted Conflict Resolution & Inbound Gateway (`src/lib/sync/sync-crypto-gateway.ts`, `src/hooks/use-editor-orchestrator.ts`)
 - **Inbound Server IV Decryption (`SyncCryptoGateway.decryptInbound`)**: When a 412 Precondition Failed occurs on an encrypted file, the orchestrator intercepts `saveRes.serverVersion`. Rather than erroneously reusing the local client IV, the gateway strictly extracts `saveRes.serverVersion.encryptionMetadata.iv` (the actual IV generated by the remote concurrent writer) and decrypts the incoming ciphertext into clean Markdown plaintext in volatile RAM using the Master Key and file AAD binding (`vault:file:${userId}:${fileId}`).
@@ -265,9 +267,9 @@ If-Match: "server_etag"
 ### Decision TR-03: Native BroadcastChannel vs. SharedWorker for Cross-Tab Sync
 
 - **Context:** Synchronizing editor lock states, active drafts, and volatile RAM key purges across sibling browser tabs in real time.
-- **Chosen Architecture:** Native `BroadcastChannel('textai_cross_tab_sync')` (`src/lib/sync/cross-tab-sync.ts`) with sender isolation (`senderTabId !== currentTabId`).
+- **Chosen Architecture:** Native user-scoped `BroadcastChannel(\`lugx_sync_\${userId}\`)` (`src/lib/sync/cross-tab-sync.ts` & `src/lib/sync/tab-sync.ts`) with sender isolation (`senderTabId !== currentTabId`) and unauthenticated fallback to `textai_cross_tab_sync`.
 - **Rejected Alternative:** `SharedWorker` coordination hub.
 - **Trade-off Analysis:**
-  - **BroadcastChannel:** Zero setup, universally supported across all modern desktop and mobile browsers, zero lifecycle teardown friction, and degrades silently in restricted headless environments.
+  - **BroadcastChannel:** Zero setup, universally supported across all modern desktop and mobile browsers, zero lifecycle teardown friction, user-scoped tenant isolation preventing cross-account bleeding (`LUGX-109`), and degrades silently in restricted headless environments.
   - **SharedWorker:** Complex worker lifecycle management, historically unsupported or flaky on iOS Safari, and introduces significant debugging complexity for multi-tab state tracking.
 - **Migration Trigger:** Adopting a `SharedWorker` is triggered only if client-side architecture requires a persistent, long-running background sync coordinator that must remain active and maintain network sockets even when individual browser windows are closed.

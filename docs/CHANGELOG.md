@@ -1,5 +1,36 @@
 # Changelog - LUGX Project
 
+## [1.43.0] - 2026-10-03 (Phase 15: Durable IDB Conflict Quarantine, Diff3 Hardening & Tab Isolation)
+
+### Added & Hardened - Durable Conflict Quarantine in IndexedDB, Hunt-McIlroy Diff3 Engine & User-Scoped Tab Channels
+
+- **Durable Conflict Quarantine in IndexedDB (`src/lib/idb/conflict-store.ts`, `src/lib/sync/indexeddb.ts`, `src/lib/sync/idb-types.ts`, `src/lib/sync/sync-manager.ts`):**
+  - Remediates audit findings `LUGX-003, LUGX-010, LUGX-089, LUGX-101`.
+  - Added `syncStatus?: 'synced' | 'dirty' | 'conflict'` and `conflictData?: { serverVersion, localVersion, baseVersion, detectedAt }` to `IDBFile`, encrypted at rest with device key and AAD.
+  - Implemented `ConflictStore` managing durable quarantine persistence in IndexedDB.
+  - Hardened `SyncManager.pullFile`: strictly refuses to overwrite, modify, or delete (via tombstone) files in conflict quarantine.
+  - Added clean state transitions upon resolution (`synced` on server adoption, `dirty` with `isDirty = true` on local retention to ensure subsequent push passes upload local edits).
+
+- **Hunt-McIlroy Deterministic Diff3 Engine (`src/lib/sync/diff3.ts`, `src/lib/sync/conflict-resolver.ts`):**
+  - Remediates audit findings `LUGX-045, LUGX-047, LUGX-050, LUGX-051`.
+  - Implemented deterministic Pierce / Hunt-McIlroy 3-way merge engine operating strictly on plaintext tokens.
+  - Solved token erasure bugs on duplicate and repeated lines (such as `D\nC\nC` in `LUGX-045`) and adjacent blank lines.
+  - Added ciphertext execution guard throwing `TypeError` if non-decrypted content is passed.
+
+- **User-Scoped Cross-Tab Synchronization (`src/lib/sync/cross-tab-sync.ts`, `src/lib/sync/tab-sync.ts`):**
+  - Remediates audit finding `LUGX-109`.
+  - Scoped BroadcastChannel names to `lugx_sync_${userId}` to isolate multi-tenant tab sessions.
+  - Created `createUserTabSync(userId)` controller.
+  - Preserved backward-compatible fallback to `textai_cross_tab_sync` for ambient/unauthenticated contexts.
+  - Implemented anti-echo tab ID filtering (`senderTabId !== currentTabId`).
+
+- **Automated Verification:**
+  - Added `src/test/sync/sync-durable-conflict.test.ts` (4/4 tests passed).
+  - Added `src/test/sync/sync-tab-isolation.test.ts` (7/7 tests passed).
+  - Added regression test suite in `src/test/sync/sync-conflict-resolver.test.ts` (42/42 tests passed).
+  - Full project test suite: 81 test files passed, 980 tests passed (100% green).
+  - TypeScript type check (`tsc --noEmit`) 100% clean.
+
 ## [1.42.0] - 2026-10-03 (Phase 14: Local Sync Queue & Atomic CAS with localRevision)
 
 ### Added & Hardened - Lean CAS Concurrency Control, Monotonic localRevision, Strict Operation Coalescing & Non-Destructive Push Resilience
