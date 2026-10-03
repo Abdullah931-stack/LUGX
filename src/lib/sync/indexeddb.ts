@@ -236,10 +236,41 @@ class IndexedDBManager {
             };
         }
 
+        let encryptedConflictData: IDBFile['conflictData'] = undefined;
+        if (file.conflictData) {
+            const srvAad = `idb:conflict_server:${file.id}`;
+            const locAad = `idb:conflict_local:${file.id}`;
+            const baseAad = `idb:conflict_base:${file.id}`;
+
+            const serverContent = await this.encryptText(file.conflictData.serverVersion.content, srvAad);
+            const localContent = await this.encryptText(file.conflictData.localVersion.content, locAad);
+            let baseContent = file.conflictData.baseVersion?.content;
+            if (baseContent !== undefined) {
+                baseContent = await this.encryptText(baseContent, baseAad);
+            }
+
+            encryptedConflictData = {
+                ...file.conflictData,
+                serverVersion: {
+                    ...file.conflictData.serverVersion,
+                    content: serverContent,
+                },
+                localVersion: {
+                    ...file.conflictData.localVersion,
+                    content: localContent,
+                },
+                baseVersion: file.conflictData.baseVersion ? {
+                    ...file.conflictData.baseVersion,
+                    content: baseContent!,
+                } : undefined,
+            };
+        }
+
         return {
             ...file,
             content: encryptedContent,
             baseSnapshot: encryptedBaseSnapshot,
+            conflictData: encryptedConflictData,
         };
     }
 
@@ -260,10 +291,41 @@ class IndexedDBManager {
             };
         }
 
+        let decryptedConflictData: IDBFile['conflictData'] = undefined;
+        if (stored.conflictData) {
+            const srvAad = `idb:conflict_server:${stored.id}`;
+            const locAad = `idb:conflict_local:${stored.id}`;
+            const baseAad = `idb:conflict_base:${stored.id}`;
+
+            const serverContent = await this.decryptText(stored.conflictData.serverVersion.content, srvAad, 'files', stored.id);
+            const localContent = await this.decryptText(stored.conflictData.localVersion.content, locAad, 'files', stored.id);
+            let baseContent = stored.conflictData.baseVersion?.content;
+            if (baseContent !== undefined) {
+                baseContent = await this.decryptText(baseContent, baseAad, 'files', stored.id);
+            }
+
+            decryptedConflictData = {
+                ...stored.conflictData,
+                serverVersion: {
+                    ...stored.conflictData.serverVersion,
+                    content: serverContent,
+                },
+                localVersion: {
+                    ...stored.conflictData.localVersion,
+                    content: localContent,
+                },
+                baseVersion: stored.conflictData.baseVersion ? {
+                    ...stored.conflictData.baseVersion,
+                    content: baseContent!,
+                } : undefined,
+            };
+        }
+
         return {
             ...stored,
             content: decryptedContent,
             baseSnapshot: decryptedBaseSnapshot,
+            conflictData: decryptedConflictData,
         };
     }
 
@@ -518,9 +580,47 @@ class IndexedDBManager {
         const file = await this.getFile(id);
         if (file) {
             file.isDirty = true;
+            file.syncStatus = file.syncStatus === 'conflict' ? 'conflict' : 'dirty';
             file.lastModified = Date.now();
             await this.saveFile(file);
         }
+    }
+
+    /**
+     * Puts a file into durable conflict quarantine in IndexedDB.
+     * Remediates: LUGX-003, LUGX-089
+     */
+    async setFileConflict(
+        id: string,
+        conflictData: NonNullable<IDBFile['conflictData']>
+    ): Promise<void> {
+        const file = await this.getFile(id);
+        if (file) {
+            file.syncStatus = 'conflict';
+            file.conflictData = conflictData;
+            file.isDirty = true;
+            await this.saveFile(file);
+        }
+    }
+
+    /**
+     * Clears durable conflict quarantine from a file in IndexedDB.
+     */
+    async clearFileConflict(id: string): Promise<void> {
+        const file = await this.getFile(id);
+        if (file) {
+            file.syncStatus = file.isDirty ? 'dirty' : 'synced';
+            file.conflictData = undefined;
+            await this.saveFile(file);
+        }
+    }
+
+    /**
+     * Retrieves all files currently in durable conflict quarantine.
+     */
+    async getConflictedFiles(): Promise<IDBFile[]> {
+        const allFiles = await this.getAllFiles();
+        return allFiles.filter(f => f.syncStatus === 'conflict' || !!f.conflictData);
     }
 
     /**
@@ -546,6 +646,8 @@ class IndexedDBManager {
                 // Lean CAS: In-flight mutations occurred while push was in flight.
                 // Retain dirty state to guarantee subsequent push pass.
                 file.isDirty = true;
+                file.syncStatus = 'dirty';
+                file.conflictData = undefined;
                 if (file.baseSnapshot) {
                     file.baseSnapshot.etag = newEtag;
                     if (newVersion !== undefined) {
@@ -554,6 +656,8 @@ class IndexedDBManager {
                 }
             } else {
                 file.isDirty = false;
+                file.syncStatus = 'synced';
+                file.conflictData = undefined;
                 file.lastSyncedAt = Date.now();
                 file.baseSnapshot = {
                     content: file.content,
@@ -603,6 +707,8 @@ class IndexedDBManager {
                 // Lean CAS: Local modifications occurred while operation was in flight.
                 // Preserve isDirty = true and update baseSnapshot etag/version without overwriting current dirty content.
                 file.isDirty = true;
+                file.syncStatus = 'dirty';
+                file.conflictData = undefined;
                 if (file.baseSnapshot) {
                     file.baseSnapshot.etag = newEtag;
                     if (newVersion !== undefined) {
@@ -611,6 +717,8 @@ class IndexedDBManager {
                 }
             } else {
                 file.isDirty = false;
+                file.syncStatus = 'synced';
+                file.conflictData = undefined;
                 file.lastSyncedAt = Date.now();
                 file.baseSnapshot = {
                     content: file.content,

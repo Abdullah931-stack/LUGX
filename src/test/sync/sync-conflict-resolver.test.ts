@@ -623,6 +623,61 @@ describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
             expect(result.hasOverlaps).toBe(false);
             expect(result.content).toBe("Line A\nLine B (local modified)\nLine C (remote modified)\nLine D");
         });
+
+        it('Phase 15 (LUGX-045): should not drop duplicated lines without conflict warning (D/C/C case)', () => {
+            const base = "D\nC\nC";
+            const local = "n6\nD\nC";
+            const remote = "D\nC";
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.hasOverlaps).toBe(false);
+            expect(result.content).toBe("n6\nD\nC");
+        });
+
+        it('Phase 15: should cleanly merge files with multiple repeated blank lines without token erasure', () => {
+            const base = "Heading\n\n\nSection 1\n\n\nSection 2\n\n\nFooter";
+            const local = "Heading\n\n\nSection 1 (local updated)\n\n\nSection 2\n\n\nFooter";
+            const remote = "Heading\n\n\nSection 1\n\n\nSection 2 (remote updated)\n\n\nFooter";
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.status).toBe('merged_clean');
+            expect(result.hasOverlaps).toBe(false);
+            expect(result.content).toBe(
+                "Heading\n\n\nSection 1 (local updated)\n\n\nSection 2 (remote updated)\n\n\nFooter"
+            );
+        });
+
+        it('Phase 15: should reject 3-way merge on raw encrypted ciphertext payloads', () => {
+            const encryptedPayload = JSON.stringify({
+                _enc: 1,
+                iv: "c29tZWl2",
+                ct: "c29tZWNpcGhlcnRleHQ=",
+            });
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: encryptedPayload },
+                local: { content: "Plaintext Local" },
+                remote: { content: "Plaintext Remote" },
+            });
+
+            expect(result.success).toBe(false);
+            expect(result.status).toBe('manual_resolution_required');
+            expect(result.hasOverlaps).toBe(true);
+            expect(result.reason).toContain('Encrypted ciphertext detected');
+        });
     });
 });
 

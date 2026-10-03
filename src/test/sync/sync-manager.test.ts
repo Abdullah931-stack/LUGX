@@ -24,6 +24,9 @@ const mockIndexedDBManager = vi.hoisted(() => ({
     updateOperationStatus: vi.fn().mockResolvedValue(undefined),
     resetSyncingOperations: vi.fn().mockResolvedValue(0),
     close: vi.fn(),
+    setFileConflict: vi.fn().mockResolvedValue(undefined),
+    clearFileConflict: vi.fn().mockResolvedValue(undefined),
+    getConflictedFiles: vi.fn().mockResolvedValue([]),
 }));
 
 const mockConnectionDetector = vi.hoisted(() => {

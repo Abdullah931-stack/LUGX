@@ -6,7 +6,7 @@
  */
 
 import { indexedDBManager, createIndexedDBManager, IndexedDBManager } from './indexeddb';
-import { IDBFile, IDBOperation, SyncQueueItem, EncryptedEnvelopeMetadata } from './idb-types';
+import { IDBFile, IDBOperation, SyncQueueItem, EncryptedEnvelopeMetadata, ConflictFileState } from './idb-types';
 import { connectionDetector, withBackoff } from './connection-detector';
 import { concurrencyManager } from './concurrency-manager';
 import { syncRollback, createSyncRollback, SyncRollback } from './rollback';
@@ -20,6 +20,7 @@ import { conflictResolver } from './conflict-resolver';
 import { SyncCryptoGateway } from './sync-crypto-gateway';
 import { sanitizeLogValue } from './log-sanitizer';
 import { syncPerformanceMonitor } from './performance-monitor';
+import { ConflictStore, conflictStore } from '../idb/conflict-store';
 import type { PendingEncryptedConflict } from './types/vault';
 
 /**
@@ -155,6 +156,7 @@ class SyncManager {
     private idb: IndexedDBManager;
     private ownsIdb = false;
     private rollback: SyncRollback;
+    private conflictStore: ConflictStore;
     private activeAbortController: AbortController | null = null;
     private isConsumerRunning = false;
     private hasPendingOnlineConsumer = false;
@@ -173,6 +175,7 @@ class SyncManager {
             this.idb = initialConfig.idb;
             this.ownsIdb = false;
             this.rollback = createSyncRollback(this.idb);
+            this.conflictStore = new ConflictStore(this.idb);
             if (initialConfig.userId && initialConfig.userId.trim()) {
                 this.config = { ...initialConfig, userId: initialConfig.userId.trim() };
             }
@@ -181,10 +184,12 @@ class SyncManager {
             this.idb = createIndexedDBManager(this.config.userId);
             this.ownsIdb = true;
             this.rollback = createSyncRollback(this.idb);
+            this.conflictStore = new ConflictStore(this.idb);
         } else {
             this.idb = indexedDBManager;
             this.ownsIdb = false;
             this.rollback = syncRollback;
+            this.conflictStore = conflictStore;
         }
         if (initialConfig?.maxRetries) {
             this.maxRetries = initialConfig.maxRetries;
@@ -199,6 +204,13 @@ class SyncManager {
      */
     getUserId(): string | null {
         return this.config?.userId || null;
+    }
+
+    /**
+     * Get user-scoped conflict store
+     */
+    getConflictStore(): ConflictStore {
+        return this.conflictStore;
     }
 
     /**
@@ -242,6 +254,7 @@ class SyncManager {
         }
         await this.idb.init(this.config.userId);
         this.rollback = createSyncRollback(this.idb);
+        this.conflictStore = new ConflictStore(this.idb);
 
         // Crash recovery: reset any operations stuck in 'syncing' back to 'queued'
         await this.idb.resetSyncingOperations();
@@ -572,6 +585,7 @@ class SyncManager {
 
                         if (resolution === 'server') {
                             this.pendingEncryptedConflicts.delete(fileId);
+                            await this.conflictStore.clearConflict(fileId);
                             const localFile = await this.idb.getFile(fileId);
                             if (localFile) {
                                 localFile.content = conflict.remoteEnvelope.ciphertext;
@@ -585,6 +599,8 @@ class SyncManager {
                                 };
                                 localFile.etag = conflict.remoteEtag;
                                 localFile.isDirty = false;
+                                localFile.syncStatus = 'synced';
+                                localFile.conflictData = undefined;
                                 localFile.lastSyncedAt = Date.now();
                                 await this.idb.saveFile(localFile);
                             }
@@ -640,6 +656,7 @@ class SyncManager {
 
                 const resData = await res.json().catch(() => ({}));
                 this.pendingEncryptedConflicts.delete(fileId);
+                await this.conflictStore.clearConflict(fileId);
 
                 // Update local IndexedDB record with the newly merged ciphertext and metadata
                 const localFile = await this.idb.getFile(fileId);
@@ -652,6 +669,8 @@ class SyncManager {
                     localFile.etag = finalEtag;
                     localFile.version = finalVersion;
                     localFile.isDirty = false;
+                    localFile.syncStatus = 'synced';
+                    localFile.conflictData = undefined;
                     localFile.lastSyncedAt = Date.now();
                     localFile.baseSnapshot = {
                         content: ciphertextBase64,
@@ -1101,6 +1120,7 @@ class SyncManager {
                         lastError: 'Conflict detected on server',
                     });
                     if (serverData.serverVersion) {
+                        await this.quarantineServerConflict(file, serverData.serverVersion);
                         await this.handleConflict(file, serverData.serverVersion);
                     }
                     return {
@@ -1334,6 +1354,7 @@ class SyncManager {
                             }
                         }
 
+                        await this.quarantineServerConflict(file, serverData.serverVersion);
                         await this.handleConflict(file, {
                             ...serverData.serverVersion,
                             content: serverContent,
@@ -1481,16 +1502,16 @@ class SyncManager {
         if (serverFile.deletedAt) {
             const localFile = await this.idb.getFile(serverFile.id);
             if (localFile) {
-                // DATA-SAFETY GUARD: never silently discard unsaved local edits.
-                // If the local copy carries unpushed user edits (isDirty), keep it
-                // intact and surface a conflict instead of deleting it, so the user
+                // DATA-SAFETY GUARD: never silently discard unsaved local edits or conflicted files.
+                // If the local copy carries unpushed user edits (isDirty) or is in conflict quarantine,
+                // keep it intact and surface a conflict instead of deleting it, so the user
                 // decides what happens to their content.
-                if (localFile.isDirty) {
+                if (localFile.isDirty || localFile.syncStatus === 'conflict' || (await this.conflictStore.isConflicted(serverFile.id))) {
                     const dirtyOps = await this.idb.getOperations(serverFile.id);
                     for (const op of dirtyOps) {
                         if (op.status === 'queued' || op.status === 'syncing') {
                             await this.idb.updateOperationStatus(op.id, 'failed', {
-                                lastError: 'Server deleted file with unsaved local edits (tombstone received)',
+                                lastError: 'Server deleted file with unsaved local edits or conflict (tombstone received)',
                             });
                         }
                     }
@@ -1498,7 +1519,7 @@ class SyncManager {
                         fileId: serverFile.id,
                         success: false,
                         action: 'conflict',
-                        error: 'Server deleted file with unsaved local edits',
+                        error: 'Server deleted file with unsaved local edits or conflict',
                     };
                 }
 
@@ -1517,6 +1538,19 @@ class SyncManager {
         }
 
         const localFile = await this.idb.getFile(serverFile.id);
+
+        // DATA-SAFETY GUARD (Phase 15): If file is in durable conflict quarantine,
+        // strictly refuse to overwrite or replace it during background server pull!
+        if (localFile?.syncStatus === 'conflict' || (localFile && await this.conflictStore.isConflicted(serverFile.id))) {
+            console.warn(`[SyncManager] pullFile skipped for ${serverFile.id}: file is in durable conflict quarantine`);
+            return {
+                fileId: serverFile.id,
+                success: false,
+                action: 'conflict',
+                error: 'DURABLE_CONFLICT_QUARANTINE',
+            };
+        }
+
         const isFileEncrypted = serverFile.isEncrypted ?? false;
         const inbound = await SyncCryptoGateway.decryptInbound({
             fileId: serverFile.id,
@@ -1541,6 +1575,7 @@ class SyncManager {
                 lastModified: new Date(serverFile.updatedAt).getTime(),
                 lastSyncedAt: Date.now(),
                 isDirty: false,
+                syncStatus: 'synced',
             };
             await this.idb.saveFile(newFile);
 
@@ -1638,6 +1673,8 @@ class SyncManager {
             lastModified: new Date(serverFile.updatedAt).getTime(),
             lastSyncedAt: Date.now(),
             isDirty: false,
+            syncStatus: 'synced',
+            conflictData: undefined,
         };
         await this.idb.saveFile(updatedFile);
 
@@ -1661,6 +1698,63 @@ class SyncManager {
         }
 
         return { fileId: serverFile.id, success: true, action: 'pulled', newEtag: serverFile.etag };
+    }
+
+    /**
+     * Put a file into durable conflict quarantine in IndexedDB upon HTTP 412/409.
+     * Remediates: LUGX-003, LUGX-089
+     */
+    private async quarantineServerConflict(
+        file: IDBFile,
+        serverVersion: {
+            content?: string;
+            etag?: string;
+            version?: number;
+            title?: string;
+            parentFolderId?: string | null;
+            updatedAt?: string;
+            isEncrypted?: boolean;
+            encryptionMetadata?: EncryptedEnvelopeMetadata | null;
+        }
+    ): Promise<void> {
+        const localState: ConflictFileState = {
+            content: file.content,
+            etag: file.etag,
+            lastModified: file.lastModified,
+            version: file.version,
+            title: file.title,
+            parentFolderId: file.parentFolderId,
+            isEncrypted: file.isEncrypted,
+            encryptionMetadata: file.encryptionMetadata,
+        };
+        const serverState: ConflictFileState = {
+            content: serverVersion.content || '',
+            etag: serverVersion.etag || '',
+            lastModified: new Date(serverVersion.updatedAt || Date.now()).getTime(),
+            version: serverVersion.version || 0,
+            title: serverVersion.title || file.title,
+            parentFolderId: serverVersion.parentFolderId ?? file.parentFolderId,
+            isEncrypted: serverVersion.isEncrypted,
+            encryptionMetadata: serverVersion.encryptionMetadata,
+        };
+        const baseState: ConflictFileState | undefined = file.baseSnapshot ? {
+            content: file.baseSnapshot.content,
+            etag: file.baseSnapshot.etag,
+            lastModified: file.lastModified,
+            version: file.baseSnapshot.version,
+            title: file.baseSnapshot.title,
+            parentFolderId: file.baseSnapshot.parentFolderId,
+            isEncrypted: file.baseSnapshot.isEncrypted,
+            encryptionMetadata: file.baseSnapshot.encryptionMetadata,
+        } : undefined;
+
+        await this.conflictStore.quarantineConflict({
+            fileId: file.id,
+            localVersion: localState,
+            serverVersion: serverState,
+            baseVersion: baseState,
+            detectedAt: Date.now(),
+        });
     }
 
     /**
@@ -1699,12 +1793,15 @@ class SyncManager {
         // If local content and server content are identical, or ETags match: auto-resolve
         if (localPlaintext === serverPlaintext || compareETags(localFile.etag, serverVersion.etag)) {
             console.log(`[SyncManager] Content/ETags match for file ${localFile.id}, auto-clearing conflict`);
+            await this.conflictStore.clearConflict(localFile.id);
             const cleanFile: IDBFile = {
                 ...localFile,
                 etag: serverVersion.etag,
                 version: serverVersion.version,
                 lastSyncedAt: Date.now(),
                 isDirty: false,
+                syncStatus: 'synced',
+                conflictData: undefined,
             };
             await this.idb.saveFile(cleanFile);
 
@@ -1731,6 +1828,7 @@ class SyncManager {
             });
 
             if (resolution === 'server') {
+                await this.conflictStore.clearConflict(localFile.id);
                 const updatedFile: IDBFile = {
                     ...localFile,
                     content: serverVersion.rawCiphertext || serverVersion.content,
@@ -1738,6 +1836,8 @@ class SyncManager {
                     version: serverVersion.version,
                     lastSyncedAt: Date.now(),
                     isDirty: false,
+                    syncStatus: 'synced',
+                    conflictData: undefined,
                 };
                 await this.idb.saveFile(updatedFile);
                 const ops = await this.idb.getOperations(localFile.id);
@@ -1747,17 +1847,20 @@ class SyncManager {
                     }
                 }
             } else if (resolution === 'local') {
-                // When local resolution is selected, clear dirty flag and mark all operations as synced
+                // Remediates: LUGX-003: When local resolution is selected, clear quarantine, retain dirty state, and queue for server push
+                await this.conflictStore.clearConflict(localFile.id);
                 const refreshedFile = await this.idb.getFile(localFile.id);
                 if (refreshedFile) {
-                    refreshedFile.isDirty = false;
-                    refreshedFile.lastSyncedAt = Date.now();
+                    refreshedFile.isDirty = true;
+                    refreshedFile.syncStatus = 'dirty';
+                    refreshedFile.conflictData = undefined;
+                    refreshedFile.lastModified = Date.now();
                     await this.idb.saveFile(refreshedFile);
                 }
                 const ops = await this.idb.getOperations(localFile.id);
                 for (const op of ops) {
                     if (!op.synced) {
-                        await this.idb.updateOperationStatus(op.id, 'synced', { synced: true });
+                        await this.idb.updateOperationStatus(op.id, 'queued');
                     }
                 }
             }

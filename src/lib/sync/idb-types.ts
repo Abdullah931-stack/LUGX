@@ -65,6 +65,15 @@ export interface IDBFile {
         isEncrypted?: boolean;
         encryptionMetadata?: EncryptedEnvelopeMetadata | null;
     };
+    /** Sync lifecycle status: clean/synced, locally modified dirty, or in durable conflict quarantine */
+    syncStatus?: 'synced' | 'dirty' | 'conflict';
+    /** Persistent conflict snapshot data when syncStatus is 'conflict' */
+    conflictData?: {
+        serverVersion: ConflictFileState;
+        localVersion: ConflictFileState;
+        baseVersion?: ConflictFileState;
+        detectedAt: number;
+    };
 }
 
 /**

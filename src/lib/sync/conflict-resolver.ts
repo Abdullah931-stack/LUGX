@@ -7,6 +7,7 @@
 
 import { IDBFile, SyncConflict } from './idb-types';
 import { validateMarkdownSyntaxIntegrity as validateSyntax } from './syntax-validator';
+import { diff3MergeText } from './diff3';
 
 /**
  * Diff operation types
@@ -177,6 +178,21 @@ export class ConflictResolver {
             };
         }
 
+        // Guard: 3-way merge MUST only be executed on decrypted plaintext (Remediates: Phase 15)
+        if (
+            this.isEncryptedPayload(base.content) ||
+            this.isEncryptedPayload(local.content) ||
+            this.isEncryptedPayload(remote.content)
+        ) {
+            return {
+                success: false,
+                status: 'manual_resolution_required',
+                hasOverlaps: true,
+                diffs: this.computeVisualDiff(local.content, remote.content),
+                reason: 'Encrypted ciphertext detected: Three-way merge requires decrypted plaintext',
+            };
+        }
+
         // 2. Handle Delete Conflicts
         if (remote.deleted && !local.deleted) {
             return {
@@ -305,38 +321,39 @@ export class ConflictResolver {
     }
 
     /**
-     * Core 3-Way Content Merge algorithm with Sequence-Aligned LCS Diff3
+     * Check if a content string contains raw encrypted envelope / ciphertext payload
+     */
+    private isEncryptedPayload(val?: string): boolean {
+        if (!val || typeof val !== 'string') return false;
+        const trimmed = val.trim();
+        return (
+            trimmed.startsWith('{"_enc":') ||
+            trimmed.startsWith('{"algorithm":') ||
+            trimmed.startsWith('{"ciphertext":')
+        );
+    }
+
+    /**
+     * Core 3-Way Content Merge algorithm delegated to deterministic Diff3
+     * Handles repeated and blank lines without dropping tokens (Remediates: LUGX-045)
      */
     private mergeContentThreeWay(
         baseContent: string,
         localContent: string,
         remoteContent: string
     ): { success: boolean; content?: string; hasOverlaps: boolean; diffs?: DiffOp[]; conflictMarkers?: string } {
-        // Fast paths
-        if (localContent === remoteContent) {
-            return { success: true, content: localContent, hasOverlaps: false };
-        }
-        if (localContent === baseContent) {
-            return { success: true, content: remoteContent, hasOverlaps: false };
-        }
-        if (remoteContent === baseContent) {
-            return { success: true, content: localContent, hasOverlaps: false };
-        }
+        const mergeResult = diff3MergeText(localContent, baseContent, remoteContent, {
+            excludeFalseConflicts: true,
+            label: { a: 'LOCAL', b: 'REMOTE' },
+        });
 
-        // Tokenize raw Markdown lines
-        const baseTokens = this.tokenizeContent(baseContent);
-        const localTokens = this.tokenizeContent(localContent);
-        const remoteTokens = this.tokenizeContent(remoteContent);
-
-        const mergeResult = this.diff3Merge(baseTokens, localTokens, remoteTokens);
-
-        if (mergeResult.hasOverlaps) {
+        if (mergeResult.hasConflicts) {
             return {
                 success: false,
                 content: mergeResult.content,
                 hasOverlaps: true,
                 diffs: this.computeVisualDiff(localContent, remoteContent),
-                conflictMarkers: mergeResult.content,
+                conflictMarkers: mergeResult.conflictMarkers || mergeResult.content,
             };
         }
 
