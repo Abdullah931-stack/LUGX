@@ -480,7 +480,9 @@ describe('Sync Manager', () => {
                 'file-1',
                 'etag-new-2',
                 'op-due-1',
-                1
+                1,
+                2,
+                undefined
             );
         });
 
@@ -630,7 +632,9 @@ describe('Sync Manager', () => {
                     nextRetryAt: expect.any(Number),
                 })
             );
-            expect(mockSyncRollback.rollback).toHaveBeenCalled();
+            // Push network failure preserves local state and does not trigger destructive rollback (LUGX-013)
+            expect(mockSyncRollback.removeCheckpoint).toHaveBeenCalled();
+            expect(mockSyncRollback.rollback).not.toHaveBeenCalled();
         });
 
         it('should transition operation to dead_letter when attempts reach maxRetries', async () => {

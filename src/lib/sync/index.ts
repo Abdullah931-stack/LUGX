@@ -29,8 +29,9 @@ export {
   DeviceTrustRevokedError
 } from './types/vault';
 
-// IndexedDB
+// IndexedDB & Coalescing
 export { indexedDBManager, IndexedDBManager, createIndexedDBManager } from './indexeddb';
+export { canCoalesce, coalesceOperations } from './coalescing';
 
 // ETag & Markdown Normalization
 export { generateETag, generateETagSync, generateEncryptedETag, generateEncryptedETagSync, isValidETag, compareETags, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from './etag-generator';

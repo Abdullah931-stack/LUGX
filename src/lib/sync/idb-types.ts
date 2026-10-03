@@ -53,6 +53,8 @@ export interface IDBFile {
     isEncrypted?: boolean;
     /** Envelope encryption metadata if isEncrypted is true */
     encryptionMetadata?: EncryptedEnvelopeMetadata | null;
+    /** Monotonically increasing local revision counter for Lean CAS concurrency control */
+    localRevision?: number;
     /** Pristine base snapshot before local uncommitted edits were made */
     baseSnapshot?: {
         content: MarkdownSource;
@@ -100,6 +102,8 @@ export interface IDBOperation {
     baseVersion?: number;
     /** Monotonically increasing local revision within the client session */
     localRevision?: number;
+    /** Last revision known to be dispatched or acknowledged in flight */
+    sentRevision?: number;
     /** Current lifecycle status of the operation */
     status?: OperationStatus;
     /** Number of sync attempts executed */

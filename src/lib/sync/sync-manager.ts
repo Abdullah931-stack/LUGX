@@ -1026,13 +1026,15 @@ class SyncManager {
                         // Check if content or ETag is actually identical (false conflict)
                         if (file.content === serverData.serverVersion.content || compareETags(file.etag, serverData.serverVersion.etag)) {
                             console.log(`[SyncManager] False conflict for ${file.id} (identical content/ETag), auto-adopting server version`);
-                            await this.idb.commitFileAndOperationSync(file.id, serverData.serverVersion.etag, op.id, currentAttempts);
-                            const updatedFile = await this.idb.getFile(file.id);
-                            if (updatedFile) {
-                                updatedFile.version = serverData.serverVersion.version;
-                                updatedFile.isDirty = false;
-                                await this.idb.saveFile(updatedFile);
-                            }
+                            const sentRevision = op.localRevision ?? file.localRevision;
+                            await this.idb.commitFileAndOperationSync(
+                                file.id,
+                                serverData.serverVersion.etag,
+                                op.id,
+                                currentAttempts,
+                                serverData.serverVersion.version,
+                                sentRevision
+                            );
                             this.rollback.removeCheckpoint(checkpointId);
                             return {
                                 fileId: op.fileId,
@@ -1129,8 +1131,16 @@ class SyncManager {
 
                 const data = await response.json();
 
-                // Atomically mark file clean and operation synced in a single multi-store transaction
-                await this.idb.commitFileAndOperationSync(file.id, data.etag, op.id, currentAttempts);
+                // Atomically mark file clean and operation synced in a single multi-store transaction with Lean CAS gating
+                const sentRevision = op.localRevision ?? file.localRevision;
+                await this.idb.commitFileAndOperationSync(
+                    file.id,
+                    data.etag,
+                    op.id,
+                    currentAttempts,
+                    data.version,
+                    sentRevision
+                );
 
                 // Remove checkpoint
                 this.rollback.removeCheckpoint(checkpointId);
@@ -1168,8 +1178,8 @@ class SyncManager {
                     });
                 }
 
-                // Execute rollback to restore safe state
-                await this.rollback.rollback(checkpointId, op.id);
+                // Preserve local edits on network push failure (LUGX-013); do not rollback
+                this.rollback.removeCheckpoint(checkpointId);
 
                 return {
                     fileId: op.fileId,
@@ -1356,8 +1366,13 @@ class SyncManager {
 
                 const data = await response.json();
 
-                // Mark file as clean with new ETag in user-scoped IDB
-                await this.idb.markFileClean(file.id, data.etag);
+                // Mark file as clean with new ETag & version in user-scoped IDB, guarded by Lean CAS check
+                const sentRevision = file.localRevision;
+                if (sentRevision !== undefined || data.version !== undefined) {
+                    await this.idb.markFileClean(file.id, data.etag, data.version, sentRevision);
+                } else {
+                    await this.idb.markFileClean(file.id, data.etag);
+                }
 
                 // Remove checkpoint
                 this.rollback.removeCheckpoint(checkpointId);
@@ -1370,8 +1385,8 @@ class SyncManager {
                 };
 
             } catch (error) {
-                // Rollback on error
-                await this.rollback.rollback(checkpointId);
+                // Preserve local edits on network push failure (LUGX-013); do not rollback
+                this.rollback.removeCheckpoint(checkpointId);
 
                 return {
                     fileId: file.id,

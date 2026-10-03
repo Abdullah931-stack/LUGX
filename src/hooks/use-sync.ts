@@ -324,6 +324,12 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             };
         }
 
+        const isTargetDirty = file.isDirty !== undefined ? file.isDirty : true;
+        const currentRevision = file.localRevision !== undefined
+            ? file.localRevision
+            : (existingFile?.localRevision ?? 0);
+        const nextRevision = isTargetDirty ? currentRevision + 1 : currentRevision;
+
         const idbFile: IDBFile = {
             id: file.id,
             content: normalizedContent,
@@ -336,7 +342,8 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             encryptionMetadata: file.encryptionMetadata !== undefined ? file.encryptionMetadata : (existingFile?.encryptionMetadata ?? null),
             lastModified: Date.now(),
             lastSyncedAt: file.isDirty === false ? Date.now() : (existingFile?.lastSyncedAt || 0),
-            isDirty: file.isDirty !== undefined ? file.isDirty : true,
+            isDirty: isTargetDirty,
+            localRevision: nextRevision,
             baseSnapshot,
         };
         await activeIdb.saveFile(idbFile);
@@ -350,6 +357,7 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 userId,
                 fileId: file.id,
                 baseVersion: baseSnapshot?.version || existingFile?.version || 1,
+                localRevision: nextRevision,
                 status: 'queued',
                 attempts: 0,
                 operationType: 'update',

@@ -24,6 +24,7 @@ import {
 } from './crypto-worker-bridge';
 import { sessionKeyStore } from './session-key-store';
 import { DeviceTrustEnvelope, UserVaultProfile } from './types/vault';
+import { canCoalesce, coalesceOperations } from './coalescing';
 
 interface LocalEncryptedPayload {
     readonly _enc: 1;
@@ -522,57 +523,105 @@ class IndexedDBManager {
         }
     }
 
-    async markFileClean(id: string, newEtag: string, newVersion?: number): Promise<void> {
+    /**
+     * Marks a file clean with new ETag/version, guarded by Lean CAS check against sentRevision.
+     * Retains isDirty = true if localRevision > sentRevision to prevent in-flight lost updates.
+     *
+     * Remediates: LUGX-010, LUGX-011
+     */
+    async markFileClean(id: string, newEtag: string, newVersion?: number, sentRevision?: number): Promise<void> {
         const file = await this.getFile(id);
         if (file) {
-            file.isDirty = false;
-            file.etag = newEtag;
+            const hasNewerLocalEdits =
+                sentRevision !== undefined &&
+                file.localRevision !== undefined &&
+                file.localRevision > sentRevision;
+
             if (newVersion !== undefined) {
                 file.version = newVersion;
             }
-            file.lastSyncedAt = Date.now();
-            file.baseSnapshot = {
-                content: file.content,
-                etag: newEtag,
-                version: file.version,
-                title: file.title,
-                parentFolderId: file.parentFolderId,
-                isEncrypted: file.isEncrypted,
-                encryptionMetadata: file.encryptionMetadata,
-            };
+            file.etag = newEtag;
+
+            if (hasNewerLocalEdits) {
+                // Lean CAS: In-flight mutations occurred while push was in flight.
+                // Retain dirty state to guarantee subsequent push pass.
+                file.isDirty = true;
+                if (file.baseSnapshot) {
+                    file.baseSnapshot.etag = newEtag;
+                    if (newVersion !== undefined) {
+                        file.baseSnapshot.version = newVersion;
+                    }
+                }
+            } else {
+                file.isDirty = false;
+                file.lastSyncedAt = Date.now();
+                file.baseSnapshot = {
+                    content: file.content,
+                    etag: newEtag,
+                    version: file.version,
+                    title: file.title,
+                    parentFolderId: file.parentFolderId,
+                    isEncrypted: file.isEncrypted,
+                    encryptionMetadata: file.encryptionMetadata,
+                };
+            }
             await this.saveFile(file);
         }
     }
 
     /**
-     * Atomically marks a file clean and its corresponding operation synced in a single transaction
+     * Atomically marks a file clean and its corresponding operation synced in a single multi-store transaction.
+     * Implements Lean CAS (Compare-And-Swap) gating using sentRevision vs localRevision:
+     * - If file.localRevision === sentRevision (or sentRevision omitted): marks isDirty = false and updates etag/version/baseSnapshot.
+     * - If file.localRevision > sentRevision: in-flight mutations occurred! Updates version/etag in baseSnapshot but retains isDirty = true.
+     *
+     * Remediates: LUGX-010, LUGX-011
      */
     async commitFileAndOperationSync(
         fileId: string,
         newEtag: string,
         opId: string,
         attempts: number,
-        newVersion?: number
+        newVersion?: number,
+        sentRevision?: number
     ): Promise<void> {
         const file = await this.getFile(fileId);
         const op = await this.getOperation(opId);
 
         if (file) {
-            file.isDirty = false;
-            file.etag = newEtag;
+            const hasNewerLocalEdits =
+                sentRevision !== undefined &&
+                file.localRevision !== undefined &&
+                file.localRevision > sentRevision;
+
             if (newVersion !== undefined) {
                 file.version = newVersion;
             }
-            file.lastSyncedAt = Date.now();
-            file.baseSnapshot = {
-                content: file.content,
-                etag: newEtag,
-                version: file.version,
-                title: file.title,
-                parentFolderId: file.parentFolderId,
-                isEncrypted: file.isEncrypted,
-                encryptionMetadata: file.encryptionMetadata,
-            };
+            file.etag = newEtag;
+
+            if (hasNewerLocalEdits) {
+                // Lean CAS: Local modifications occurred while operation was in flight.
+                // Preserve isDirty = true and update baseSnapshot etag/version without overwriting current dirty content.
+                file.isDirty = true;
+                if (file.baseSnapshot) {
+                    file.baseSnapshot.etag = newEtag;
+                    if (newVersion !== undefined) {
+                        file.baseSnapshot.version = newVersion;
+                    }
+                }
+            } else {
+                file.isDirty = false;
+                file.lastSyncedAt = Date.now();
+                file.baseSnapshot = {
+                    content: file.content,
+                    etag: newEtag,
+                    version: file.version,
+                    title: file.title,
+                    parentFolderId: file.parentFolderId,
+                    isEncrypted: file.isEncrypted,
+                    encryptionMetadata: file.encryptionMetadata,
+                };
+            }
         }
 
         if (op) {
@@ -580,6 +629,9 @@ class IndexedDBManager {
             op.synced = true;
             op.attempts = attempts;
             op.lastError = undefined;
+            if (sentRevision !== undefined) {
+                op.sentRevision = sentRevision;
+            }
         }
 
         const encryptedFile = file ? await this.encryptFileForStorage(file) : null;
@@ -628,7 +680,9 @@ class IndexedDBManager {
     }
 
     /**
-     * Coalesces pending operation for the same fileId or adds a new one
+     * Coalesces pending operation for the same fileId or adds a new one.
+     * Restricts coalescing strictly to operations in 'queued' status (LUGX-040)
+     * and preserves monotonic localRevision increments (LUGX-010).
      */
     async coalesceOperation(operation: IDBOperation): Promise<void> {
         const db = await this.getDB();
@@ -641,18 +695,10 @@ class IndexedDBManager {
         };
 
         const existingOps = await this.getOperations(operation.fileId);
-        const existingPendingOp = existingOps.find(o =>
-            !o.synced &&
-            o.status !== 'synced' &&
-            (o.operationType === operation.operationType || (o.operationType === 'create' && operation.operationType === 'update'))
-        );
+        const existingQueuedOp = existingOps.find(o => canCoalesce(o, opToStore));
 
-        if (existingPendingOp) {
-            const coalesced: IDBOperation = {
-                ...existingPendingOp,
-                content: operation.content,
-                timestamp: operation.timestamp || Date.now(),
-            };
+        if (existingQueuedOp) {
+            const coalesced = coalesceOperations(existingQueuedOp, opToStore);
             const encrypted = await this.encryptOperationForStorage(coalesced);
             return new Promise((resolve, reject) => {
                 const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readwrite');
