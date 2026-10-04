@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import type { EditorAdapter } from '@/components/editor/markdown/types';
 import {
     AIStreamSession,
@@ -617,10 +617,12 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     }, [stopStream]);
 
     // Sync callback refs with latest closures
-    commitPreviewRef.current = commitPreview;
-    rejectPreviewRef.current = rejectPreview;
-    retryPreviewRef.current = retryPreview;
-    stopStreamRef.current = stopStream;
+    useLayoutEffect(() => {
+        commitPreviewRef.current = commitPreview;
+        rejectPreviewRef.current = rejectPreview;
+        retryPreviewRef.current = retryPreview;
+        stopStreamRef.current = stopStream;
+    }, [commitPreview, rejectPreview, retryPreview, stopStream]);
 
     return {
         status,

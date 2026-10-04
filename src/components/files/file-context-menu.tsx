@@ -256,17 +256,27 @@ export function FileContextMenu({
     async function handleEncryptClick() {
         const effectiveUid = await resolveEffectiveUserId();
         if (effectiveUid) {
-            await indexedDBManager.init(effectiveUid);
+            try {
+                await indexedDBManager.init(effectiveUid);
+            } catch (initErr) {
+                console.warn("[FileContextMenu] IndexedDB init deferred:", initErr);
+            }
         }
 
         // 1. Check if user vault profile exists locally or remotely
-        let profile = await indexedDBManager.getCachedVaultProfile(effectiveUid);
+        let profile = null;
+        try {
+            profile = await indexedDBManager.getCachedVaultProfile(effectiveUid);
+        } catch (idbErr) {
+            console.warn("[FileContextMenu] Cached vault profile lookup deferred to server:", idbErr);
+        }
+
         if (!profile) {
             try {
                 const res = await getUserVaultProfile();
                 if (res.success && res.data) {
                     profile = res.data;
-                    await indexedDBManager.saveCachedVaultProfile(res.data, effectiveUid);
+                    await indexedDBManager.saveCachedVaultProfile(res.data, effectiveUid).catch(() => {});
                 }
             } catch {
                 // Offline fallback
@@ -304,11 +314,15 @@ export function FileContextMenu({
             // Fetch current plaintext content from local IndexedDB or server
             const localFile = await indexedDBManager.getFile(fileId, effectiveUid);
             let contentToEncrypt = localFile?.content ?? "";
+            let baseVersion: number | undefined = localFile?.version ?? undefined;
+            let baseEtag: string | undefined = localFile?.etag ?? undefined;
 
             if (!contentToEncrypt) {
                 const serverRes = await getFile(fileId);
                 if (serverRes.success && serverRes.data) {
                     contentToEncrypt = serverRes.data.content || "";
+                    baseVersion = serverRes.data.version ?? undefined;
+                    baseEtag = serverRes.data.etag ?? undefined;
                 }
             }
 
@@ -333,13 +347,23 @@ export function FileContextMenu({
             // Sync to server if reachable
             let syncResult: Awaited<ReturnType<typeof toggleFileEncryption>> | null = null;
             try {
-                syncResult = await toggleFileEncryption(fileId, true, encResult.ciphertextBase64, metadata);
+                syncResult = await toggleFileEncryption(fileId, true, encResult.ciphertextBase64, metadata, {
+                    expectedVersion: baseVersion || 1,
+                    expectedETag: baseEtag || "",
+                });
+
+                if (syncResult && !syncResult.success && syncResult.status === "conflict") {
+                    alert("تعذر التشفير: تم تعديل الملف من قبل جلسة أخرى. سيتم تحديث الصفحة.");
+                    onRefresh?.();
+                    onClose();
+                    return;
+                }
             } catch (serverErr) {
                 console.warn("[FileContextMenu] Cloud encryption sync deferred:", serverErr);
             }
 
-            const targetVersion = (syncResult?.success && syncResult.version) ? syncResult.version : (localFile?.version || 1);
-            const targetEtag = (syncResult?.success && syncResult.etag) ? syncResult.etag : (localFile?.etag || "");
+            const targetVersion = (syncResult?.success && syncResult.version) ? syncResult.version : (baseVersion || 1);
+            const targetEtag = (syncResult?.success && syncResult.etag) ? syncResult.etag : (baseEtag || "");
             const isClean = !!(syncResult?.success);
 
             // Offline-First: Save to local IndexedDB as encrypted ciphertext (NEVER plaintext)
@@ -431,12 +455,16 @@ export function FileContextMenu({
             const localFile = await indexedDBManager.getFile(fileId, effectiveUid);
             let rawContent = localFile?.content ?? "";
             let metadata = localFile?.encryptionMetadata;
+            let baseVersion: number | undefined = localFile?.version ?? undefined;
+            let baseEtag: string | undefined = localFile?.etag ?? undefined;
 
             if (!rawContent || !metadata) {
                 const serverRes = await getFile(fileId);
                 if (serverRes.success && serverRes.data) {
                     rawContent = serverRes.data.content || "";
                     metadata = serverRes.data.encryptionMetadata;
+                    baseVersion = serverRes.data.version ?? undefined;
+                    baseEtag = serverRes.data.etag ?? undefined;
                 }
             }
 
@@ -461,13 +489,23 @@ export function FileContextMenu({
             // Sync to server if reachable
             let syncResult: Awaited<ReturnType<typeof toggleFileEncryption>> | null = null;
             try {
-                syncResult = await toggleFileEncryption(fileId, false, decryptedContent, null);
+                syncResult = await toggleFileEncryption(fileId, false, decryptedContent, null, {
+                    expectedVersion: baseVersion || 1,
+                    expectedETag: baseEtag || "",
+                });
+
+                if (syncResult && !syncResult.success && syncResult.status === "conflict") {
+                    alert("تعذر فك التشفير: تم تعديل الملف من قبل جلسة أخرى. سيتم تحديث الصفحة.");
+                    onRefresh?.();
+                    onClose();
+                    return;
+                }
             } catch (serverErr) {
                 console.warn("[FileContextMenu] Cloud decryption sync deferred:", serverErr);
             }
 
-            const targetVersion = (syncResult?.success && syncResult.version) ? syncResult.version : (localFile?.version || 1);
-            const targetEtag = (syncResult?.success && syncResult.etag) ? syncResult.etag : (localFile?.etag || "");
+            const targetVersion = (syncResult?.success && syncResult.version) ? syncResult.version : (baseVersion || 1);
+            const targetEtag = (syncResult?.success && syncResult.etag) ? syncResult.etag : (baseEtag || "");
             const isClean = !!(syncResult?.success);
 
             // Offline-First: Update local IndexedDB to unencrypted

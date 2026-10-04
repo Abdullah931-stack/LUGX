@@ -13,7 +13,7 @@ import { streamWithAI, processWithAI, Tier } from "@/lib/ai/client";
 import { countWords } from "@/lib/utils";
 import { AIOperation } from "@/lib/ai/prompts";
 import { FEATURES } from "@/config/features.config";
-import { aiStreamRateLimiter, addRateLimitHeaders, rateLimitExceededResponse } from "@/lib/rate-limit";
+import { aiStreamRateLimiter, addRateLimitHeaders, rateLimitExceededResponse, type RateLimitResult } from "@/lib/rate-limit";
 import { getOrGenerateCorrelationId, addCorrelationHeader } from "@/lib/utils/correlation";
 
 import { sanitizeLogMessage } from "@/lib/sync/log-sanitizer";
@@ -50,16 +50,12 @@ export async function POST(req: NextRequest) {
             return res;
         }
 
-        const rateLimitResult = await aiStreamRateLimiter.limit(user.id);
-        if (!rateLimitResult.success) {
-            const res = rateLimitExceededResponse(rateLimitResult);
-            addCorrelationHeader(res.headers, correlationId);
-            return res;
-        }
-
+        let rateLimitResult: RateLimitResult | undefined;
         const withCorrelation = (res: NextResponse): NextResponse => {
             addCorrelationHeader(res.headers, correlationId);
-            addRateLimitHeaders(res.headers, rateLimitResult);
+            if (rateLimitResult) {
+                addRateLimitHeaders(res.headers, rateLimitResult);
+            }
             return res;
         };
 
@@ -110,6 +106,13 @@ export async function POST(req: NextRequest) {
             if (!vaultProfile?.allowAIOnEncryptedFiles) {
                 return withCorrelation(new NextResponse("AI_PROHIBITED_ON_ENCRYPTED_FILES", { status: 403 }));
             }
+        }
+
+        rateLimitResult = await aiStreamRateLimiter.limit(user.id);
+        if (!rateLimitResult.success) {
+            const res = rateLimitExceededResponse(rateLimitResult);
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
         }
 
         // 1. Get User Tier

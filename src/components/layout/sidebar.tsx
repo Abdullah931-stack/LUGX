@@ -337,12 +337,15 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                 }
 
                 let result;
+                let effectiveUid = "";
+                let fileId = "";
+
                 if (importToVault) {
                     const masterKey = sessionKeyStore.getMasterKeyRaw();
                     if (!masterKey) throw new Error("Vault master key not available in memory");
 
-                    const effectiveUid = await resolveEffectiveUserId();
-                    const fileId = crypto.randomUUID();
+                    effectiveUid = await resolveEffectiveUserId();
+                    fileId = crypto.randomUUID();
                     const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
                     const aad = `vault:file:${effectiveUid}:${fileId}`;
 
@@ -377,9 +380,9 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                                 version: 1,
                                 etag: "",
                                 lastModified: Date.now(),
-                                lastSyncedAt: Date.now(),
-                                isDirty: false,
-                            });
+                                lastSyncedAt: 0,
+                                isDirty: true,
+                            }, effectiveUid);
                         }
                     } catch (dbErr) {
                         console.warn("[Sidebar] IndexedDB cache write deferred:", dbErr);
@@ -406,6 +409,24 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                 }
 
                 if (result.success) {
+                    if (importToVault && effectiveUid) {
+                        // Mark clean with server-returned version/etag only after importFile succeeds
+                        try {
+                            const savedFile = await indexedDBManager.getFile(fileId, effectiveUid);
+                            if (savedFile) {
+                                await indexedDBManager.saveFile({
+                                    ...savedFile,
+                                    isDirty: false,
+                                    version: result.data?.version || savedFile.version,
+                                    etag: result.data?.etag || savedFile.etag,
+                                    lastSyncedAt: Date.now(),
+                                }, effectiveUid);
+                            }
+                        } catch (err) {
+                            console.warn("[Sidebar] Failed to mark file clean after successful import:", err);
+                        }
+                    }
+
                     toast({
                         title: importToVault ? "تم استيراد المستند مشفراً للخزنة" : "File Imported",
                         description: `${file.name} imported successfully${result.data?.wordCount ? ` (${result.data.wordCount} words)` : ''}`,

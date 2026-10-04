@@ -471,7 +471,10 @@ class IndexedDBManager {
 
     private async getDB(): Promise<IDBDatabase> {
         if (!this.db) await this.init();
-        return this.db!;
+        if (!this.db) {
+            throw new Error('IndexedDB database instance is not available or failed to initialize');
+        }
+        return this.db;
     }
 
     /**
@@ -1248,25 +1251,30 @@ class IndexedDBManager {
             console.warn('[IndexedDB] saveCachedVaultProfile: Skipped - No valid userId available');
             return;
         }
-        if (this.userId !== targetUserId || !this.db) {
-            await this.init(targetUserId);
-        }
-        const db = await this.getDB();
-        await new Promise<void>((resolve, reject) => {
-            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readwrite');
-            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).put({
-                id: 'vault_profile',
-                profile,
-                updatedAt: Date.now(),
+        try {
+            if (this.userId !== targetUserId || !this.db) {
+                await this.init(targetUserId);
+            }
+            const db = await this.getDB();
+            if (!db) return;
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readwrite');
+                const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).put({
+                    id: 'vault_profile',
+                    profile,
+                    updatedAt: Date.now(),
+                });
+                req.onsuccess = () => resolve();
+                req.onerror = () => reject(req.error);
             });
-            req.onsuccess = () => resolve();
-            req.onerror = () => reject(req.error);
-        });
+        } catch (err) {
+            console.warn('[IndexedDB] saveCachedVaultProfile: Failed to persist cached profile:', err);
+        }
     }
 
     /**
      * Retrieve cached vault profile for offline unlocking.
-     * Safely returns null if no valid userId is available to avoid unhandled rejections.
+     * Safely returns null if no valid userId is available or cache is inaccessible to avoid unhandled rejections.
      */
     async getCachedVaultProfile<T = UserVaultProfile>(userId?: string): Promise<T | null> {
         const targetUserId = userId?.trim() || this.userId;
@@ -1274,22 +1282,28 @@ class IndexedDBManager {
             console.warn('[IndexedDB] getCachedVaultProfile: No valid userId available, returning null');
             return null;
         }
-        if (this.userId !== targetUserId || !this.db) {
-            await this.init(targetUserId);
+        try {
+            if (this.userId !== targetUserId || !this.db) {
+                await this.init(targetUserId);
+            }
+            const db = await this.getDB();
+            if (!db) return null;
+            return await new Promise<T | null>((resolve, reject) => {
+                const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readonly');
+                const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).get('vault_profile');
+                req.onsuccess = () => {
+                    if (req.result && req.result.profile) {
+                        resolve(req.result.profile as T);
+                    } else {
+                        resolve(null);
+                    }
+                };
+                req.onerror = () => reject(req.error);
+            });
+        } catch (err) {
+            console.warn('[IndexedDB] getCachedVaultProfile: Failed to retrieve cached profile, returning null:', err);
+            return null;
         }
-        const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readonly');
-            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).get('vault_profile');
-            req.onsuccess = () => {
-                if (req.result && req.result.profile) {
-                    resolve(req.result.profile as T);
-                } else {
-                    resolve(null);
-                }
-            };
-            req.onerror = () => reject(req.error);
-        });
     }
 
     /**

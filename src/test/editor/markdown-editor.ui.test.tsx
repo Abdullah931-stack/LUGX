@@ -8,10 +8,9 @@ import { EditorAdapter } from "@/components/editor/markdown/types";
 describe("MarkdownEditor React Component", () => {
     afterEach(() => {
         cleanup();
-        const head = document.head;
-        while (head.firstChild) {
-            head.removeChild(head.firstChild);
-        }
+        // Remove only dynamic style tags injected during editor mounting,
+        // preserving JSDOM's base document head integrity and internal references.
+        document.head.querySelectorAll("style").forEach((style) => style.remove());
     });
     it("renders properly with default props", async () => {
         const { container } = render(

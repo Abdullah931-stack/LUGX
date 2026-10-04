@@ -22,6 +22,8 @@ export interface ImportFileResult {
         title: string;
         content: string;
         wordCount: number;
+        version: number;
+        etag: string;
     };
     error?: string;
 }
@@ -201,6 +203,8 @@ export async function importFile(
                 title: newFile.title,
                 content: finalContent,
                 wordCount,
+                version: newFile.version ?? 1,
+                etag: newFile.etag ?? etag,
             },
         };
     } catch (error) {

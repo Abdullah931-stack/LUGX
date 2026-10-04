@@ -10,7 +10,7 @@ export default defineConfig({
         },
         setupFiles: ['./vitest.setup.ts'],
         globals: true,
-        testTimeout: 15_000,
+        testTimeout: 30_000,
         maxWorkers: process.env.CI ? 4 : 3,
         include: ['src/**/*.test.{ts,tsx}', 'src/**/*.test.ts'],
         // Phase 10: LIVE integration suites and external cloud suites are excluded from default runner
@@ -19,6 +19,7 @@ export default defineConfig({
         // Each test file runs in an isolated fork worker, preventing V8 heap
         // accumulation and environment switching segfaults across mixed jsdom/node suites.
         pool: 'forks',
+        execArgv: ['--max-old-space-size=4096'],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'html'],

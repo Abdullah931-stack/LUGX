@@ -113,6 +113,16 @@ export function SearchReplace({ adapter, editor, isOpen, onClose }: SearchReplac
             const currentMatch = matches[currentMatchIndex];
             const { from, to } = currentMatch;
 
+            const currentDoc = currentAdapter.getValue();
+            const slice = currentDoc.slice(from, to);
+            const sliceForCheck = caseSensitive ? slice : slice.toLowerCase();
+            const searchText = caseSensitive ? searchQuery : searchQuery.toLowerCase();
+
+            if (sliceForCheck !== searchText) {
+                findMatches();
+                return;
+            }
+
             // Replace single range synchronously
             currentAdapter.replaceRange(from, to, replaceQuery);
             currentAdapter.focus();
@@ -122,14 +132,34 @@ export function SearchReplace({ adapter, editor, isOpen, onClose }: SearchReplac
         } catch (error) {
             console.error("[SearchReplace] Replace error:", error);
         }
-    }, [currentAdapter, matches, currentMatchIndex, replaceQuery, findMatches]);
+    }, [currentAdapter, matches, currentMatchIndex, replaceQuery, caseSensitive, searchQuery, findMatches]);
 
     // Safe Multi-Range Transaction: Replace all matches in one atomic undoable step
     const replaceAllMatches = useCallback(() => {
         if (!currentAdapter || matches.length === 0 || !replaceQuery) return;
 
         try {
-            const changes = matches.map((m) => ({
+            const currentDoc = currentAdapter.getValue();
+            const searchText = caseSensitive ? searchQuery : searchQuery.toLowerCase();
+            const validMatches = [];
+            let hasStale = false;
+
+            for (const m of matches) {
+                const slice = currentDoc.slice(m.from, m.to);
+                const sliceForCheck = caseSensitive ? slice : slice.toLowerCase();
+                if (sliceForCheck === searchText) {
+                    validMatches.push(m);
+                } else {
+                    hasStale = true;
+                }
+            }
+
+            if (hasStale) {
+                findMatches();
+                return;
+            }
+
+            const changes = validMatches.map((m) => ({
                 from: m.from,
                 to: m.to,
                 insert: replaceQuery,
@@ -147,7 +177,7 @@ export function SearchReplace({ adapter, editor, isOpen, onClose }: SearchReplac
         } catch (error) {
             console.error("[SearchReplace] Replace all error:", error);
         }
-    }, [currentAdapter, matches, replaceQuery]);
+    }, [currentAdapter, matches, replaceQuery, caseSensitive, searchQuery, findMatches]);
 
     // Debounced search effect
     useEffect(() => {
