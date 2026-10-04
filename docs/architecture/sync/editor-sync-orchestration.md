@@ -271,7 +271,7 @@ Invariants:
 In Phase 4 of the Markdown migration roadmap, all synchronization channels, conflict detection, three-way merge algorithms, and conflict dialogs were transitioned from legacy HTML parsing to pure, engine-agnostic Markdown.
 
 ### 6d.1 Remote Update Event Pipeline
-1. When background sync pulls clean updates from the server via `SyncManager.pullFile()`, it dispatches typed `RemoteUpdateEvent` payloads to registered listeners.
+1. When background sync pulls clean updates from the server via `SyncPullEngine.pullFile()` (orchestrated via `SyncManager`), it dispatches typed `RemoteUpdateEvent` payloads to registered listeners.
 2. `useSync` subscribes to `SyncManager.onRemoteUpdate` and forwards events to `useEditorOrchestrator.handleRemoteUpdate`.
 3. `useEditorOrchestrator` runs invariant guards (verifies document is clean, no active conflict, no active AI streaming, and hydration is complete) and uses `classifyRemoteUpdate` to safely fast-forward the editor (`adapter.setValue(event.content)`) under programmatic protection without creating phantom dirty states.
 
@@ -373,7 +373,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
    - If the device is offline, conversion executes locally against `IndexedDB`:
      - Plaintext is encrypted into ciphertext using the local Master Key.
      - `IDBFile` is saved with `content: ciphertextBase64`, `isEncrypted: true`, `encryptionMetadata: metadata`, and `isDirty: true`.
-     - `syncManager` automatically pushes the encrypted payload to the cloud once network connectivity is restored.
+     - `syncManager` delegates to `SyncQueueWorker.pushDirtyFiles` to automatically push the encrypted payload to the cloud once network connectivity is restored.
    - If the device is online, `toggleFileEncryption` executes an atomic database update with optimistic concurrency (`expectedVersion`, `expectedETag`), returning the updated file metadata and ETag to the client, while local IDB is marked clean (`isDirty: false`).
    - Server-side guard: `updateFileContent` strictly rejects unencrypted plaintext writes to any file marked `is_encrypted: true`.
 
@@ -399,7 +399,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
    - To prevent unexpected vault auto-locks during active composition, editor keystroke events in CodeMirror trigger `sessionKeyStore.touch()`, extending the 1-hour inactivity timeout seamlessly without requiring background timers or intrusive prompts.
 
 8. **Inbound Remote Update Decryption Interceptor (`handleRemoteUpdate`):**
-   - Inbound background updates dispatched by `SyncManager.onRemoteUpdate` are intercepted by `SyncCryptoGateway.decryptInbound`.
+   - Inbound background updates pulled by `SyncPullEngine` and dispatched via `SyncManager.onRemoteUpdate` are intercepted by `SyncCryptoGateway.decryptInbound`.
    - If the file is encrypted and the vault is unlocked, the payload is transparently decrypted into clean Markdown plaintext before updating the editor surface (`adapter.setValue(remote.content)`).
    - If the vault is locked, the update is safely isolated without mutating the editor, preserving the `vault_locked` barrier and preventing raw ciphertext leakage into CodeMirror or the DOM.
 

@@ -177,11 +177,13 @@ The standalone `markFileClean(id, newEtag, newVersion?, sentRevision?)` method e
 
 ---
 
-## 5. Queue Engine, Scheduling & Backoff (`src/lib/sync/sync-manager.ts`)
+## 5. Queue Engine, Scheduling & Backoff (`src/lib/sync/sync-queue-worker.ts`)
+
+Extracted into `SyncQueueWorker` in Phase 16 and orchestrated by the `SyncManager` thin coordinator:
 
 ### 5.1. Single-Flight Consumer Guard
 To prevent concurrency hazards when multiple events trigger sync simultaneously (online detector, auto-sync timer, local save):
-- `isQueueProcessing` flag ensures only a single queue consumer executes at any point in time.
+- `isQueueProcessing` flag in `SyncQueueWorker` ensures only a single queue consumer executes at any point in time.
 - `concurrencyManager.withLock(fileId)` ensures per-file mutual exclusion during API execution.
 
 ### 5.2. Due Operations Querying
@@ -199,16 +201,17 @@ $$\text{nextRetryAt} = \text{Date.now}() + \text{delay}$$
 
 - **Defaults:** $\text{baseBackoffMs} = 1000\text{ ms}$, $\text{maxBackoffMs} = 30000\text{ ms}$, $\text{maxRetries} = 5$.
 - **Thundering Herd Protection:** Jitter prevents simultaneous retries across thousands of clients after network or server recovery.
+- **Worker Implementation:** Handled directly by `SyncQueueWorker.calculateBackoffDelay(attempts)`.
 
 ### 5.4. Double-Push Elimination
-`SyncManager.pushDirtyFiles()` queries active queued and syncing operations:
+`SyncQueueWorker.pushDirtyFiles()` queries active queued and syncing operations:
 ```typescript
 const queuedOps = await this.idb.getOperationsByStatus('queued');
 const syncingOps = await this.idb.getOperationsByStatus('syncing');
 const pendingFileIds = new Set([...queuedOps, ...syncingOps].map(o => o.fileId));
-const filesToPush = dirtyFiles.filter(f => !pendingFileIds.has(f.id));
+const filesToPush = dirtyFiles.filter(f => !pendingFileIds.has(f.id) && !this.encryptedConflictStore.isEncryptedConflictLocked(f.id));
 ```
-Files with active queue items are never pushed via the fallback dirty push loop, eliminating payload duplication and lock contention.
+Files with active queue items or locked encrypted conflicts are never pushed via the standalone dirty push loop, eliminating payload duplication and lock contention.
 
 ### 5.5. Deterministic Operation Coalescing (`src/lib/sync/coalescing.ts`)
 To prevent unbounded operation queue growth and eliminate state pollution bugs (LUGX-040), client operations in IndexedDB are coalesced using pure functions:
@@ -239,9 +242,9 @@ When `canCoalesce` returns true, `coalesceOperations(existingOp, incomingOp)`:
 
 ---
 
-## 6. Server Tombstones & Reconciliation (`src/lib/sync/sync-manager.ts`)
+## 6. Server Tombstones & Reconciliation (`src/lib/sync/sync-pull-engine.ts`)
 
-In `SyncManager.pullFile()`:
+In `SyncPullEngine.pullFile()`:
 - When a server file entry has `deletedAt !== null`:
   1. The local file is deleted immediately from IndexedDB (`idb.deleteFile(id)`).
   2. Any local pending operations for that file (`status: 'queued' | 'syncing'`) are transitioned to `status: 'failed'` with `lastError: 'File deleted on server (tombstone received)'`.

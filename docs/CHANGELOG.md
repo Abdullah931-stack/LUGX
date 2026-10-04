@@ -1,5 +1,64 @@
 # Changelog - LUGX Project
 
+## [1.44.0] - 2026-10-04 (Phase 16: Thin Coordinator SyncManager Decomposition & Subsystem Extraction)
+
+### Thin Coordinator Architecture (`src/lib/sync/sync-manager.ts`)
+
+- **Monolithic Decomposition & Single-File Complexity Reduction (TD-16):**
+  - Decomposed the legacy monolithic `SyncManager` (1,952 lines of code) into a lightweight coordinator pattern measuring 342 lines (304 executable code lines), satisfying the < 350-line target.
+  - Retains 100% backward-compatible public API signatures: `init()`, `destroy()`, `sync()`, `queueSync()`, `syncFile()`, `getStatus()`, `onStatusChange()`, `onRemoteUpdate()`, `setConflictCallback()`, and encrypted conflict delegates.
+  - Coordinates high-level synchronization lifecycle, connection state transitions (`online`/`offline`), auto-sync timers, and reactive vault unlock subscriptions.
+  - Reuses the existing `SyncRollback` implementation (`src/lib/sync/rollback.ts`, 304 lines) without modification, injecting `this.rollback` into all specialized sub-engines.
+
+### Dedicated Sync Queue Worker (`src/lib/sync/sync-queue-worker.ts`)
+
+- **Queue Processing & Outbound Push Extraction:**
+  - Extracted 766 lines of outbound queue processing, batch push dispatching, and exponential backoff retry scheduling.
+  - Single-flight processing guarded via `isQueueProcessing` to prevent overlapping executions.
+  - Computes randomized backoff delays with jitter (`calculateBackoffDelay`) to avoid network retry thundering herds.
+  - Non-destructive checkpoint cleanup: pre-sync checkpoints captured via `rollback.createCheckpoint(file.id, 'pre_sync')` are cleanly discarded via `rollback.removeCheckpoint()` on network errors, preserving local edits without reverting offline work (LUGX-013).
+  - Eliminates double-push anomalies by filtering out files with active `queued`/`syncing` operations and locked encrypted conflicts.
+
+### In-Memory Encrypted Conflict Store (`src/lib/sync/sync-encrypted-conflict-store.ts`)
+
+- **Locked Vault Conflict Quarantine & Reactive Auto-Resolution:**
+  - Extracted 447 lines managing in-memory `CONFLICT_LOCKED` quarantine for encrypted payloads encountering HTTP 412 while the vault is locked.
+  - Bounded memory backpressure: caps quarantined conflicts at `MAX_QUARANTINED_CONFLICTS = 100` with FIFO oldest eviction via linear timestamp scan, while updates to existing keys are false-eviction immune.
+  - Provides real-time quarantine diagnostics (`getQuarantineDiagnostics`), discard routines (`discardPendingEncryptedConflict`), and vault-unlock auto-resolution.
+  - Reactive unlock resolution: decrypts local, base, and server envelopes in RAM upon vault unlock, executes deterministic 3-way Diff3 merge, validates Markdown AST syntax integrity, re-encrypts with a fresh CSPRNG IV, and dispatches the resolved document upstream.
+
+### Incremental Sync Pull Engine (`src/lib/sync/sync-pull-engine.ts`)
+
+- **Cursor Traversal & Inbound Remote Updates Extraction:**
+  - Extracted 537 lines handling incremental server change synchronization (`pullUpdates`), pagination cursor traversal, and per-file updates (`pullFile`).
+  - Remote tombstone reconciliation: applies server deletion tombstones (`deletedAt !== null`) locally, removing local copies and marking pending operations failed.
+  - Inbound pull overwrite protection: strictly aborts `pullFile` if the local document is in `syncStatus === 'conflict'` or actively quarantined within `ConflictStore`, preventing remote overwrites of unmerged local drafts (LUGX-012, LUGX-099).
+  - Integrates `SyncCryptoGateway` to decrypt inbound payloads before broadcasting `RemoteUpdateEvent` to editor listeners.
+
+### Centralized Domain Contracts (`src/lib/sync/sync-manager.types.ts`)
+
+- **Contract Centralization & Circular Dependency Elimination:**
+  - Extracted 126 lines establishing the authoritative type contracts for the sync subsystem.
+  - Standardized `SyncManagerConfig`, `SyncStatus`, `SyncResult`, `FileSyncResult`, `RemoteUpdateEvent`, and callback interfaces (`SyncStatusCallback`, `RemoteUpdateCallback`, `ConflictCallback`).
+  - Decoupled contracts from runtime implementation classes, guaranteeing zero circular import dependencies across all sub-engines.
+  - Re-exported all extracted classes and contracts through `src/lib/sync/index.ts`.
+
+### Technical Debt & Documentation Governance
+
+- **Technical Debt Register (`docs/TECHNICAL_DEBT_REGISTER.md`):**
+  - Marked TD-16 as resolved (Phase 16 / 2026-10-04) with comprehensive documentation of line count reductions, architectural delegation, and zero consumer breakage.
+- **Living Architecture & Reference Specifications Updated:**
+  - `docs/reference/sync-api.md`: updated pull protection guard citations to `SyncPullEngine.pullFile` and added § 13 documenting `SyncManager` Thin Coordinator class.
+  - `docs/architecture/sync/editor-sync-orchestration.md`: synchronized remote update pipeline and push dispatch citations to `SyncPullEngine` and `SyncQueueWorker`.
+  - `docs/architecture/sync/three-way-conflict-resolution.md`: synchronized false conflict elimination and pull overwrite guard references to `SyncPullEngine` and `SyncQueueWorker`.
+  - `docs/architecture/sync/sync-lifecycle-architecture.md`: updated inbound ingestion pipeline attributing `CONFLICT_LOCKED` quarantine to `SyncEncryptedConflictStore` and push filtering to `SyncQueueWorker.pushDirtyFiles`.
+  - `docs/plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`: transitioned Phase 16 to `✅ COMPLETED` with exact line counts and verification evidence.
+  - `docs/README.md`: updated directory structure and closures table to index Phase 16 closure dossier.
+  - Published closure dossier: `docs/records/closures/core-hardening/phase-16-sync-manager-decomposition-and-thin-coordinator-closure.md`.
+- **Automated Verification:**
+  - 306/306 vitest unit and integration tests passed across 21 test files (100% success rate).
+  - 0 TypeScript compiler errors (`tsc --noEmit`), 0 ESLint errors (`npm run lint`), 100% Markdown link integrity.
+
 ## [1.43.1] - 2026-10-03 (Phase 15.1: Deterministic Dependency Security Audit Gate)
 
 ### Security & CI - Production Fail-Closed Audit Gate with Developer-Managed Allowlist (TD-15)

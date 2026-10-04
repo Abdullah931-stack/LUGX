@@ -2,7 +2,7 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-10-03 (v1.43.1 — TD-15 dependency security audit gate registration).
+Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decomposition resolved in Phase 16).
 
 ---
 
@@ -175,3 +175,17 @@ Last reviewed: 2026-10-03 (v1.43.1 — TD-15 dependency security audit gate regi
   - If any vulnerability touches production runtime or any unexpected advisory appears in devDependencies, CI fails immediately.
 - **Conditions to Revisit / Reverse:**
   - When `micromatch/braces` publishes a patched version (`>= 3.0.4`) or when Next.js updates `@next/eslint-plugin-next` with a safe glob dependency. Upon release, upgrade dependencies and remove `GHSA-vfj7-8cjw-p6xm` from the allowlist in `scripts/ci-audit.mjs`.
+
+## TD-16 — Monolithic `sync-manager.ts` Architecture & Single-File Complexity — ✅ RESOLVED (Phase 16 / 2026-10-04)
+
+- **Debt:** `src/lib/sync/sync-manager.ts` had expanded to 1,952 lines of code, conflating multiple distinct operational domains: queue consumption & exponential backoff scheduling, dirty file push batches & concurrency locking, remote cursor pull & pagination, and in-memory encrypted conflict quarantine with Diff3 auto-resolution. This excessive size hindered maintainability, modular testability, and adherence to clean single-responsibility boundaries.
+- **Resolution:**
+  - Decomposed `sync-manager.ts` into a Lean Coordinator pattern (< 350 lines, specifically 341 lines).
+  - Extracted `SyncQueueWorker` (`src/lib/sync/sync-queue-worker.ts`, 766 lines) for operations queue execution, retry backoff with jitter, dirty file pushing, and non-destructive checkpoint cleanup (LUGX-013).
+  - Extracted `SyncEncryptedConflictStore` (`src/lib/sync/sync-encrypted-conflict-store.ts`, 447 lines) for in-memory `CONFLICT_LOCKED` quarantine, bounded FIFO capacity (100), diagnostics, and Diff3 unlock auto-resolution.
+  - Extracted `SyncPullEngine` (`src/lib/sync/sync-pull-engine.ts`, 537 lines) for incremental cursor pagination, remote updates, pullFile conflict handling, and tombstone reconciliation.
+  - Centralized shared domain contracts and types into `src/lib/sync/sync-manager.types.ts` ensuring clean dependency graphs with zero circular imports.
+  - Reused existing `SyncRollback` (`src/lib/sync/rollback.ts`, 303 lines) directly via dependency injection without duplicating rollback logic.
+  - Re-exported all extracted classes and contracts through `src/lib/sync/index.ts` maintaining 100% backward compatibility for all public consumers and test suites.
+  - Verified across 100% of sync unit test suites (306/306 vitest tests passing).
+

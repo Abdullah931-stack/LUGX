@@ -477,7 +477,7 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 3. **Durable IDB Conflict Quarantine (`src/lib/idb/conflict-store.ts` & `src/lib/sync/indexeddb.ts`):**
    - Upon encountering HTTP 412 or 409 conflict, the file is persisted in IndexedDB with `syncStatus = 'conflict'` and `conflictData: { serverVersion, localVersion, baseVersion, detectedAt }`.
    - Quarantined conflicts survive page reloads and browser crashes without data loss.
-4. **Pull Protection Guard:** `SyncManager.pullFile` strictly refuses to overwrite, modify, or delete (via tombstone) any file in `syncStatus === 'conflict'` or quarantined within `ConflictStore`.
+4. **Pull Protection Guard:** `SyncPullEngine.pullFile` (orchestrated via `SyncManager`) strictly refuses to overwrite, modify, or delete (via tombstone) any file in `syncStatus === 'conflict'` or quarantined within `ConflictStore`.
 5. **Single Authoritative Write:** After user resolution (Local, Server, 3-Way Merge, or Restore), exactly one write request is dispatched to the server containing `expectedVersion: serverVersion.version`.
 6. **Verified State Transition:** Editor state (MarkdownEditor / EditorAdapter) and IndexedDB cache are only transitioned to clean (`isDirty: false`, `syncStatus = 'synced'`) after receiving 200 OK confirmation from the server. If local resolution is selected, `isDirty = true` and `syncStatus = 'dirty'` are preserved to trigger subsequent sync push.
 7. **Autosave Lockout:** Autosave is strictly inhibited whenever an unresolved conflict is active.
@@ -537,8 +537,11 @@ export interface RemoteUpdateEvent {
     content: string;
     etag: string;
     version: number;
-    updatedAt: number;
+    title?: string;
+    parentFolderId?: string | null;
+    updatedAt: string;
     isEncrypted?: boolean;
+    isVaultLocked?: boolean;
     encryptionMetadata?: EncryptedEnvelopeMetadata | null;
 }
 ```
@@ -757,4 +760,287 @@ export function isValidSyncTransition(state: SyncState, event: SyncEvent): boole
 1. **Rejection of Impossible Jumps:** Transitions from `idle` directly to `conflict` or `error` without an active `syncing` network attempt throw `InvalidSyncTransitionError` in strict mode.
 2. **Push Mandate on Conflict Resolution (LUGX-003):** Resolving a conflict via `local` or `merge` transitions directly to `syncing` (forcing a push before local changes can be marked clean), rather than silently transitioning to `idle`.
 3. **Purity Guarantee:** Reducer functions execute without side-effects, making zero calls to `Date.now()`, `fetch()`, or browser storage APIs.
+
+---
+
+### 9. Core Synchronization Domain Contracts (`src/lib/sync/sync-manager.types.ts`)
+
+Centralized domain contracts, callbacks, and configuration types ensuring clean module boundaries and zero circular dependencies:
+
+```typescript
+export const MAX_QUARANTINED_CONFLICTS = 100;
+
+export interface QuarantineDiagnostics {
+    totalQuarantined: number;
+    staleCount: number;             // Conflicts quarantined for > 24 hours
+    oldestQuarantinedAt: number | null;  // Timestamp ms
+    newestQuarantinedAt: number | null;  // Timestamp ms
+    isAtCapacity: boolean;          // True if quarantine >= MAX_QUARANTINED_CONFLICTS
+}
+
+export type SyncStatus =
+    | 'idle'
+    | 'loading'
+    | 'queued'
+    | 'syncing'
+    | 'conflict'
+    | 'failed'
+    | 'stopped'
+    | 'offline';
+
+export interface FileSyncResult {
+    fileId: string;
+    success: boolean;
+    action: 'pushed' | 'pulled' | 'conflict' | 'skipped';
+    error?: string;
+    newEtag?: string;
+}
+
+export interface SyncResult {
+    success: boolean;
+    filesProcessed: number;
+    filesPushed: number;
+    filesPulled: number;
+    conflicts: string[];
+    errors: string[];
+    timestamp: number;
+}
+
+export interface RemoteUpdateEvent {
+    fileId: string;
+    content: string;
+    etag: string;
+    version: number;
+    title?: string;
+    parentFolderId?: string | null;
+    updatedAt: string;
+    isEncrypted?: boolean;
+    isVaultLocked?: boolean;
+    encryptionMetadata?: EncryptedEnvelopeMetadata | null;
+}
+
+export type RemoteUpdateCallback = (event: RemoteUpdateEvent) => void;
+export type SyncStatusCallback = (status: SyncStatus, progress?: number) => void;
+
+export type ConflictCallback = (conflict: {
+    fileId: string;
+    localContent: string;
+    serverContent: string;
+    localEtag: string;
+    serverEtag: string;
+    serverVersion?: number;
+    serverUpdatedAt?: string;
+    isEncrypted?: boolean;
+    encryptionMetadata?: EncryptedEnvelopeMetadata | null;
+}) => Promise<'local' | 'server' | 'merge'>;
+
+export interface SyncManagerConfig {
+    userId: string;
+    fileId?: string;
+    workspaceId?: string;
+    apiBaseUrl?: string;
+    autoSyncInterval?: number;
+    maxRetries?: number;
+    idb?: IndexedDBManager;
+    enableJitter?: boolean;
+}
+```
+
+---
+
+### 10. `SyncQueueWorker` Class (`src/lib/sync/sync-queue-worker.ts`)
+
+Dedicated worker managing operations queue execution, retry backoff with randomized jitter, and dirty file push batches:
+
+```typescript
+export interface SyncQueueWorkerOptions {
+    userId: string;
+    apiBaseUrl?: string;
+    maxRetries?: number;
+    baseBackoffMs?: number;
+    maxBackoffMs?: number;
+    enableJitter?: boolean;
+    idb: IndexedDBManager;
+    rollback: SyncRollback;
+    conflictStore: ConflictStore;
+    encryptedConflictStore: SyncEncryptedConflictStore;
+    getConflictCallback?: () => ConflictCallback | undefined;
+    onConflictQuarantined?: (file: IDBFile, serverVersion: any) => Promise<void>;
+}
+
+export class SyncQueueWorker {
+    public isQueueProcessing: boolean;
+    constructor(options: SyncQueueWorkerOptions);
+    updateConfig(options: Partial<SyncQueueWorkerOptions>): void;
+    destroy(): void;
+    calculateBackoffDelay(attempts: number): number;
+    processOperationsQueue(signal?: AbortSignal): Promise<{
+        processed: number;
+        succeeded: number;
+        failed: number;
+        conflicts: string[];
+    }>;
+    processSingleOperation(op: IDBOperation, signal?: AbortSignal): Promise<FileSyncResult>;
+    pushDirtyFiles(signal?: AbortSignal): Promise<{
+        pushed: number;
+        conflicts: string[];
+        errors: string[];
+    }>;
+    pushFile(file: IDBFile, signal?: AbortSignal): Promise<FileSyncResult>;
+}
+```
+
+#### Invariants:
+- **Single-Flight Processing:** Guarded by `isQueueProcessing` flag to prevent overlapping executions.
+- **Double-Push Elimination:** `pushDirtyFiles` filters out files with active `queued`/`syncing` operations and locked encrypted conflicts.
+- **Non-Destructive Network Rollback (LUGX-013):** Checkpoints created via `rollback.createCheckpoint(file.id, 'pre_sync')` are discarded via `removeCheckpoint()` upon network failures, preserving offline dirty edits without reverting local changes.
+
+---
+
+### 11. `SyncEncryptedConflictStore` Class (`src/lib/sync/sync-encrypted-conflict-store.ts`)
+
+Encapsulates in-memory `CONFLICT_LOCKED` quarantine for encrypted files when the vault is locked:
+
+```typescript
+export interface SyncEncryptedConflictStoreOptions {
+    userId?: string;
+    idb: IndexedDBManager;
+    conflictStore: ConflictStore;
+    rollback?: SyncRollback;
+    conflictCallback?: ConflictCallback;
+    pushResolved?: (file: IDBFile) => Promise<FileSyncResult>;
+}
+
+export class SyncEncryptedConflictStore {
+    get rawMap(): Map<string, PendingEncryptedConflict>;
+    constructor(options: SyncEncryptedConflictStoreOptions);
+    updateContext(options: Partial<SyncEncryptedConflictStoreOptions>): void;
+    setConflictCallback(callback?: ConflictCallback): void;
+    clear(): void;
+    getPendingEncryptedConflicts(): PendingEncryptedConflict[];
+    getPendingEncryptedConflict(fileId: string): PendingEncryptedConflict | undefined;
+    isEncryptedConflictLocked(fileId: string): boolean;
+    onEncryptedConflictLocked(callback: (conflict: PendingEncryptedConflict) => void): () => void;
+    notifyEncryptedConflictLocked(conflict: PendingEncryptedConflict): void;
+    quarantineEncryptedConflict(conflict: PendingEncryptedConflict): void;
+    getQuarantineDiagnostics(): QuarantineDiagnostics;
+    discardPendingEncryptedConflict(fileId: string): Promise<void>;
+    resolvePendingEncryptedConflict(fileId: string): Promise<FileSyncResult>;
+    resolveAllPendingEncryptedConflicts(): Promise<Record<string, FileSyncResult>>;
+}
+```
+
+#### Invariants:
+- **FIFO Capacity Bound:** Caps quarantined documents at `MAX_QUARANTINED_CONFLICTS = 100`, evicting the oldest entry on capacity overflow while ensuring existing document updates never trigger eviction.
+- **Reactive Unlock Resolution:** Upon vault unlock, `resolvePendingEncryptedConflict` decrypts local/server/base envelopes in RAM, runs 3-way Diff3 merge, validates Markdown syntax integrity, re-encrypts with a fresh IV, and pushes to the server.
+
+---
+
+### 12. `SyncPullEngine` Class (`src/lib/sync/sync-pull-engine.ts`)
+
+Encapsulates incremental remote updates, pagination cursor traversal, and inbound conflict detection:
+
+```typescript
+export interface SyncPullEngineOptions {
+    userId: string;
+    apiBaseUrl?: string;
+    idb: IndexedDBManager;
+    rollback: SyncRollback;
+    conflictStore: ConflictStore;
+    encryptedConflictStore: SyncEncryptedConflictStore;
+    getConflictCallback?: () => ConflictCallback | undefined;
+    onRemoteUpdate?: (event: RemoteUpdateEvent) => void;
+    signal?: AbortSignal;
+}
+
+export class SyncPullEngine {
+    constructor(options: SyncPullEngineOptions);
+    updateConfig(options: Partial<SyncPullEngineOptions>): void;
+    destroy(): void;
+    pullUpdates(signal?: AbortSignal): Promise<{
+        pulled: number;
+        conflicts: string[];
+        errors: string[];
+    }>;
+    pullFile(serverFile: any, signal?: AbortSignal): Promise<FileSyncResult>;
+}
+```
+
+#### Invariants:
+- **Tombstone Reconciliation:** Server tombstones (`deletedAt !== null`) cleanly delete local copies and fail pending operations with descriptive errors.
+- **Pull Overwrite Protection:** Refuses to overwrite files actively marked with `syncStatus === 'conflict'` in IndexedDB or held in `ConflictStore`.
+- **Inbound Decryption:** Leverages `SyncCryptoGateway` to decrypt inbound payloads before emitting `RemoteUpdateEvent` to listeners.
+
+---
+
+### 13. `SyncManager` Thin Coordinator Class (`src/lib/sync/sync-manager.ts`)
+
+Central coordinator decomposed from the original monolithic sync engine into a lean orchestrator (<350 lines). Retains the authoritative public contract and external API surface while delegating operations queue execution to `SyncQueueWorker`, locked conflict quarantine to `SyncEncryptedConflictStore`, and incremental remote updates to `SyncPullEngine`, while injecting `SyncRollback`:
+
+```typescript
+export class SyncManager {
+    get isQueueProcessing(): boolean;
+    set isQueueProcessing(value: boolean);
+    constructor(initialConfig?: SyncManagerConfig);
+    getUserId(): string | null;
+    getConflictStore(): ConflictStore;
+    init(config: SyncManagerConfig): Promise<void>;
+    destroy(): void;
+    setConflictCallback(cb: ConflictCallback): void;
+    onRemoteUpdate(cb: RemoteUpdateCallback): () => void;
+    getStatus(): SyncStatus;
+    onStatusChange(cb: SyncStatusCallback): () => void;
+    sync(): Promise<SyncResult>;
+    queueSync(fileId: string, priority?: 1 | 2 | 3, operationId?: string): Promise<void>;
+    syncFile(fileId: string): Promise<FileSyncResult>;
+    processOperationsQueue(s?: AbortSignal): Promise<{
+        processed: number;
+        succeeded: number;
+        failed: number;
+        conflicts: string[];
+    }>;
+    processSingleOperation(op: IDBOperation, s?: AbortSignal): Promise<FileSyncResult>;
+    pushDirtyFiles(s?: AbortSignal): Promise<{
+        pushed: number;
+        conflicts: string[];
+        errors: string[];
+    }>;
+    pushFile(file: IDBFile, s?: AbortSignal): Promise<FileSyncResult>;
+    getPendingEncryptedConflicts(): PendingEncryptedConflict[];
+    getPendingEncryptedConflict(id: string): PendingEncryptedConflict | undefined;
+    isEncryptedConflictLocked(id: string): boolean;
+    onEncryptedConflictLocked(cb: (c: PendingEncryptedConflict) => void): () => void;
+    quarantineEncryptedConflict(c: PendingEncryptedConflict): void;
+    getQuarantineDiagnostics(): QuarantineDiagnostics;
+    discardPendingEncryptedConflict(id: string): Promise<void>;
+    resolvePendingEncryptedConflict(id: string): Promise<FileSyncResult>;
+}
+
+export function createSyncManager(config?: SyncManagerConfig): SyncManager;
+export const syncManager: SyncManager;
+```
+
+#### Configuration Interface (`SyncManagerConfig`):
+```typescript
+export interface SyncManagerConfig {
+    userId: string;
+    apiBaseUrl?: string;
+    autoSyncInterval?: number;
+    maxRetries?: number;
+    enableJitter?: boolean;
+    idb?: IndexedDBManager;
+}
+```
+
+#### Delegation Architecture & Sub-Engines:
+- **`SyncQueueWorker` Delegation:** Outbound queue processing (`processOperationsQueue`, `processSingleOperation`) and dirty file batch uploads (`pushDirtyFiles`, `pushFile`) are fully dispatched to the queue worker.
+- **`SyncEncryptedConflictStore` Delegation:** Managing encrypted conflicts occurring while the vault is locked (`CONFLICT_LOCKED`), diagnostic reporting (`getQuarantineDiagnostics`), discard operations, and vault-unlock auto-resolution delegate directly to the in-memory conflict store.
+- **`SyncPullEngine` Delegation:** Remote cursor polling, incremental change ingestion (`pullUpdates`), and incoming server document processing (`pullFile`) delegate to the pull engine.
+- **`SyncRollback` Dependency Injection:** Preserves `src/lib/sync/rollback.ts` (304 lines) without rewriting. `SyncManager` instantiates/connects `this.rollback` and injects it into all three sub-engines for atomic checkpoint capture and non-destructive failure handling.
+- **Lifecycle Invariants:**
+  - `init()` validates non-empty `userId`, initializes tenant-scoped IndexedDB, links sub-engines, cleans up interrupted `syncing` operations, binds connectivity listeners, and subscribes to `sessionKeyStore` for automatic conflict resolution upon vault unlock.
+  - `destroy()` triggers cancellation on the active `AbortController`, tears down timers and listeners, and invokes `destroy()` on both `queueWorker` and `pullEngine`.
+  - `sync()` executes a deterministic 3-stage pipeline: (1) operations queue flush, (2) dirty files push, and (3) remote updates pull.
+
+
 

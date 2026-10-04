@@ -9,19 +9,20 @@ graph TD
     subgraph ClientLayer["LUGX Client Workspace"]
         Page["Editor Page (CodeMirror 6 / EditorAdapter)"] --> Orch["useEditorOrchestrator"]
         Orch --> Hook["useSync Hook"]
-        Hook --> SyncMgr["SyncManager"]
-        SyncMgr --> Push["Push Engine"]
-        SyncMgr --> Pull["Pull Engine"]
-        Push & Pull --> IDBMgr["IndexedDB Manager (textai_db_{userId})"]
+        Hook --> SyncMgr["SyncManager (Thin Coordinator)"]
+        SyncMgr --> QueueWorker["SyncQueueWorker (Push / Queue / Retry)"]
+        SyncMgr --> PullEngine["SyncPullEngine (Pull / Pagination)"]
+        SyncMgr --> ConflictStore["SyncEncryptedConflictStore (CONFLICT_LOCKED Quarantine)"]
+        SyncMgr --> Rollback["SyncRollback (Checkpoints / Rollback)"]
+        QueueWorker & PullEngine --> IDBMgr["IndexedDB Manager (textai_db_{userId})"]
         IDBMgr --> IDBFiles["Files Store (Markdown / Encrypted Envelopes / syncStatus)"]
         IDBMgr --> IDBOps["Operations Store (Delta Logs)"]
         IDBMgr --> IDBMeta["Sync Metadata Store (Cached Profiles & Device Trust)"]
-        SyncMgr --> ConflictStore["ConflictStore (Durable IDB Quarantine)"]
-        ConflictStore --> IDBFiles
-        SyncMgr -.->|"Volatile quarantine locked conflicts"| Quarantine["pendingEncryptedConflicts (CONFLICT_LOCKED)"]
+        ConflictStore --> IDBOps
+        ConflictStore -.->|"Quarantine locked conflicts"| Quarantine["pendingEncryptedConflicts (CONFLICT_LOCKED)"]
     end
 
-    SyncMgr <-->|"HTTP REST (If-Match / If-None-Match / Strong ETags / X-Correlation-ID / Rate Limits)"| APILayer["API Gateway Layer (/api/files & /api/ai)"]
+    QueueWorker & PullEngine <-->|"HTTP REST (If-Match / If-None-Match / Strong ETags / X-Correlation-ID / Rate Limits)"| APILayer["API Gateway Layer (/api/files & /api/ai)"]
     APILayer <-->|"Drizzle ORM / Adaptive Pool (Neon / pg.Pool)"| DBLayer[("PostgreSQL Database (files, users, user_vault_profiles)")]
 ```
 
@@ -49,7 +50,10 @@ graph TD
 
 | Component | Responsibility |
 |-----------|----------------|
-| `SyncManager` | Push/Pull coordination, non-blocking sync with bounded `CONFLICT_LOCKED` quarantine governance (`MAX_QUARANTINED_CONFLICTS = 100`), durable IDB quarantine, pull overwrite protection, `sync_duration` telemetry tracking, and reactive unlock auto-resolution |
+| `SyncManager` | Thin Coordinator (< 350 lines), orchestrating sync lifecycle, single-flight consumer gates, and delegating queue processing, pull synchronization, and encrypted conflict management |
+| `SyncQueueWorker` (`sync-queue-worker.ts`) | Operations queue processing, bounded exponential backoff with jitter, dirty file push batches, and non-destructive checkpoint cleanup (LUGX-013) |
+| `SyncEncryptedConflictStore` (`sync-encrypted-conflict-store.ts`) | In-memory `CONFLICT_LOCKED` quarantine map (`MAX_QUARANTINED_CONFLICTS = 100`), diagnostics, FIFO eviction, atomic discard, and reactive unlock auto-resolution via Diff3 |
+| `SyncPullEngine` (`sync-pull-engine.ts`) | Incremental remote updates (`pullUpdates`), cursor-based pagination, individual `pullFile` synchronization, conflict detection, and server tombstone reconciliation |
 | `ConflictStore` (`conflict-store.ts`) | Durable IndexedDB conflict quarantine manager, persisting 412/409 conflict envelopes (`syncStatus = 'conflict'`) with local, server, and base snapshots across browser restarts |
 | `ConflictResolver` (`conflict-resolver.ts`) | Conflict detection, 3-way merge orchestration, ciphertext execution guard, and false conflict elimination |
 | `Diff3 Engine` (`diff3.ts`) | Deterministic Hunt-McIlroy / Pierce 3-way merge engine on plaintext tokens, eliminating line-erasure anomalies on repeated and empty lines |
@@ -97,37 +101,39 @@ sequenceDiagram
     autonumber
     participant UI as User / Editor
     participant IDB as IndexedDB
-    participant Sync as SyncManager
+    participant Sync as SyncManager (Coordinator)
+    participant Worker as SyncQueueWorker
     participant Lock as ConcurrencyManager
     participant Safe as SyntaxValidator
     participant API as /api/files/:id
 
     UI->>IDB: markFileDirty(fileId)
-    Sync->>Lock: withLock(fileId)
+    Sync->>Worker: pushDirtyFiles()
+    Worker->>Lock: withLock(fileId)
     alt File is Encrypted and Vault Locked with Conflict
-        Sync->>Sync: Isolate into pendingEncryptedConflicts (CONFLICT_LOCKED)
-        Note over Sync: pushDirtyFiles skips locked file without blocking others
+        Worker->>Worker: Check isEncryptedConflictLocked(fileId) -> skip
+        Note over Worker: pushDirtyFiles skips locked file without blocking others
     else Standard Push or Unlocked Vault
-        Sync->>API: PUT /api/files/:id (If-Match: etag)
+        Worker->>API: PUT /api/files/:id (If-Match: etag)
         alt 200 OK
-            API-->>Sync: Success { etag, version }
-            Sync->>IDB: markFileClean(fileId, etag, version, sentRevision)
+            API-->>Worker: Success { etag, version }
+            Worker->>IDB: markFileClean(fileId, etag, version, sentRevision)
             Note over IDB: Lean CAS Check: If localRevision > sentRevision,<br/>retains isDirty=true to protect in-flight user edits
         else 412 Conflict
-            API-->>Sync: serverVersion
+            API-->>Worker: serverVersion
             alt File is Encrypted and Vault is Locked
-                Sync->>Sync: Quarantine as CONFLICT_LOCKED
+                Worker->>Worker: Quarantine in SyncEncryptedConflictStore (CONFLICT_LOCKED)
             else Vault Unlocked
-                Sync->>Safe: 3-Way Merge + Syntax Integrity Validation
+                Worker->>Safe: 3-Way Merge + Syntax Integrity Validation
                 alt Syntax Valid
-                    Sync->>API: Re-encrypt with fresh CSPRNG IV & push
+                    Worker->>API: Re-encrypt with fresh CSPRNG IV & push
                 else Syntax Corrupted
-                    Sync->>UI: Show ConflictDialog for manual resolution
+                    Worker->>UI: Show ConflictDialog for manual resolution
                 end
             end
         end
     end
-    Sync->>Lock: Release lock
+    Worker->>Lock: Release lock
 ```
 
 ### Pull Flow (Server → Local)
@@ -135,36 +141,39 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Sync as SyncManager
+    participant Sync as SyncManager (Coordinator)
+    participant Pull as SyncPullEngine
     participant API as /api/files/sync
     participant GW as SyncCryptoGateway
     participant IDB as IndexedDB
     participant Orch as useEditorOrchestrator
     participant CM as CodeMirror Surface
 
-    Sync->>API: GET /api/files/sync?updated_after=lastSync
-    API-->>Sync: Updated files list
+    Sync->>Pull: pullUpdates()
+    Pull->>API: GET /api/files/sync?updated_after=lastSync
+    API-->>Pull: Updated files list
     loop For each updated file
+        Pull->>Pull: pullFile(remoteFile)
         alt Local file is clean & remote is newer
-            Sync->>IDB: saveFile(remoteData)
+            Pull->>IDB: saveFile(remoteData)
             alt File is Encrypted & Vault Unlocked
-                Sync->>GW: decryptInbound(remoteData.content, remoteData.encryptionMetadata)
-                GW-->>Sync: decryptedPlaintext
-                Sync->>Orch: onRemoteUpdate({ content: decryptedPlaintext })
+                Pull->>GW: decryptInbound(remoteData.content, remoteData.encryptionMetadata)
+                GW-->>Pull: decryptedPlaintext
+                Pull->>Orch: onRemoteUpdate({ content: decryptedPlaintext })
                 Orch->>CM: adapter.setValue(decryptedPlaintext)
             else Unencrypted File
-                Sync->>Orch: onRemoteUpdate({ content: remoteData.content })
+                Pull->>Orch: onRemoteUpdate({ content: remoteData.content })
                 Orch->>CM: adapter.setValue(remoteData.content)
             end
         else Local file is dirty (Conflict)
             alt Encrypted & Vault Locked
-                Sync->>Sync: Quarantine as CONFLICT_LOCKED
+                Pull->>Pull: Quarantine in SyncEncryptedConflictStore (CONFLICT_LOCKED)
             else Vault Unlocked
-                Sync->>Orch: Trigger Three-Way Merge / Conflict UI
+                Pull->>Orch: Trigger Three-Way Merge / Conflict UI
             end
         end
     end
-    Sync->>IDB: Update lastSyncedAt
+    Pull->>IDB: Update lastSyncedAt
 ```
 
 ### Conflict Resolution Flow (HTTP 412)
@@ -304,11 +313,11 @@ function EditorPage({ fileId }: { fileId: string }) {
 
 ---
 
-## Encrypted Conflict Quarantine Governance & Backpressure (Phase 23)
+## Encrypted Conflict Quarantine Governance & Backpressure (SyncEncryptedConflictStore)
 
 ### 1. In-Memory Quarantine Capacity & Eviction
-In-memory storage for isolated conflicts awaiting vault unlock is bounded by `MAX_QUARANTINED_CONFLICTS = 100`:
-- **False-Eviction Immunity**: When adding a conflict via `quarantineEncryptedConflict(conflict)`, the engine checks `!this.pendingEncryptedConflicts.has(conflict.fileId)` before verifying capacity. Existing conflict updates never evict unrelated documents.
+In-memory storage for isolated conflicts awaiting vault unlock is encapsulated within `SyncEncryptedConflictStore` (`src/lib/sync/sync-encrypted-conflict-store.ts`) and bounded by `MAX_QUARANTINED_CONFLICTS = 100`:
+- **False-Eviction Immunity**: When adding a conflict via `quarantineEncryptedConflict(conflict)`, the store checks `!this.pendingEncryptedConflicts.has(conflict.fileId)` before verifying capacity. Existing conflict updates never evict unrelated documents.
 - **Deterministic FIFO Eviction**: If a new conflict causes size to reach or exceed `MAX_QUARANTINED_CONFLICTS`, an $O(N)$ linear scan identifies the oldest conflict based on `detectedAt` timestamp, logs a warning, and evicts it without allocating intermediate sort arrays.
 
 ### 2. Observability & Diagnostics Contract

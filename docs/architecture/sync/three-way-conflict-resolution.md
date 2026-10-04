@@ -34,11 +34,11 @@ flowchart TD
 ### 2.2 Base Snapshot Persistence & Durable Conflict Quarantine (`src/lib/sync/indexeddb.ts` & `src/lib/idb/conflict-store.ts`)
 - **Base Snapshot Capture:** Before any local mutation is committed to the local queue, the engine captures a frozen snapshot of the current synchronized base (`content`, `title`, `version`, `etag`) into the `files` store.
 - **Durable Conflict Quarantine (Phase 15):** When an HTTP 412 / 409 conflict is detected, the file is quarantined in IndexedDB with `syncStatus = 'conflict'` and `conflictData: { serverVersion, localVersion, baseVersion, detectedAt }`. This state survives page reloads and browser restarts without data loss.
-- **Pull Protection Guard:** `SyncManager.pullFile` strictly refuses to overwrite, modify, or delete (via tombstone) any file in `syncStatus === 'conflict'` or quarantined within `ConflictStore`.
+- **Pull Protection Guard:** `SyncPullEngine.pullFile` (orchestrated via `SyncManager`) strictly refuses to overwrite, modify, or delete (via tombstone) any file in `syncStatus === 'conflict'` or quarantined within `ConflictStore`.
 - **Resolution State Transition:** Resolving via `ConflictStore.resolveConflict` cleans quarantine and transitions state to `synced` (when adopting server version) or `dirty` with `isDirty = true` (when retaining local edits, ensuring subsequent push passes re-attempt upload, LUGX-003).
 
-### 2.3 False Conflict Elimination (`src/lib/sync/sync-manager.ts` & `src/hooks/use-sync.ts`)
-- **Metadata Drift Invariant:** When receiving a `412 Precondition Failed` response or encountering dirty local state, if `localContent === serverContent` or `compareETags(localEtag, serverEtag)` is true:
+### 2.3 False Conflict Elimination (`src/lib/sync/sync-queue-worker.ts`, `src/lib/sync/sync-pull-engine.ts`, `src/lib/sync/sync-manager.ts` & `src/hooks/use-sync.ts`)
+- **Metadata Drift Invariant:** When receiving a `412 Precondition Failed` response or encountering dirty local state during push (`SyncQueueWorker.pushFile`) or pull (`SyncPullEngine.pullFile`), if `localContent === serverContent` or `compareETags(localEtag, serverEtag)` is true:
   - The conflict is categorized as a false conflict caused by metadata drift.
   - The engine silently adopts the authoritative server `version` and `etag`.
   - The file and its matching operation are committed via Lean CAS `commitFileAndOperationSync(..., sentRevision)` to ensure concurrent in-flight edits are not lost (retaining `isDirty = true` if `localRevision > sentRevision`, LUGX-010).
@@ -101,19 +101,19 @@ sequenceDiagram
     end
 ```
 
-### 2.7 Non-Blocking Encrypted Conflict Isolation (`CONFLICT_LOCKED`)
-- **Isolation State**: When a 412 Precondition Failed or 409 Conflict occurs on an encrypted file while the user's vault is locked (`!sessionKeyStore.isVaultUnlocked()`), the conflict cannot be decrypted or auto-merged in background queues without Master Key exposure. The engine isolates it into `pendingEncryptedConflicts` tagged with `CONFLICT_LOCKED`.
-- **Non-Blocking Invariant**: `pushDirtyFiles` explicitly filters out `!this.pendingEncryptedConflicts.has(file.id)`. Other unencrypted dirty documents synchronize concurrently without being stalled or blocked by locked encrypted files.
-- **Quarantine Capacity & Backpressure Governance (Phase 23)**:
-  - Bounded memory quarantine via `MAX_QUARANTINED_CONFLICTS = 100`.
+### 2.7 Non-Blocking Encrypted Conflict Isolation (`CONFLICT_LOCKED` & `SyncEncryptedConflictStore`)
+- **Isolation State & Architecture**: When a 412 Precondition Failed or 409 Conflict occurs on an encrypted file while the user's vault is locked (`!sessionKeyStore.isVaultUnlocked()`), the conflict cannot be decrypted or auto-merged in background queues without Master Key exposure. The conflict is isolated into `pendingEncryptedConflicts` tagged with `CONFLICT_LOCKED`, managed by `SyncEncryptedConflictStore` (`src/lib/sync/sync-encrypted-conflict-store.ts`).
+- **Non-Blocking Invariant**: `SyncQueueWorker.pushDirtyFiles` explicitly filters out `!this.encryptedConflictStore.isEncryptedConflictLocked(file.id)`. Other unencrypted dirty documents synchronize concurrently without being stalled or blocked by locked encrypted files.
+- **Quarantine Capacity & Backpressure Governance**:
+  - Bounded in-memory quarantine via `MAX_QUARANTINED_CONFLICTS = 100`.
   - False-eviction immunity: updating an existing quarantined file never evicts other documents (`!has(conflict.fileId)` check).
   - Deterministic $O(N)$ linear scan evicts the oldest conflict (`detectedAt`) when capacity is exceeded without intermediate array allocations.
-- **Observability & Diagnostics**: `getQuarantineDiagnostics()` returns `QuarantineDiagnostics` tracking total quarantined count, stale count (> 24 hours), oldest/newest timestamps, and capacity state.
-- **Atomic Discard & Cleanup**: `discardPendingEncryptedConflict(fileId)` safely cancels an isolated conflict under `concurrencyManager.withLock` mutual exclusion:
+- **Observability & Diagnostics**: `SyncEncryptedConflictStore.getQuarantineDiagnostics()` returns `QuarantineDiagnostics` tracking total quarantined count, stale count (> 24 hours), oldest/newest timestamps, and capacity state.
+- **Atomic Discard & Cleanup**: `SyncEncryptedConflictStore.discardPendingEncryptedConflict(fileId)` safely cancels an isolated conflict under `concurrencyManager.withLock` mutual exclusion:
   1. Evicts entry from `pendingEncryptedConflicts`.
   2. Cleans up in-memory checkpoints in `SyncRollback`.
   3. Transitions linked operations in IndexedDB to `'discarded'`, strictly preserving `localFile.isDirty` to prevent silent user edit data loss (`DATA-SAFETY GUARD`).
-- **Unlock Event & Auto-Resolution**: When the user unlocks the vault, `resolvePendingEncryptedConflict(fileId)` automatically:
+- **Unlock Event & Auto-Resolution**: When the user unlocks the vault, `SyncEncryptedConflictStore.resolvePendingEncryptedConflict(fileId)` automatically:
   1. Decrypts `remoteEnvelope`, `localEnvelope`, and `baseEnvelope` in RAM using the Master Key.
   2. Runs 3-way Diff3 merge via `conflictResolver.attemptThreeWayMerge`.
   3. Verifies Markdown structural syntax integrity via `validateMarkdownSyntaxIntegrity`.
