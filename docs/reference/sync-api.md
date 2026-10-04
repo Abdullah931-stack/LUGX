@@ -1042,5 +1042,129 @@ export interface SyncManagerConfig {
   - `destroy()` triggers cancellation on the active `AbortController`, tears down timers and listeners, and invokes `destroy()` on both `queueWorker` and `pullEngine`.
   - `sync()` executes a deterministic 3-stage pipeline: (1) operations queue flush, (2) dirty files push, and (3) remote updates pull.
 
+---
+
+### 14. Three-Way Conflict Resolver & Diff3 Contracts (`src/lib/sync/conflict-resolver.ts`, `src/lib/sync/diff3.ts`)
+
+Pure TypeScript contracts for deterministic three-way merge resolution, sub-line word/token diffing, and Deletion Guard protection:
+
+#### `WordSpan` Interface
+Granular intra-line word/token span emitted during fine-grained Micro-LCS diffing:
+
+```typescript
+export interface WordSpan {
+    type: 'equal' | 'insert' | 'delete';
+    value: string;
+}
+```
+
+#### `DiffOp` Union Type
+Structured diff operations supporting line-level additions/deletions and intra-line modified spans:
+
+```typescript
+export type DiffOp =
+    | { type: 'equal'; value: string }
+    | { type: 'insert'; value: string }
+    | { type: 'delete'; value: string }
+    | { type: 'modify'; oldValue: string; newValue: string; spans: WordSpan[] };
+```
+
+#### `Diff3Options` Interface
+Configuration options passed to `diff3Merge` and `diff3MergeText`:
+
+```typescript
+export interface Diff3Options {
+    /** Automatically resolve false conflicts when local and remote match identically (default: true) */
+    excludeFalseConflicts?: boolean;
+    /** Attempt fine-grained word/token merge on conflicting lines before raising conflict (default: true) */
+    subLineMerge?: boolean;
+    /** Conflict block marker labels */
+    label?: {
+        a?: string;  // Default: 'LOCAL'
+        o?: string;  // Default: 'BASE'
+        b?: string;  // Default: 'REMOTE'
+    };
+}
+```
+
+#### `ConflictResolver` Visual & Guard Methods (`src/lib/sync/conflict-resolver.ts`)
+
+```typescript
+export class ConflictResolver {
+    /**
+     * Compute visual diff using Longest Common Subsequence with intra-line Micro-LCS
+     * and Deletion Guard logic when baseContent is provided.
+     * 
+     * @param localContent - Local document text
+     * @param serverContent - Server document text
+     * @param baseContent - Optional common base snapshot text
+     * @returns Array of DiffOp items with line-level and intra-line WordSpan operations
+     */
+    public computeVisualDiff(
+        localContent: string,
+        serverContent: string,
+        baseContent?: string
+    ): DiffOp[];
+
+    /**
+     * Compute word-level Micro-LCS spans on tokenized words and spaces.
+     * 
+     * @param oldValue - Previous line content
+     * @param newValue - Updated line content
+     * @returns WordSpan array classifying each token as 'equal', 'insert', or 'delete'
+     */
+    public computeWordSpans(oldValue: string, newValue: string): WordSpan[];
+
+    /**
+     * Deletion Guard:
+     * When baseSnapshot is provided, verifies if lines present in server and missing in local
+     * were present in baseContent. If unchanged in server, preserves local deletion.
+     * 
+     * @param baseContent - Synchronized base document text
+     * @param localContent - Local document text
+     * @param serverContent - Server document text
+     * @returns Purged server content with deleted lines pruned and added lines tracked
+     */
+    public applyDeletionGuard(
+        baseContent: string,
+        localContent: string,
+        serverContent: string
+    ): {
+        purgedServerContent: string;
+        deletedLines: string[];
+        addedLines: string[];
+    };
+}
+```
+
+#### Core Diff3 Functions (`src/lib/sync/diff3.ts`)
+
+```typescript
+/**
+ * Tokenizes a single line into words, spaces, and punctuation using Unicode RegEx.
+ */
+export function tokenizeLine(line: string): string[];
+
+/**
+ * Attempts a sub-line word/token 3-way merge on a single line.
+ * Merges disjoint token edits and validates markdown syntax integrity.
+ */
+export function trySubLineMerge(
+    aLine: string,
+    oLine: string,
+    bLine: string
+): { success: boolean; line?: string };
+
+/**
+ * Executes a full 3-way text merge on Markdown string documents.
+ */
+export function diff3MergeText(
+    localContent: string,
+    baseContent: string,
+    remoteContent: string,
+    options?: Diff3Options
+): Diff3TextMergeResult;
+```
+
 
 

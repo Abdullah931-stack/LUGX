@@ -1,5 +1,47 @@
 # Changelog - LUGX Project
 
+## [1.44.1] - 2026-10-04 (Intra-Line Word-Level Diff & Sub-Line 3-Way Merge Upgrade)
+
+### Intra-Line Word-Level Diff & Sub-Line 3-Way Merge Upgrade (`src/lib/sync/diff3.ts`, `src/lib/sync/conflict-resolver.ts`, `src/components/sync/conflict-dialog.tsx`)
+
+- **Native Zero-Dependency Micro-LCS Subsystem:**
+  - Implemented `computeWordSpans` and Unicode tokenization via `tokenizeLine` (`/\s+|[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+/gu`), preserving whitespace, multilingual text (Arabic, Latin, CJK), numbers, and punctuation as atomic tokens without external library overhead.
+  - Generates deterministic `WordSpan` sequences (`equal`, `insert`, `delete`) comparing token streams in sub-millisecond time.
+- **Word-Level Visual Highlighting:**
+  - Extended `DiffOp` union with `{ type: 'modify', oldValue, newValue, spans: WordSpan[] }`.
+  - Upgraded `ConflictDialog` (`DiffLine`, `LocalHighlightedPreview`, `ServerHighlightedPreview`) with inline badge highlighting: red strike-through for deleted tokens and green badges for inserted tokens, completely eliminating coarse whole-line replacements for minor edits.
+- **Sub-Line Disjoint 3-Way Merge (`trySubLineMerge`):**
+  - Enabled fine-grained intra-line 3-way merging controlled via `Diff3Options.subLineMerge` (default: `true`).
+  - Automatically merges non-overlapping token modifications occurring on the same line number relative to base, avoiding false conflict blocks on concurrent sub-line edits.
+  - Fail-closed Markdown syntax protection: candidates validate against `validateMarkdownSyntaxIntegrity`, falling back to safe conflict markers if token merging corrupts code fences or table delimiters.
+- **Deletion Guard Architecture (`applyDeletionGuard`):**
+  - Enforced `baseSnapshot` verification in `diff3Merge` and `computeVisualDiff`: lines present on the server and missing in local that were present in `baseContent` are classified as user deletions and strictly kept deleted, eliminating resurrected lines.
+  - Prunes matching base and server lines while preserving genuine server modifications on deleted lines as true conflicts.
+
+### Atomic Editor Synchronization & Inbound Remote Update Bugfix (`src/hooks/use-editor-orchestrator.ts`, `src/lib/sync/sync-pull-engine.ts`)
+
+- **Atomic Remote Update Pipeline & Race Condition Elimination:**
+  - Fixed race condition where typing immediately after receiving an inbound remote update dropped the server text due to uncanceled in-flight auto-save timers and missing synchronous in-memory editor content reference. Added `editorContentRef`, in-flight timer cancellation, synchronous dirty flag reset, and atomic `baseSnapshot` persistence.
+  - Implemented synchronous in-memory `editorContentRef` bridge preventing editor buffer drop upon user typing.
+  - Added immediate cancellation of in-flight debounced auto-save timers (`debouncedAutoSaveRef.current?.cancel?.()`) preventing stale local overwrites of incoming server content.
+  - Enforced synchronous `isDirtyRef.current = false` reset alongside `setIsDirty(false)`.
+  - Enforced atomic IndexedDB write with `baseSnapshot` and `isDirty: false` in `use-editor-orchestrator.ts` and atomic `baseSnapshot` instantiation and persistence in `sync-pull-engine.ts` during pull ingestion.
+  - Added hydration queuing (`pendingRemoteUpdateRef`) applying buffered remote updates instantly once hydration is ready.
+
+### Documentation Governance & Verification
+
+- **Living Specifications Updated:**
+  - `docs/reference/sync-api.md`: added § 14 documenting `WordSpan`, `DiffOp`, and `Diff3Options` contracts, along with `computeVisualDiff`, `computeWordSpans`, and `applyDeletionGuard`.
+  - `docs/architecture/sync/three-way-conflict-resolution.md`: added § 2.8 Sub-Line Word/Token 3-Way Merge, § 2.9 Word-Level Visual Diffing, and § 2.10 Deletion Guard Architecture with Mermaid diagrams.
+  - `docs/architecture/sync/editor-sync-orchestration.md`: updated § 6d.1 documenting the Atomic Remote Update Pipeline (`editorContentRef`, in-flight timer cancellation, synchronous dirty flag reset, atomic `baseSnapshot` persistence, hydration queuing) with Mermaid sequence diagram.
+  - `docs/records/closures/extensions/intra-line-word-diff-and-sub-line-3way-merge-closure.md`: published milestone closure dossier.
+- **Automated Verification:**
+  - `src/test/sync/diff3-sub-line-merge.test.ts` (37 tests covering Unicode Arabic/emoji tokenization, sub-line disjoint merges, overlapping conflict detection, AST fail-closed syntax protection, and Deletion Guard retention).
+  - `src/test/editor/editor-orchestration.integration.test.ts` (19 tests covering orchestration lifecycle, atomic remote update reflection with post-update typing retention, and auto-lock cancellation).
+  - 362/362 vitest matrix unit and integration tests passed across 22 test files (100% success rate), including 60 tests in `src/test/sync/sync-conflict-resolver.test.ts`, 37 tests in `src/test/sync/diff3-sub-line-merge.test.ts`, and 19 tests in `src/test/editor/editor-orchestration.integration.test.ts` (88 total editor tests passed).
+  - 3/3 live PostgreSQL integration tests passed against isolated Neon test branch (`src/test/sync/conflict-resolution.integration.test.ts`) for 365 total passed tests (100% pass rate).
+  - 0 TypeScript compiler errors (`tsc --noEmit`), 0 ESLint errors (`npm run lint`), 100% Markdown link integrity (`scripts/check-markdown-links.mjs`).
+
 ## [1.44.0] - 2026-10-04 (Phase 16: Thin Coordinator SyncManager Decomposition & Subsystem Extraction)
 
 ### Thin Coordinator Architecture (`src/lib/sync/sync-manager.ts`)

@@ -204,7 +204,7 @@ sequenceDiagram
 | Suite | Coverage |
 |-------|----------|
 | `src/test/sync/sync-reconciliation.test.ts` (10 tests) | Closed matrix incl. cold-start rows (`bootstrap_server`, `adopt_metadata_keep_edits`); fast-forward on clean+newer; metadata adoption on identical payloads (precedence over dirty); dirty-divergent retention; non-newer retention (equal version, regressed version, version-without-ETag); weak-validator normalization (`W/`, quotes) derived from the REAL baseline |
-| `src/test/editor/editor-orchestration.integration.test.ts` (18 tests) | Orchestrator integration vs mocked `fileOps`: suspension gates, committing exclusivity, unload warnings (dirty / committing / parked preview), cold-start painting of a server-v1 file with a lost local snapshot, sync-before-write anchor ordering, sibling tab `vault_locked` propagation, and local auto-lock `debouncedAutoSave` cancellation |
+| `src/test/editor/editor-orchestration.integration.test.ts` (19 tests) | Orchestrator integration vs mocked `fileOps`: suspension gates, committing exclusivity, unload warnings (dirty / committing / parked preview), cold-start painting of a server-v1 file with a lost local snapshot, sync-before-write anchor ordering, atomic remote update reflection with post-update typing retention, sibling tab `vault_locked` propagation, and local auto-lock `debouncedAutoSave` cancellation |
 
 ---
 
@@ -270,10 +270,75 @@ Invariants:
 
 In Phase 4 of the Markdown migration roadmap, all synchronization channels, conflict detection, three-way merge algorithms, and conflict dialogs were transitioned from legacy HTML parsing to pure, engine-agnostic Markdown.
 
-### 6d.1 Remote Update Event Pipeline
-1. When background sync pulls clean updates from the server via `SyncPullEngine.pullFile()` (orchestrated via `SyncManager`), it dispatches typed `RemoteUpdateEvent` payloads to registered listeners.
-2. `useSync` subscribes to `SyncManager.onRemoteUpdate` and forwards events to `useEditorOrchestrator.handleRemoteUpdate`.
-3. `useEditorOrchestrator` runs invariant guards (verifies document is clean, no active conflict, no active AI streaming, and hydration is complete) and uses `classifyRemoteUpdate` to safely fast-forward the editor (`adapter.setValue(event.content)`) under programmatic protection without creating phantom dirty states.
+### 6d.1 Inbound Remote Updates & Real-Time Reflection (Atomic Remote Update Pipeline)
+
+In Phase 4 of the sync orchestration roadmap, remote changes pulled from the server are ingested through a strictly coordinated, multi-stage atomic pipeline implemented across `src/hooks/use-editor-orchestrator.ts` and `src/lib/sync/sync-pull-engine.ts`. This eliminates race conditions where typing immediately after an inbound remote update dropped server text or caused stale local overwrites.
+
+#### Atomic Pipeline Architecture & Guarantees
+
+1. **Immediate In-Flight Auto-Save Cancellation:**
+   - Upon receiving an inbound remote update where `classifyRemoteUpdate` determines `decision.action === 'apply'`, the orchestrator immediately cancels pending debounced auto-save timers via `debouncedAutoSaveRef.current?.cancel?.()`.
+   - Prevents queued stale local writes from executing milliseconds later and clobbering freshly arrived server content.
+
+2. **Synchronous Dirty Flag Reset:**
+   - Resets `isDirtyRef.current = false` synchronously in the same tick as React state dispatch `setIsDirty(false)`.
+   - Guarantees that subsequent keystrokes, navigation checks, or concurrent hooks inspect an immediately authoritative clean baseline rather than waiting for an asynchronous React state flush.
+
+3. **In-Memory Synchronous Content Bridge (`editorContentRef`):**
+   - Synchronously bridges `editorContentRef.current = safeContent` alongside `adapter.setValue(safeContent)` under `isProgrammaticUpdateRef.current = true`.
+   - When the user presses Enter or types immediately post-update, `handleEditorChange` reads and appends to this synchronous memory reference, preventing editor buffer drops and ensuring subsequent server writes contain both remote content and newly typed lines.
+
+4. **Atomic IndexedDB Local Persistence (`baseSnapshot` + Clean Status):**
+   - Dispatches `syncHook.saveLocal` to persist `content`, `version`, `etag`, and `isDirty: false` atomically in local storage.
+   - Ensures local storage mirrors server state without leaving stale dirty flags or broken ancestor snapshots.
+
+5. **Atomic `baseSnapshot` Instantiation in Ingestion Engine (`sync-pull-engine.ts`):**
+   - In `SyncPullEngine.pullFile()`, both newly created files and updated records persist an atomic `baseSnapshot` (containing `content`, `etag`, `version`, `title`, `parentFolderId`, `isEncrypted`, and `encryptionMetadata`) with `isDirty: false` and `syncStatus: 'synced'`.
+   - Guarantees an immutable, verifiable common ancestor is available for any subsequent Diff3 three-way conflict resolutions.
+
+6. **Hydration Queuing Guard (`pendingRemoteUpdateRef`):**
+   - When remote updates arrive while the editor is still hydrating (`hydratedRef.current !== true`), updates are queued in `pendingRemoteUpdateRef.current`.
+   - As soon as the hydration lifecycle settles to `ready`, the queued update is dequeued and applied instantly, guaranteeing zero dropped updates during initial cold mount.
+
+#### Atomic Remote Update Sequence Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Server as Cloud Server (/api/files/sync)
+    participant Pull as SyncPullEngine
+    participant IDB as IndexedDB (textai_db)
+    participant Orch as useEditorOrchestrator
+    participant Adapter as EditorAdapter (CodeMirror 6)
+    participant User as User Typing
+
+    Server-->>Pull: pullFile(serverFile)
+    Note over Pull,IDB: Ingestion & Base Snapshot Persistence
+    Pull->>IDB: saveFile({ ...serverFile, isDirty: false, syncStatus: 'synced', baseSnapshot })
+    Pull->>Orch: onRemoteUpdate(RemoteUpdateEvent)
+
+    alt Hydration Active (!hydratedRef.current)
+        Note over Orch: Hydration Queuing Guard
+        Orch->>Orch: pendingRemoteUpdateRef.current = event
+        Note over Orch: Buffered until hydration settles 'ready'
+    else Hydration Settled ('ready')
+        Note over Orch: Atomic Remote Update Pipeline
+        Orch->>Orch: debouncedAutoSaveRef.current?.cancel?.() [Drop in-flight timers]
+        Orch->>Orch: isDirtyRef.current = false & setIsDirty(false) [Synchronous reset]
+        Orch->>Orch: editorContentRef.current = safeContent [Sync memory bridge]
+        Orch->>Adapter: setValue(safeContent) [Under programmatic guard]
+        Orch->>IDB: saveLocal({ isDirty: false, baseSnapshot }) [Atomic clean write]
+
+        opt Immediate User Keystrokes Post-Update
+            User->>Adapter: Types new line / text
+            Adapter->>Orch: handleEditorChange(newContent)
+            Note over Orch: Synchronous editorContentRef bridges buffer
+            Orch->>Orch: isDirtyRef.current = true & queue debounced save
+            Note over Orch: Server save payload contains BOTH remote text & user edits
+        end
+    end
+```
+
 
 ### 6d.2 Markdown Structural Syntax Integrity Guard
 1. Automatic Diff3 merging can textually succeed on disjoint line ranges yet produce syntactically corrupt Markdown (e.g. unclosed code fences ``` or broken GFM table delimiter rows).
@@ -415,7 +480,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 - **Automated Test Execution Evidence:**
   - `src/test/sync/sync-conflict-resolver.test.ts` (39/39 passing)
   - `src/test/sync/sync-manager.test.ts` (36/36 passing)
-  - `src/test/editor/editor-orchestration.integration.test.ts` (18/18 passing)
+  - `src/test/editor/editor-orchestration.integration.test.ts` (19/19 passing)
   - `src/test/sync/use-sync.test.ts` (14/14 passing)
   - `src/test/editor/editor-recovery-reload.test.ts` (5/5 passing)
   - `src/test/editor/editor-atomic-commit.test.ts` (4/4 passing)
@@ -437,7 +502,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
     - `src/test/sync/sync-crypto-gateway.test.ts` (5/5 passing - transparent inbound decryption gateway, fresh outbound CSPRNG IV re-encryption, vault-lock quarantine)
     - `src/test/sync/encrypted-conflict-decryption.integration.test.ts` (4/4 passing - end-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution)
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
-  - **Project Full Test Suite:** 81/81 test files, 980/980 tests passing (100% success rate) via `vitest.config.mts`.
+  - **Project Full Test Suite:** 82/82 test files, 1036/1036 tests passing (100% success rate) via `vitest.config.mts`.
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).
 
 

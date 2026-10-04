@@ -120,6 +120,64 @@ sequenceDiagram
   4. Re-encrypts the merged Markdown with a fresh CSPRNG 12-byte IV and file-bound AAD.
   5. Pushes to `/api/files/:id` with `If-Match: "remoteEtag"`, removes the pending conflict, and marks the file clean.
 
+### 2.8 Sub-Line Word/Token 3-Way Merge (`src/lib/sync/diff3.ts` & `src/lib/sync/conflict-resolver.ts`)
+- **Intra-Line Disjoint Resolution:** When conflicting modifications occur on the same line number relative to a common base (`aLine`, `oLine`, `bLine`), standard line-level Diff3 triggers a coarse conflict block. The Sub-Line merge engine (`trySubLineMerge`) decomposes conflicting lines into fine-grained tokens and performs a token-level 3-way merge.
+- **Unicode Tokenization:** Tokenizes strings via Unicode property regex `/\s+|[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+/gu` (`tokenizeLine`), preserving whitespace, multilingual alphabets (including Arabic, Latin, CJK), numbers, and punctuation as atomic tokens without mangling text boundaries.
+- **Non-Overlapping Disjoint Resolution:** If local and remote modifications target disjoint token ranges within the line, tokens merge into a unified string cleanly (`mergedTokens.join('')`). If changes overlap on the same words or adjacent punctuation, a conflict is declared.
+- **Markdown Syntax Integrity Gate:** The merged line must pass `validateMarkdownSyntaxIntegrity`. If intra-line token merging introduces unclosed code fences, corrupts Markdown table delimiters, or injects malformed syntax, the sub-line merge safely aborts (`success: false`) and falls back to deterministic conflict markers.
+- **Configurability:** Controlled via `Diff3Options.subLineMerge` (defaults to `true`). Callers can disable sub-line token merging to enforce strict line-level boundaries.
+
+```mermaid
+graph TD
+    LineInput["Conflicting Line: aLine (Local), oLine (Base), bLine (Remote)"] --> Tokenize["Unicode Tokenization<br/>tokenizeLine()"]
+    Tokenize --> TokenDiff3["Token Array 3-Way Merge<br/>diff3Merge(aTokens, oTokens, bTokens)"]
+    TokenDiff3 --> OverlapCheck{"Token Overlaps?"}
+    OverlapCheck -->|Yes: Shared Words| ConflictBlock["Declare Conflict<br/>(conflict_overlaps)"]
+    OverlapCheck -->|No: Disjoint Tokens| Reassemble["Reassemble String<br/>mergedTokens.join('')"]
+    Reassemble --> SyntaxCheck{"validateMarkdownSyntaxIntegrity()"}
+    SyntaxCheck -->|Valid| CleanResolution["Clean Resolution<br/>(merged_clean)"]
+    SyntaxCheck -->|Invalid Syntax| ConflictBlock
+```
+
+### 2.9 Word-Level Visual Diffing & Intra-Line Highlighting (`src/lib/sync/conflict-resolver.ts` & `src/components/sync/conflict-dialog.tsx`)
+- **Micro-LCS Diffing (`computeWordSpans`):** When generating visual diffs for modified lines, `computeVisualDiff` executes Micro-LCS token alignment between the old and new line content.
+- **`WordSpan` Classification:** Token spans are tagged with deterministic diff operations:
+  - `equal`: unchanged text tokens, displayed with neutral styling.
+  - `delete`: removed tokens, rendered with red strike-through (`bg-red-500/20 text-red-400 line-through`).
+  - `insert`: newly added tokens, rendered with green highlight (`bg-green-500/20 text-green-400 font-medium`).
+- **`DiffOp.modify` Structure:** Instead of coarse multi-line deletions and additions, paired line modifications emit `{ type: 'modify', oldValue, newValue, spans: WordSpan[] }`.
+- **UI Highlighting in `ConflictDialog` (`src/components/sync/conflict-dialog.tsx`):**
+  - Diff view (`DiffLine`) renders modified lines (`~`) with granular inline badges for word-level insertions and deletions.
+  - Side-by-side previews (`LocalHighlightedPreview` and `ServerHighlightedPreview`) render deletions and additions directly within the respective panels.
+
+```mermaid
+graph LR
+    LocalText["Local Line Text"] --> Tokenize["Tokenize Words & Punctuation"]
+    RemoteText["Remote Line Text"] --> Tokenize
+    Tokenize --> MicroLCS["Micro-LCS Sequence Alignment"]
+    MicroLCS --> Spans["WordSpan Array<br/>equal | delete | insert"]
+    Spans --> ModifyOp["DiffOp.modify<br/>{ oldValue, newValue, spans }"]
+    ModifyOp --> DialogUI["ConflictDialog UI Render<br/>DiffLine & Side-by-Side Previews"]
+```
+
+### 2.10 Deletion Guard Architecture (`src/lib/sync/conflict-resolver.ts` & `src/lib/sync/diff3.ts`)
+- **Prevention of Line Resurrections:** When a user locally deletes lines present in the synchronized base snapshot (`baseContent`), naive two-way comparisons between local and remote treat the missing lines as server-side additions, erroneously resurrecting deleted content.
+- **Invariant via `baseSnapshot`:** When `baseContent` is provided, `applyDeletionGuard` analyzes lines present on the server and absent locally:
+  - If the line existed in `baseContent` and remained unchanged on the server, it is classified as intentionally deleted by the local user and kept deleted (`deletedLines`).
+  - Only lines that did *not* exist in `baseContent` are treated as legitimate remote additions (`addedLines`).
+- **Diff3 Engine Deletion Guard:** In `diff3Merge`, trailing and leading matching lines between base and remote that were deleted locally are pruned before declaring conflict blocks.
+- **Safety Guard against Server Edits:** If the server modified a line that was deleted locally, the line is *not* identical between base and server (`oContent !== bContent`), so the Deletion Guard does not prune it; Diff3 accurately surfaces an overlapping conflict for user decision.
+- **Visual Diff Deletion Guard:** In `computeVisualDiff(local, remote, base)`, lines deleted from base locally are rendered as `delete` operations rather than false `insert` operations from the server.
+
+```mermaid
+graph TD
+    LineCheck["Remote Line Absent in Local"] --> BaseCheck{"Present in baseContent?"}
+    BaseCheck -->|No| RemoteAddition["Legitimate Server Addition<br/>(Keep in Merged Content)"]
+    BaseCheck -->|Yes| ServerChangeCheck{"Modified on Server?"}
+    ServerChangeCheck -->|No: Unchanged from Base| UserDeletion["Locally Deleted Line<br/>Deletion Guard: Do NOT Resurrect"]
+    ServerChangeCheck -->|Yes: Server Modified| RealConflict["True Concurrent Conflict<br/>(Surface in Conflict Markers)"]
+```
+
 ---
 
 ## 3. API & Resolution Contracts
@@ -199,7 +257,8 @@ If-Match: "server_etag"
 
 | Test Suite | Test Count | Status | Description |
 | :--- | :--- | :--- | :--- |
-| `src/test/sync/sync-conflict-resolver.test.ts` | 39 | Passed | 3-way merge, LCS linear array, adversarial chunk overlaps, escaped table pipes, CRLF normalization, large doc trimming. |
+| `src/test/sync/sync-conflict-resolver.test.ts` | 60 | Passed | 3-way merge, LCS linear array, sub-line token merge, WordSpan micro-LCS, deletion guard, markdown syntax integrity, escaped table pipes, CRLF normalization, large doc trimming. |
+| `src/test/sync/diff3-sub-line-merge.test.ts` | 37 | Passed | Sub-line disjoint merge, overlapping conflicts, markdown syntax integrity guards, deletion guard, and Unicode tokenization. |
 | `src/test/sync/sync-indexeddb.test.ts` | 14 | Passed | Base snapshot persistence, create-to-update coalescing, store integrity. |
 | `src/test/sync/sync-manager.test.ts` | 36 | Passed | 412 conflict handling, retry backoff, dead-letter transitions, RemoteUpdateEvent dispatch. |
 | `src/test/sync/conflict-resolution.integration.test.ts` | 3 | Passed | Real PostgreSQL lifecycle integration (Base -> Remote write -> Local 412 -> 3-way merge -> Authoritative write -> Verified reload). |
@@ -215,7 +274,7 @@ If-Match: "server_etag"
 | `src/test/vault/vault-sync-ai-gate.test.ts` | 28 | Passed | AI gatekeepers, syntax validator, non-blocking encrypted conflict resolution, and adversarial edge cases. |
 | `src/test/sync/sync-crypto-gateway.test.ts` | 5 | Passed | Inbound decryption gateway, outbound re-encryption with fresh IV, AAD binding, vault-lock quarantine. |
 | `src/test/sync/encrypted-conflict-decryption.integration.test.ts` | 4 | Passed | End-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution, locked vault safety. |
-| **Total Test Count** | **241** | **100% Passed** | **All suites verified against real database and runtime contracts.** |
+| **Total Test Count** | **299** | **100% Passed** | **All suites verified against real database and runtime contracts (361 vitest matrix + 3 live db suites active).** |
 | **TypeScript Typecheck** | `tsc --noEmit` | **0 Errors** | **Strict TypeScript compliance verified across all workspace files.** |
 
 ---

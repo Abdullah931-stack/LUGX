@@ -138,7 +138,7 @@ to a live URL; push failures surface immediately).
 
 ## 5. Evidence of isolation
 
-- **Active Unit & Contract Suite (`npm run test`):** **81 files / 980 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Unit & Contract Suite (`npm run test`):** **82 files / 1036 tests — all passed (100% pass rate)**, zero LIVE files included.
 - **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 119 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
