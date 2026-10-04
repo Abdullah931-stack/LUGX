@@ -60,6 +60,18 @@ export type { LockStatus } from './concurrency-manager';
 export { syncManager, SyncManager, createSyncManager, MAX_QUARANTINED_CONFLICTS } from './sync-manager';
 export type { SyncStatus, FileSyncResult, SyncResult, SyncStatusCallback, ConflictCallback, SyncManagerConfig, RemoteUpdateEvent, RemoteUpdateCallback, QuarantineDiagnostics } from './sync-manager';
 
+// Encrypted Conflict Store
+export { SyncEncryptedConflictStore } from './sync-encrypted-conflict-store';
+export type { SyncEncryptedConflictStoreOptions } from './sync-encrypted-conflict-store';
+
+// Sync Queue Worker
+export { SyncQueueWorker } from './sync-queue-worker';
+export type { SyncQueueWorkerOptions } from './sync-queue-worker';
+
+// Sync Pull Engine
+export { SyncPullEngine } from './sync-pull-engine';
+export type { SyncPullEngineOptions } from './sync-pull-engine';
+
 // Conflict Resolution
 export { conflictResolver, ConflictResolver } from './conflict-resolver';
 export type { DiffOp, MergeResult, ResolutionStrategy } from './conflict-resolver';
