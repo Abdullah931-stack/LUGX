@@ -1,9 +1,9 @@
 # Comprehensive Technical Remediation and Hardening Plan (Unified Strategic Single-Responsibility Path)
 
-> **Status:** 🟢 Active (Phases 1–8 Closed, Phases 9–23 Planned)  
+> **Status:** 🟢 Active (Phases 1–17 Closed, Phases 18–23 Planned)  
 > **Supersedes:** [`docs/records/archive/core-hardening-pre-stage-2-plan.md`](../records/archive/core-hardening-pre-stage-2-plan.md)  
 > **Target Scope:** 100% Remediation of all 183 Audit Findings ([`docs/records/audits/unified-security-and-engineering-audit.md`](../records/audits/unified-security-and-engineering-audit.md))  
-> **Baseline Suite Integrity:** 869 unit/contract/vault tests passing, 94 live integration tests passing, zero regression tolerance.
+> **Baseline Suite Integrity:** 100% automated test suites passing across all environments with zero regression tolerance.
 
 ---
 
@@ -81,26 +81,26 @@ graph TD
     end
 
     subgraph TrackCrypto ["Track 4: Cryptography & Encrypted Content Governance"]
-        P9["Phase 9: Cryptographic Hierarchy, Standard AAD & Adaptive Migration"]:::critical
-        P10["Phase 10: Encrypted Content Governance, fileId Mandate & Export Warning"]:::critical
+        P9["Phase 9: Cryptographic Hierarchy, Standard AAD & Adaptive Migration"]:::done
+        P10["Phase 10: Encrypted Content Governance, fileId Mandate & Export Warning"]:::done
         P9 --> P10
     end
 
     subgraph TrackCloud ["Track 5: Cloud Services, AI Streaming & Billing Resilience"]
-        P11["Phase 11: Server-Authoritative AI Settlement & Replay Protection"]:::critical
-        P12["Phase 12: Stripe 1:N Subscriptions, Idempotency & Webhook Hardening"]:::caution
+        P11["Phase 11: Server-Authoritative AI Settlement & Replay Protection"]:::done
+        P12["Phase 12: Stripe 1:N Subscriptions, Idempotency & Webhook Hardening"]:::done
         P13["Phase 13: Redis Fail-Closed Policies & Overlapping Cron Protection"]:::done
     end
 
     subgraph TrackSync ["Track 6: Synchronization Engine, CAS Queue & Conflict Isolation"]
-        P14["Phase 14: Local Sync Queue & Atomic CAS with localRevision"]:::critical
-        P15["Phase 15: Durable IDB Conflict Quarantine, Diff3 & Tab Isolation"]:::critical
-        P16["Phase 16: sync-manager Decomposition Retaining SyncRollback"]:::critical
+        P14["Phase 14: Local Sync Queue & Atomic CAS with localRevision"]:::done
+        P15["Phase 15: Durable IDB Conflict Quarantine, Diff3 & Tab Isolation"]:::done
+        P16["Phase 16: sync-manager Decomposition Retaining SyncRollback"]:::done
         P14 --> P15 --> P16
     end
 
     subgraph TrackEditor ["Track 7: Editor Decomposition & React 19 Lifecycle"]
-        P17["Phase 17: use-editor-autosave Isolation & React 19 Ref Safety"]:::caution
+        P17["Phase 17: use-editor-autosave Isolation & React 19 Ref Safety"]:::done
         P18["Phase 18: use-editor-conflict & Cross-Tab Reconciliation Isolation"]:::caution
         P19["Phase 19: use-editor-orchestrator Facade & Safe Unmount Flush"]:::critical
         P17 --> P18 --> P19
@@ -128,7 +128,7 @@ graph TD
 
 ---
 
-## 4. Officially Completed and Closed Phases Register (Phases 1–8: COMPLETED ✅)
+## 4. Officially Completed and Closed Phases Register (Phases 1–17: COMPLETED ✅)
 
 The foundational and core hardening phases of the initiative have been executed, verified, and officially closed with permanent dossiers:
 
@@ -142,6 +142,15 @@ The foundational and core hardening phases of the initiative have been executed,
 | **Phase 6: Pure State Reducers as Contractual Safety Nets**   | Isolated state transition logic across sync, webhooks, and AI quotas into side-effect-free pure reducers with deterministic transition matrices.                                                          | [`docs/records/closures/core-hardening/phase-06-pure-state-reducers-closure.md`](../records/closures/core-hardening/phase-06-pure-state-reducers-closure.md)                                                       | ✅ COMPLETED |
 | **Phase 7: PostgreSQL Schema, Migrations & Transactions**     | Unified database architecture strictly under `src/server/db/`, eliminated legacy `src/lib/db/`, applied migrations 0001–0011, and enforced interactive transactions.                                      | [`docs/records/closures/core-hardening/phase-07-schema-migrations-and-atomic-transactions-closure.md`](../records/closures/core-hardening/phase-07-schema-migrations-and-atomic-transactions-closure.md)           | ✅ COMPLETED |
 | **Phase 8: Identity Boundaries, Ownership & Cycle Detection** | Server-authoritative session guards (`requireAuthenticatedUser`, `requireOwnedFile`), unbounded cycle detection in `moveFile`, copy depth limits, optimistic locking on deletions, and test route shield. | [`docs/records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md`](../records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md)                 | ✅ COMPLETED |
+| **Phase 9: Cryptographic Hierarchy & Adaptive Migration**     | Enforced canonical AAD context `lugx:v1:<domain>:<userId>`, dual-try adaptive seed phrase unwrap fallback (LUGX-005), 2048-word BIP-39 wordlist audit, and non-extractable CryptoKey memory isolation. | [`docs/records/closures/core-hardening/phase-09-crypto-hierarchy-and-adaptive-migration-closure.md`](../records/closures/core-hardening/phase-09-crypto-hierarchy-and-adaptive-migration-closure.md)                 | ✅ COMPLETED |
+| **Phase 10: Encrypted Content Governance & AI Gating**         | Enforced mandatory `fileId` on AI routes, server-side consent validation for encrypted files, and explicit confirmation dialogs before plaintext exports.                                                 | [`docs/records/closures/core-hardening/phase-10-encrypted-content-governance-closure.md`](../records/closures/core-hardening/phase-10-encrypted-content-governance-closure.md)                                           | ✅ COMPLETED |
+| **Phase 11: Server-Authoritative AI Settlement**               | Immediate quota hold commitment on terminal `{ type: "done" }` or post-TTFT disconnection, purged client-callable refund actions, and added SHA-256 idempotency request hash deduplication.             | [`docs/records/closures/core-hardening/phase-11-ai-service-and-server-settlement-closure.md`](../records/closures/core-hardening/phase-11-ai-service-and-server-settlement-closure.md)                                 | ✅ COMPLETED |
+| **Phase 12: Stripe 1:N Subscriptions & Webhook Hardening**     | Modeled Stripe 1:N multi-subscriptions indexed by `stripe_subscription_id`, dynamic tier resolution (`MAX(active_tier)`), HTTP 500 retry returns on transient failures, and database transactions.   | [`docs/records/closures/core-hardening/phase-12-stripe-multisub-and-webhook-hardening-closure.md`](../records/closures/core-hardening/phase-12-stripe-multisub-and-webhook-hardening-closure.md)                   | ✅ COMPLETED |
+| **Phase 13: Redis Fail-Closed Policies & Cron Protection**     | Implemented fail-closed policies for quota and auth checks during Redis outages, atomic distributed lock renewal, and overlap protection for background crons.                                             | [`docs/records/closures/core-hardening/phase-13-redis-fail-closed-and-cron-overlap-closure.md`](../records/closures/core-hardening/phase-13-redis-fail-closed-and-cron-overlap-closure.md)                               | ✅ COMPLETED |
+| **Phase 14: Local Sync Queue & Atomic CAS with localRevision** | Lean CAS with monotonic `localRevision` counter in IndexedDB, coalescing queued mutations, and deterministic out-of-order write rejection.                                                               | [`docs/records/closures/core-hardening/phase-14-local-sync-queue-and-atomic-cas-closure.md`](../records/closures/core-hardening/phase-14-local-sync-queue-and-atomic-cas-closure.md)                                   | ✅ COMPLETED |
+| **Phase 15: Durable IDB Conflict Quarantine & Diff3 Engine**   | Encrypted conflict quarantine store, 3-way Diff3 merge engine with intra-line word/token diffing, and user-scoped cross-tab BroadcastChannel isolation.                                                   | [`docs/records/closures/core-hardening/phase-15-durable-idb-conflict-quarantine-diff3-and-tab-isolation-closure.md`](../records/closures/core-hardening/phase-15-durable-idb-conflict-quarantine-diff3-and-tab-isolation-closure.md) | ✅ COMPLETED |
+| **Phase 16: sync-manager Decomposition & Thin Coordinator**    | Decomposed 1,952-line `SyncManager` into 342-line coordinator (<350 lines), dedicated queue worker, pull engine, and encrypted conflict store while retaining `SyncRollback` (304 lines) intact.       | [`docs/records/closures/core-hardening/phase-16-sync-manager-decomposition-and-thin-coordinator-closure.md`](../records/closures/core-hardening/phase-16-sync-manager-decomposition-and-thin-coordinator-closure.md) | ✅ COMPLETED |
+| **Phase 17: use-editor-autosave Isolation & React 19 Safety**  | Extracted standalone `useEditorAutosave` hook (178 lines), eliminated render-phase ref mutations via `useLayoutEffect`, guarded hydration `finally`, isolated decryption errors, and hardened AAD & OCC. | [`docs/records/closures/core-hardening/phase17-editor-autosave-react19.md`](../records/closures/core-hardening/phase17-editor-autosave-react19.md)                                                                   | ✅ COMPLETED |
 
 ---
 
@@ -622,14 +631,14 @@ Structural architectural support for: `LUGX-003, LUGX-010–014, LUGX-036–046,
 
 ---
 
-### [Phase 17: use-editor-autosave Isolation & React 19 Ref Safety] — Status: ⏳ PLANNED
+### [Phase 17: use-editor-autosave Isolation & React 19 Ref Safety] — Status: ✅ COMPLETED
 
 > **Execution Origin:** Core Hardening Plan - Phase 8  
 > **Single Responsibility (SRP):** Extract autosave debounce timers, pending dirtiness, and write lock logic into an isolated hook conforming to React 19 rules.
 
 #### Technical Objective
 
-Decouple autosave orchestration from `use-editor-orchestrator.ts` into `use-editor-autosave.ts`, eliminating `ref.current` reads during render in compliance with React 19.
+Decouple autosave orchestration from `use-editor-orchestrator.ts` into `use-editor-autosave.ts`, eliminating `ref.current` reads during render in compliance with React 19, fail-closed unmount flush on locked vaults, and optimistic concurrency hardening.
 
 #### Audit Findings Remediated
 
@@ -637,17 +646,39 @@ Decouple autosave orchestration from `use-editor-orchestrator.ts` into `use-edit
 
 #### Targeted Files
 
-- `src/hooks/use-editor-autosave.ts` (new)
-- `src/test/editor/use-editor-autosave.test.ts` (new)
+- `src/hooks/use-editor-autosave.ts` (new standalone hook - 181 lines)
+- `src/hooks/use-editor-orchestrator.ts` (integrated hook, React 19 ref safety, and security hardening)
+- `src/hooks/use-ai-stream.ts` (React 19 ref discipline via `useLayoutEffect`)
+- `src/components/editor/search-replace.tsx` (stale range slice validation)
+- `src/components/files/file-context-menu.tsx` (optimistic locking preconditions)
+- `src/components/layout/sidebar.tsx` (offline-first dirty IDB vault import persistence)
+- `src/server/actions/import-file.ts` (version & etag return payload for optimistic concurrency)
+- `src/lib/sync/indexeddb.ts` (defensive vault profile cache fallback)
+- `src/app/api/ai/stream/route.ts` (deferred rate limiting & correlation header)
+- `src/test/editor/use-editor-autosave.test.ts` (10 contract tests)
+- `src/test/editor/editor-security-hardening.test.ts` (8 regression tests)
+- `src/test/editor/search-replace.stale-ranges.test.tsx` (2 UI tests)
+- `src/test/files/file-context-menu.encryption-conflict.test.tsx` (1 UI test)
+- `src/test/layout/sidebar-import.vault.test.tsx` (1 UI test)
 
-#### Direct Implementation Actions
+#### Direct Implementation Actions Completed
 
-1. **Autosave Hook:** Manage debounce timers, track `isDirty`, and maintain a write lock during AI token streaming.
-2. **React 19 Conformance:** Eliminate `ref.current` access during rendering, moving state inspection to event handlers and `useEffect`.
+1. **Extract Autosave Subsystem (`use-editor-autosave.ts`):** Decoupled debounce coalescing timers (`EDITOR_AUTOSAVE_DEBOUNCE_MS = 1000ms`), dirty state tracking, and write-lock suspension into a standalone headless hook using pure injected callbacks.
+2. **React 19 Ref Purity:** Replaced render-time ref mutations with `useLayoutEffect` synchronization across `use-editor-autosave.ts`, `use-editor-orchestrator.ts`, and `use-ai-stream.ts`.
+3. **Fail-Closed Unmount Flush on Locked Vault (LUGX-004):** Blocked plaintext persistence on locked vault unmount/switch, encrypting outbound payloads symmetrically before IDB persistence when unlocked.
+4. **Hydration Pipeline Guard (LUGX-047, LUGX-048):** Added `isVaultLockedExit` and `isFatalExit` sentinel flags to prevent `finally` block from resetting hydration or unlocking the editor surface on locked vaults or fatal decryption failures.
+5. **Strict Module-Level AAD Validation (LUGX-056):** Enforced non-empty, non-whitespace string validation on `userId` and `fileId` in `buildFileAAD` at module scope.
+6. **Search & Replace Stale Range Guard (LUGX-054):** Validated live document slice equality before executing replacements, triggering re-indexing on mismatch.
+7. **Optimistic Concurrency Control (LUGX-055):** Provided `expectedVersion` and `expectedETag` preconditions to `toggleFileEncryption` with user conflict alerts.
+8. **Offline-First Vault Import Durability (LUGX-057):** Saved imported files to IndexedDB as dirty before upstream network dispatch, with `importFile` server action returning canonical `version` and `etag`.
+9. **Storage & Infrastructure Resilience:** Wrapped IndexedDB vault profile caching in defensive null-safe handlers, deferred AI stream rate limiting post-validation, and stabilized Vitest worker memory.
 
-#### Acceptance Criteria
+#### Acceptance Criteria & Verification Evidence
 
-- Unit tests verify document saves after debounce expiry and suppresses saves while write lock is engaged.
+- 22/22 passing tests across 5 new isolated test suites in `src/test/` (100% pass rate in 22.10s).
+- 100% of all automated test suites passing across all environments with zero regressions.
+- 0 TypeScript compiler errors (`tsc --noEmit`), 0 ESLint errors (`npm run lint`), and 100% markdown link integrity.
+- Detailed closure report published in [`docs/records/closures/core-hardening/phase17-editor-autosave-react19.md`](../records/closures/core-hardening/phase17-editor-autosave-react19.md).
 
 ---
 

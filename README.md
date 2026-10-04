@@ -19,8 +19,8 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-82%20Suites%20·%201036%2F1036%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 820 Passing" /></a>
-  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20119%2F119%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 89 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-87%20Suites%20·%201058%2F1058%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1058 Passing" /></a>
+  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20117%2F117%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 117 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
 </p>
@@ -118,7 +118,7 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 >
 > LUGX is designed, architected, and directed entirely by Abdullah through deliberate AI orchestration — every technical decision (data model, concurrency strategy, security posture, and trade-off analyses such as the Yjs evaluation in the [Architectural Statement](#architectural-statement-custom-ground-up-synchronization-engine)) originates from human judgment, domain expertise, and rigorous feasibility studies.
 >
-> Code implementation itself is delegated to and coordinated across advanced AI models under structured, specification-driven direction, with correctness enforced through systematic review gates (type-checking, linting, and an 820-test verification suite) backed by targeted manual review of critical logic paths — rather than manual line-by-line authorship. This is a conscious engineering methodology choice: the discipline demonstrated throughout [`docs/`](./docs) — the phased execution protocol, the living technical debt register, and the design-vs-reality divergence log — reflects the same rigor a hands-on implementation requires, combined with the proven capability to orchestrate, audit, and systematically steer LLMs to produce robust, rigorously tested software.
+> Code implementation itself is delegated to and coordinated across advanced AI models under structured, specification-driven direction, with correctness enforced through systematic review gates (type-checking, linting, and 100% passing automated test suites) backed by targeted manual review of critical logic paths — rather than manual line-by-line authorship. This is a conscious engineering methodology choice: the discipline demonstrated throughout [`docs/`](./docs) — the phased execution protocol, the living technical debt register, and the design-vs-reality divergence log — reflects the same rigor a hands-on implementation requires, combined with the proven capability to orchestrate, audit, and systematically steer LLMs to produce robust, rigorously tested software.
 
 ---
 
@@ -137,7 +137,7 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 | **Client-Side Cryptography**| Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                  |
 | **Payment & Billing**       | Stripe SDK · Webhook Signature Verification                  | 8-state fail-closed state machine, partial unique constraint idempotency                          |
 | **Rate Limiting & Telemetry**| Upstash Redis · Sliding Window · Distributed Tracing        | Dual-mode rate limiting (Fail-Open sync, Fail-Closed AI), X-Correlation-ID tracking, ZK log masking|
-| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | 67 unit, contract, and cryptographic test suites (820 tests) + 19 live database test suites (89 tests)|
+| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | Multi-tier automated verification harness passing 100% (see [Automated Test Suite](#5-automated-test-suite))|
 
 ---
 
@@ -292,6 +292,14 @@ npm run start
 
 ### 5. Automated Test Suite
 
+<!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
+| Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
+| :--- | :--- | :--- | :---: | :---: | :---: |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 87 | 1058 | 100% ✅ |
+| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 117 | 100% ✅ |
+| **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
+<!-- END:SSOT_TEST_METRICS_TABLE -->
+
 The test suite is partitioned into three isolated tiers to ensure comprehensive verification from pure algorithms to real-browser interactions:
 
 | Command             | Scope                        | Characteristics                                                        |
@@ -302,10 +310,10 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (82 test files, 1036 tests)
+# Execute unit/contract test suites (87 test files, 1058 tests)
 npm run test
 
-# Execute live database integration test suites on isolated Neon branch (21 test files, 119 tests)
+# Execute live database integration test suites on isolated Neon branch (21 test files, 117 tests)
 npm run test:live
 
 # Execute browser-driven Playwright E2E tests (14 spec files, 15 user journeys)

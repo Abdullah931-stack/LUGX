@@ -18,6 +18,14 @@ Phase 3 introduces:
 2. **Permissive Fork PR Gating:** Graceful bypass (`exit 0`) with prominent warning banners for external pull requests where repository secrets are inaccessible.
 3. **Structured `$GITHUB_STEP_SUMMARY` Tables:** Automatic generation of GitHub Flavored Markdown summary tables displaying secret status, target browsers, execution contexts, and test counts directly on the GitHub Actions dashboard.
 
+<!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
+| Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
+| :--- | :--- | :--- | :---: | :---: | :---: |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 87 | 1058 | 100% ✅ |
+| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 117 | 100% ✅ |
+| **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
+<!-- END:SSOT_TEST_METRICS_TABLE -->
+
 ---
 
 ## 2. Pipeline Stage Architecture
@@ -29,7 +37,7 @@ flowchart TD
     end
 
     subgraph S2 ["Stage 2: Pure Unit Contracts"]
-        UC["npm run test (81 files, 980 tests)<br/>Zero DB / Zero Network"]
+        UC["npm run test (87 files, 1058 tests)<br/>Zero DB / Zero Network"]
     end
 
     subgraph S3 ["Stage 3: Schema Integrity"]
@@ -37,7 +45,7 @@ flowchart TD
     end
 
     subgraph S4 ["Stage 4: Concurrency & DB Isolation"]
-        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 119 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
+        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 117 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
     end
 
     subgraph S5 ["Stage 5: Production Build"]

@@ -137,7 +137,10 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
  - `src/test/server/import-file.test.ts`: Tests text import, 10MB payload size ceiling, title deduplication, and null-byte sanitization.
  - `src/test/parsers/parser-pdf-settings.test.ts`: Unit tests verifying local preference toggling for spatial table extraction.
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
- - Full suite execution: 82 test files, 1036 tests passing (100% pass rate).
+
+<!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
+**Active Verification Baseline:** 87 unit suites (1058 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+<!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---
 

@@ -1,5 +1,65 @@
 # Changelog - LUGX Project
 
+## [1.45.0] - 2026-10-04 (Phase 17: Editor Decomposition, Standalone Autosave Hook & React 19 Ref Discipline)
+
+### Breaking & Architectural Changes (`src/hooks/use-editor-autosave.ts`, `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-ai-stream.ts`)
+
+- **Decoupled Standalone Autosave Hook (`useEditorAutosave` - LUGX-020):**
+  - Extracted 178 lines of debounced auto-save timers, dirty tracking, and write-lock gating from `useEditorOrchestrator` into a reusable, zero-dependency hook (`src/hooks/use-editor-autosave.ts`).
+  - Headless architecture using injected pure callbacks: `fileId`, `debounceMs`, `isWriteLocked`, `isBlocked`, `persist`, `flushOnUnmount`, `getContent`, and `onUserEdit`.
+  - Debounce coalescing: rapid successive user keystrokes reset active timers (`timerRef.current`), coalescing edits into a single persistence call with latest document content.
+  - Automatic write-lock suspension: while `isWriteLocked` is active (during AI streaming, reserving, committing, or preview ready), autosave persistence is held; when the write lock releases, an effect checks `isDirtyRef.current` and automatically re-triggers a debounced save.
+  - Safe unmount flush: unmount effect invokes `flushOnUnmount` when dirty, ensuring uncommitted edits are flushed before teardown.
+- **Strict React 19 Ref Discipline:**
+  - Eliminated all mutable `ref.current` writes during the React render phase across `use-editor-autosave.ts`, `use-editor-orchestrator.ts`, and `use-ai-stream.ts`.
+  - Wrapped all callback and option ref synchronizations in `useLayoutEffect`, ensuring full compliance with React 19 concurrent render purity and zero render-phase side effects.
+
+### Security Hardening (`src/hooks/use-editor-orchestrator.ts`)
+
+- **Fail-Closed Unmount Flush on Locked Vault (LUGX-004):**
+  - In `flushOnUnmount`, guarded persistence against locked vault states: if `isEncryptedRef.current` is true and `sessionKeyStore.hasMasterKey()` returns false, persistence to IndexedDB is aborted immediately, preventing plaintext from ever being saved tagged as encrypted.
+  - When the vault is unlocked, `flushOnUnmount` symmetrically encrypts outbound content via `SyncCryptoGateway.encryptOutbound` before persisting dirty state to IndexedDB.
+- **Finally Block Reset Guard in File Hydration (LUGX-047):**
+  - Resolved critical defect in `loadInitialFile` where early returns on `vault_locked` or decryption failures fell through to the `finally` block, unconditionally resetting `hydratedRef.current = true`, `setHydration("ready")`, and unlocking the editor.
+  - Added `isVaultLockedExit` and `isFatalExit` sentinel flags preventing `finally` from resetting state and keeping the editor surface safely locked (`adapter.setEditable(false)`).
+- **Fatal Hydration Isolation on Decryption Failure (LUGX-048):**
+  - When local or server decryption fails in `loadInitialFile`, `handleRemoteUpdate`, or `handleVaultUnlocked`, the orchestrator immediately sets `hydration: "fatal"`, disables editor editing (`adapter.setEditable(false)`), and surfaces a user-facing Arabic error banner. Raw ciphertext or broken decryption strings are never rendered into the editor buffer.
+- **Module-Level AAD Validation (LUGX-056):**
+  - Hoisted `buildFileAAD(userId, fileId)` to module scope in `use-editor-orchestrator.ts`.
+  - Enforced strict non-empty string validation for both `userId` and `fileId`, throwing explicit informative errors on empty, whitespace-only, or non-string parameters to prevent corrupted AAD authentication tags.
+
+### UI Bug Fixes & Concurrency Hardening (`src/components/editor/search-replace.tsx`, `src/components/files/file-context-menu.tsx`, `src/components/layout/sidebar.tsx`)
+
+- **Stale Range Validation in Search & Replace (LUGX-054):**
+  - Fixed cache invalidation bug in `SearchReplace` where concurrent document modifications or delayed timers caused `replaceCurrentMatch` and `replaceAllMatches` to replace incorrect text slices.
+  - Added synchronous verification: `currentDoc.slice(from, to) === searchText` before executing any replacement. If a mismatch is detected, replacement is aborted and matches are re-indexed synchronously via `findMatches()`.
+- **Optimistic Concurrency Control on Encryption Toggle (LUGX-055):**
+  - In `FileContextMenu`, passed `expectedVersion` and `expectedETag` preconditions to `toggleFileEncryption` for both encryption and decryption transitions.
+  - On version conflict (HTTP 412), alerts the user and refreshes directory state, preventing silent overwrites of concurrent remote changes.
+- **Offline-First Vault Import Durability (LUGX-057):**
+  - In `Sidebar`, fixed vault document import to persist dirty encrypted state (`isDirty: true`, `lastSyncedAt: 0`) to local IndexedDB *before* attempting server upload.
+  - Only marks clean (`isDirty: false`) with updated version and ETag after the server responds with HTTP 200, guaranteeing zero document loss if network disconnects during import.
+  - Updated `importFile` server action (`src/server/actions/import-file.ts`) to return canonical `version` and `etag` fields in the response payload.
+
+### Storage & System Resilience Hardening (`src/lib/sync/indexeddb.ts`, `src/app/api/ai/stream/route.ts`)
+
+- **IndexedDB Vault Profile Cache Resilience:**
+  - Wrapped `saveCachedVaultProfile` and `getCachedVaultProfile` in defensive `try/catch` handlers with null-safe initialization checks, preventing unhandled promise rejections if IndexedDB is closed or inaccessible.
+- **AI Streaming Rate Limiting Sequence & Quota Guard:**
+  - Deferred rate limiter evaluation until after preliminary request validations and correlation headers are attached, preventing invalid or malformed requests from consuming rate limit tokens while preserving correlation traceability.
+- **Test Infrastructure Stability (`vitest.config.mts`, `src/test/editor/markdown-editor.ui.test.tsx`):**
+  - Cleaned up dynamic style tags in `markdown-editor.ui.test.tsx` afterEach hooks without wiping base JSDOM head elements.
+  - Adjusted test worker memory allocation (`--max-old-space-size=4096`) and timeout parameters in `vitest.config.mts` for deterministic execution across heavy UI suites.
+
+### Test Suite Normalization (`src/test/`)
+
+- Added 5 new isolated test suites with pure relative path imports (22 passing tests total):
+  - `src/test/editor/use-editor-autosave.test.ts` (10 contract tests)
+  - `src/test/editor/editor-security-hardening.test.ts` (8 regression tests covering LUGX-004, LUGX-047, LUGX-048, LUGX-056)
+  - `src/test/editor/search-replace.stale-ranges.test.tsx` (2 UI tests covering LUGX-054)
+  - `src/test/files/file-context-menu.encryption-conflict.test.tsx` (1 UI test covering LUGX-055)
+  - `src/test/layout/sidebar-import.vault.test.tsx` (1 UI test covering LUGX-057)
+
 ## [1.44.1] - 2026-10-04 (Intra-Line Word-Level Diff & Sub-Line 3-Way Merge Upgrade)
 
 ### Intra-Line Word-Level Diff & Sub-Line 3-Way Merge Upgrade (`src/lib/sync/diff3.ts`, `src/lib/sync/conflict-resolver.ts`, `src/components/sync/conflict-dialog.tsx`)

@@ -8,8 +8,9 @@ decision matrix and the offline-first contract (Sections 6a2 / 6c);
 amended in Markdown Migration Phase 2 & 3 with the standalone MarkdownEditor
 and engine-agnostic `EditorAdapter` contract;
 amended in Vault Phase 3 with Zero-Knowledge Vault gating (`vault_locked`),
-pre-save Web Worker envelope encryption, and offline-first dynamic file conversion (Section 6e).
-**Authoritative Module:** `src/hooks/use-editor-orchestrator.ts`
+pre-save Web Worker envelope encryption, and offline-first dynamic file conversion (Section 6e);
+amended in Phase 17 (v1.45.0) with decoupled standalone `useEditorAutosave` hook (`src/hooks/use-editor-autosave.ts`), AI write-lock suspension/resumption gate, and React 19 ref discipline.
+**Authoritative Modules:** `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`
 **Consuming Page:** `src/app/workspace/editor/[fileId]/page.tsx`
 
 ---
@@ -30,7 +31,7 @@ The orchestrator decomposes page state into 7 isolated, deterministic state slic
 | :--- | :--- |
 | **1. Document State** | Document content (`MarkdownSource` - normalized UTF-8 Markdown text) and document title. Protected against silent race overwrites. |
 | **2. Preview State** | Ephemeral AI streaming preview buffer, operation type, active tokens, and finite session status (`idle`, `reserving`, `reserved`, `streaming`, `preview_ready`, `committing`, `committed`, `aborted`, `failed`, `conflict`). |
-| **3. Dirty State** | Boolean flag tracking unsaved local changes, timestamp of last successful save, and active saving indicators. |
+| **3. Dirty State** | Boolean flag tracking unsaved local changes, timestamp of last successful save, and active saving indicators. Formally isolated in Phase 17 into the dedicated `useEditorAutosave` hook (`autosave.isDirty`, `autosave.markClean()`, `autosave.markDirty()`). |
 | **4. Server Version** | Authoritative server version number and ETag precondition anchor received from PostgreSQL. |
 | **5. Conflict State** | Active `SyncConflict` descriptor, modal visibility toggle, resolution strategy payload, and in-flight resolution locks. |
 | **6. Write State** | Mutex controller tracking the active writing channel (`idle`, `saving`, `ai_committing`, `resolving_conflict`, `syncing`, `stopped`). |
@@ -38,47 +39,96 @@ The orchestrator decomposes page state into 7 isolated, deterministic state slic
 
 ---
 
-## 3. AutoSave Suspension Invariants Gate
+## 3. Decoupled AutoSave Architecture (`useEditorAutosave`)
 
-AutoSave is strictly suspended whenever any of the following invariants evaluate to `true`:
+In Phase 17 (v1.45.0), the monolithic debounce timers, dirty tracking, and write-lock suspension logic were decomposed from `useEditorOrchestrator` into a dedicated, engine-agnostic hook: `useEditorAutosave` (`src/hooks/use-editor-autosave.ts`).
+
+### 3.1 Hook Interface Contracts
+
+```typescript
+export interface UseEditorAutosaveOptions {
+  fileId: string;
+  debounceMs?: number;
+  isWriteLocked: boolean;
+  isBlocked: () => boolean;
+  persist: (content: string, targetFileId: string) => Promise<void>;
+  flushOnUnmount: (content: string, targetFileId: string) => void;
+  getContent: () => string | null;
+  onUserEdit?: (content: string) => void;
+}
+
+export interface UseEditorAutosaveReturn {
+  isDirty: boolean;
+  canAutoSave: () => boolean;
+  handleEditorChange: (content: string) => void;
+  cancelAutosave: () => void;
+  markClean: () => void;
+  markDirty: () => void;
+}
+```
+
+### 3.2 Autosave Lifecycle, Coalescing & Suspension Gate
 
 ```mermaid
 flowchart TD
-    Trigger["Editor Content Update Trigger"] --> Gate{"canAutoSave() Check"}
-    Gate -->|"Streaming / Reserving Active"| Suspend["Suspend AutoSave"]
-    Gate -->|"AI Preview Awaiting Decision (preview_ready)"| Suspend
-    Gate -->|"Server Commit In-Flight"| Suspend
-    Gate -->|"Active Conflict Unresolved"| Suspend
-    Gate -->|"Resolving Conflict Active"| Suspend
-    Gate -->|"Sync Manager Stopped"| Suspend
-    Gate -->|"Programmatic Update (setValue)"| Suspend
-    Gate -->|"Hydration Not Complete (hydrating / fatal)"| Suspend
-    Gate -->|"All Guards Passed (Hydrated & Idle)"| Debounce["Queue 1000ms Debounced Server Write"]
+    UserEdit["User Keystroke / handleEditorChange"] --> MarkDirty["Mark Dirty (isDirty = true)"]
+    MarkDirty --> OnUserEdit["onUserEdit Callback (Ghost Range Check)"]
+    OnUserEdit --> ResetTimer["Clear Active Timer & Set Debounce Timeout"]
+    
+    ResetTimer --> TimerFires{"Debounce Timeout Expires"}
+    
+    TimerFires --> TargetMatch{"targetFileId Matches fileId?"}
+    TargetMatch -- No --> DropStale["Drop Stale Save Event"]
+    TargetMatch -- Yes --> GateCheck{"canAutoSave() Check"}
+    
+    GateCheck -- "!isWriteLocked && !isBlocked()" --> Persist["Invoke persist(content, fileId)"]
+    GateCheck -- "isWriteLocked || isBlocked()" --> Withhold["Withhold Persistence (Stay Dirty)"]
+    
+    Withhold --> LockRelease{"Write Lock Released?"}
+    LockRelease -- "Yes (isDirty == true)" --> Requeue["Re-trigger Debounced Save"]
+    LockRelease -- No --> Withhold
+    
+    UnmountTrigger["Component Unmount / fileId Change"] --> UnmountCancel["cancelAutosave()"]
+    UnmountCancel --> DirtyCheck{"isDirtyRef.current == true?"}
+    DirtyCheck -- Yes --> Flush["flushOnUnmount(content, fileId)"]
+    DirtyCheck -- No --> ExitClean["Exit Cleanly"]
 ```
 
-```typescript
-const canAutoSave = useCallback((): boolean => {
-    if (isProgrammaticUpdateRef.current) return false;
-    // SYNC-BEFORE-WRITE: nothing may autosave until the initial load
-    // pipeline settled (see Section 6c).
-    if (hydratedRef.current !== true) return false;
-    if (aiStream.isLoading || aiStream.isStreaming || aiStream.isCommitting) return false;
-    // preview_ready: a completed AI output is parked awaiting the user's
-    // Accept / Reject / Retry decision — autosave must not race it.
-    if (
-        aiStream.status === "reserved" ||
-        aiStream.status === "streaming" ||
-        aiStream.status === "preview_ready" ||
-        aiStream.status === "committing"
-    ) {
-        return false;
-    }
-    if (activeConflictRef.current !== null) return false;
-    if (isResolvingConflictRef.current) return false;
-    if (syncHook.status === "stopped") return false;
-    return true;
-}, [aiStream.isLoading, aiStream.isStreaming, aiStream.isCommitting, aiStream.status, syncHook.status]);
-```
+### 3.3 Core Autosave Invariants
+
+1. **Debounce Coalescing:** Successive keystrokes reset `timerRef.current = setTimeout(..., debounceMs)` (default: `EDITOR_AUTOSAVE_DEBOUNCE_MS = 1000ms`), coalescing bursts of edits into a single persistence call with the latest document content.
+2. **AI Write-Lock Suspension & Resumption:**
+   - While `isWriteLocked` is active (`isLoading`, `isStreaming`, `isCommitting`, `reserved`, `preview_ready`), autosave timers are suppressed and writes are withheld.
+   - When the write lock releases, a reactive effect checks `isDirtyRef.current`: if unsaved edits remain and the editor is unblocked, it schedules a debounced write to automatically sync pending changes.
+3. **Cancellation & Identity Isolation:**
+   - Switching `fileId` immediately clears pending timers (`cancelAutosave()`), preventing pending edits on file A from clobbering file B.
+   - Inside timer callbacks, `targetFileId === currentFileId` is verified before invoking `persist()`.
+4. **React 19 Ref Discipline:**
+   - Options and callback references are mirrored into `optsRef.current` strictly inside `useLayoutEffect`, eliminating render-phase ref reads/writes.
+5. **Fail-Closed Unmount Flush Protection (LUGX-004):**
+   - On component unmount, `flushOnUnmount` is executed if `isDirtyRef.current` is true.
+   - The orchestrator validates encryption state before writing: if the file is encrypted and the vault is locked (`!sessionKeyStore.hasMasterKey()`), unmount flush is skipped to guarantee that plaintext is never persisted with an encrypted tag to local storage.
+   - If the vault is unlocked, the payload is symmetrically encrypted via `SyncCryptoGateway.encryptOutbound` before persisting to IndexedDB with `isDirty: true`.
+
+### 3.4 Architectural Decisions & Trade-offs
+
+#### Decision: Injected Pure Callbacks vs Global Store Coupling for Autosave
+
+- **Context:** Decoupling autosave from `useEditorOrchestrator` required deciding how the hook interacts with persistence, editor adapters, and lock states.
+- **Chosen Architecture:** Pure callback injection (`persist`, `flushOnUnmount`, `getContent`, `isBlocked`, `onUserEdit`) via options object, keeping `useEditorAutosave` completely headless and zero-dependency.
+- **Rejected Alternatives:**
+  - Coupling to Zustand / Redux global store.
+  - Passing raw `EditorAdapter` or `SyncManager` instances directly into the autosave hook.
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (Injected Callbacks) | Alternative (Global Store / Engine Coupling) |
+  | :--- | :--- | :--- |
+  | Implementation Complexity | Low / Deterministic | High |
+  | Testability & Isolation | Complete: tests run with simple `vi.fn()` callbacks in pure jsdom | Low: requires mocking full store/sync engine |
+  | Framework Agnosticism | High: hook only coordinates timers and boolean gates | Low: tightly coupled to state library |
+  | Ref Synchronization | Requires `useLayoutEffect` to keep callback refs synchronized | Implicitly handled by reactive store subscriptions |
+
+- **Migration Trigger (When to Switch):**
+  Migrate to an event-driven store or worker-offloaded state queue only if editor state must be shared across multi-window popouts or if autosave state requires cross-tab distributed locking independent of the editor component tree.
 
 ---
 
@@ -277,11 +327,11 @@ In Phase 4 of the sync orchestration roadmap, remote changes pulled from the ser
 #### Atomic Pipeline Architecture & Guarantees
 
 1. **Immediate In-Flight Auto-Save Cancellation:**
-   - Upon receiving an inbound remote update where `classifyRemoteUpdate` determines `decision.action === 'apply'`, the orchestrator immediately cancels pending debounced auto-save timers via `debouncedAutoSaveRef.current?.cancel?.()`.
+   - Upon receiving an inbound remote update where `classifyRemoteUpdate` determines `decision.action === 'apply'`, the orchestrator immediately cancels pending debounced auto-save timers via `autosave.cancelAutosave()` (managed by `useEditorAutosave`).
    - Prevents queued stale local writes from executing milliseconds later and clobbering freshly arrived server content.
 
 2. **Synchronous Dirty Flag Reset:**
-   - Resets `isDirtyRef.current = false` synchronously in the same tick as React state dispatch `setIsDirty(false)`.
+   - Resets `isDirtyRef.current = false` and invokes `autosave.markClean()` synchronously in the same tick.
    - Guarantees that subsequent keystrokes, navigation checks, or concurrent hooks inspect an immediately authoritative clean baseline rather than waiting for an asynchronous React state flush.
 
 3. **In-Memory Synchronous Content Bridge (`editorContentRef`):**
@@ -323,8 +373,8 @@ sequenceDiagram
         Note over Orch: Buffered until hydration settles 'ready'
     else Hydration Settled ('ready')
         Note over Orch: Atomic Remote Update Pipeline
-        Orch->>Orch: debouncedAutoSaveRef.current?.cancel?.() [Drop in-flight timers]
-        Orch->>Orch: isDirtyRef.current = false & setIsDirty(false) [Synchronous reset]
+        Orch->>Orch: autosave.cancelAutosave() [Drop in-flight timers via useEditorAutosave]
+        Orch->>Orch: autosave.markClean() [Synchronous clean reset]
         Orch->>Orch: editorContentRef.current = safeContent [Sync memory bridge]
         Orch->>Adapter: setValue(safeContent) [Under programmatic guard]
         Orch->>IDB: saveLocal({ isDirty: false, baseSnapshot }) [Atomic clean write]
@@ -354,7 +404,7 @@ sequenceDiagram
 
 To prevent race conditions where a pending debounced auto-save executes in the background while an AI stream is starting (which would advance the server version and cause a 412 conflict on user commit):
 
-1. **Auto-Save Debounce Cancellation (`startAIOperation`):** Starting an AI operation immediately invokes `debouncedAutoSaveRef.current?.cancel?.()`, clearing any queued timers before capturing the initial version.
+1. **Auto-Save Debounce Cancellation (`startAIOperation`):** Starting an AI operation immediately invokes `autosave.cancelAutosave()`, clearing any queued timers before capturing the initial version.
 2. **Live Version Resolution at Commit Time:** `useAIStream` accepts `getLatestVersion` and `getLatestETag` getters connecting directly to `fileVersionRef` and `fileEtagRef`, resolving the most up-to-date local orchestrator version at the moment of commit rather than relying on a stale start snapshot.
 3. **Self-Session Healing in Server Commit:** If `commitAIFileOperation` detects that the database version advanced due to an in-flight background save, but `currentFile.content` is identical to `originalContent`, the server automatically self-heals by adopting the current version without disrupting the user.
 
@@ -442,10 +492,11 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
    - If the device is online, `toggleFileEncryption` executes an atomic database update with optimistic concurrency (`expectedVersion`, `expectedETag`), returning the updated file metadata and ETag to the client, while local IDB is marked clean (`isDirty: false`).
    - Server-side guard: `updateFileContent` strictly rejects unencrypted plaintext writes to any file marked `is_encrypted: true`.
 
-4. **Cross-File Save Race Condition Invariant & Unmount Flush (AUD-01):**
+4. **Cross-File Save Race Condition Invariant & Unmount Flush (AUD-01 / LUGX-004):**
    - In fast workspace navigation across files, pending debounced autosaves for file A could inadvertently overwrite file B if `debouncedAutoSave` closures capture stale references.
-   - The orchestrator parameterizes `debouncedAutoSaveRef` and `executeServerWrite` with `targetFileId`.
-   - When switching routes or unmounting the component, the orchestrator immediately cancels pending debounce timers (`debouncedAutoSaveRef.current?.cancel?.()`) and flushes any uncommitted dirty edits to local IndexedDB (`saveLocal`) with `isDirty: true`, ensuring zero data loss and complete cross-file save isolation.
+   - The hook `useEditorAutosave` parameterizes the timer with `targetFileId` and verifies `targetFileId === currentFileId` before invoking `persist()`.
+   - When switching routes or unmounting the component, `useEditorAutosave` immediately cancels pending debounce timers (`cancelAutosave()`) and flushes uncommitted dirty edits via `flushOnUnmount(content, fileId)`.
+   - In `useEditorOrchestrator`, `flushOnUnmount` enforces fail-closed vault protection (LUGX-004): if the file is encrypted and the vault is locked (`!sessionKeyStore.hasMasterKey()`), unmount flush is skipped to guarantee that plaintext is never persisted with an encrypted tag to local storage. If unlocked, it encrypts the outbound payload via `SyncCryptoGateway.encryptOutbound` before persisting dirty state to IndexedDB (`saveLocal`).
 
 5. **Client-Side Re-Encrypted Copy Engine (AUD-02):**
    - Copying an encrypted file cannot be performed blindly by the server because reusing the same ciphertext with a different file ID violates AAD integrity bindings (`vault:file:${userId}:${fileId}`).
@@ -471,13 +522,18 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 9. **Cross-Tab Volatile RAM Purge Synchronization & Local Auto-Lock Hardening (Phase 22):**
    - Direct integration between `SessionKeyStore` and `BroadcastChannel('textai_cross_tab_sync')` guarantees that when any tab locks the vault (manual lock or inactivity timeout), a `vault_locked` broadcast message purges volatile RAM (`Uint8Array.fill(0)`) across all sibling tabs without echo loops (`this.lock(false)`).
    - Sibling tabs immediately cancel pending auto-saves, set hydration state to `"vault_locked"`, and freeze the editor.
-   - The originating tab binds directly to `sessionKeyStore.subscribe()`, eliminating local auto-lock blindness and canceling `debouncedAutoSave` instantly upon local inactivity timeout.
+   - The originating tab binds directly to `sessionKeyStore.subscribe()`, eliminating local auto-lock blindness and canceling `autosave.cancelAutosave()` instantly upon local inactivity timeout.
 
 ---
 
 ## 7. Verification Proof
 
 - **Automated Test Execution Evidence:**
+  - `src/test/editor/use-editor-autosave.test.ts` (Contract suite covering debounced persistence, rapid edit coalescing, AI write-lock suspension & resumption, timer cancellation, and unmount flush)
+  - `src/test/editor/editor-security-hardening.test.ts` (Regression & contract suite covering LUGX-056 AAD validation, LUGX-004 unmount flush leak prevention, LUGX-047 finally block reset prevention, and LUGX-048 fatal hydration on decrypt failure)
+  - `src/test/editor/search-replace.stale-ranges.test.tsx` (LUGX-054 document slice validation preventing stale cache corruption)
+  - `src/test/files/file-context-menu.encryption-conflict.test.tsx` (LUGX-055 optimistic concurrency preconditions on encryption/decryption toggle)
+  - `src/test/layout/sidebar-import.vault.test.tsx` (LUGX-057 offline-first dirty persistence for vault imports)
   - `src/test/sync/sync-conflict-resolver.test.ts` (39/39 passing)
   - `src/test/sync/sync-manager.test.ts` (36/36 passing)
   - `src/test/editor/editor-orchestration.integration.test.ts` (19/19 passing)
@@ -502,7 +558,11 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
     - `src/test/sync/sync-crypto-gateway.test.ts` (5/5 passing - transparent inbound decryption gateway, fresh outbound CSPRNG IV re-encryption, vault-lock quarantine)
     - `src/test/sync/encrypted-conflict-decryption.integration.test.ts` (4/4 passing - end-to-end integration: remote pull decryption, 412 server IV decryption, clean plaintext conflict resolution)
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
-  - **Project Full Test Suite:** 82/82 test files, 1036/1036 tests passing (100% success rate) via `vitest.config.mts`.
+
+<!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
+**Active Verification Baseline:** 87 unit suites (1058 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+<!-- END:SSOT_TEST_METRICS_INLINE -->
+
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).
 
 

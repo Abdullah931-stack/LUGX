@@ -247,3 +247,18 @@ tags; tables for matrices; mermaid for flows/state machines; no orphan sections.
 - Do not delete documentation sections without demonstrating they no longer map to existing code.
 - Do not document planned behavior as if implemented — label it *planned* and link the tracking item.
 - Do not copy test counts between documents; cite the owning record instead.
+
+---
+
+## 12. Standardized Test Metrics Representation (Living Documentation)
+
+To eliminate documentation drift and regex fragility across living documentation (`README.md`, `docs/README.md`, `docs/reference/`, `docs/architecture/`, `docs/TECHNICAL_DEBT_REGISTER.md`):
+
+1. **Mandatory Canonical Delimiters:** In living files, test figures must never be written as arbitrary, free-form prose. They must strictly use standard HTML comment-delimited blocks or canonical tokens managed programmatically by `scripts/sync-doc-metrics.mjs`:
+   - **Canonical Table Block (`<!-- BEGIN:SSOT_TEST_METRICS_TABLE --> ... <!-- END:SSOT_TEST_METRICS_TABLE -->`):** For structured tabular displays of unit, live, and E2E metrics.
+   - **Canonical Inline Baseline (`<!-- BEGIN:SSOT_TEST_METRICS_INLINE --> ... <!-- END:SSOT_TEST_METRICS_INLINE -->`):** For inline verification summaries.
+   - **Canonical Command Comments:** Unified comment format following verification commands.
+   - **Canonical Badges & Alt Attributes:** Synchronized badge links and `alt="..."` text.
+2. **Prohibition of Ad-Hoc Phrasing:** Introducing un-delimited prose expressing repository test counts in living files is strictly prohibited.
+3. **Automated Verification:** All living documents containing test metrics must be verifiable via `node scripts/sync-doc-metrics.mjs --check` and synchronizable via `--update-docs`.
+

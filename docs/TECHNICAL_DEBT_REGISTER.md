@@ -2,7 +2,11 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decomposition resolved in Phase 16).
+Last reviewed: 2026-10-04 (v1.45.0 — TD-17 editor autosave extraction, React 19 ref discipline, and security hardening resolved in Phase 17).
+
+<!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
+**Active Verification Baseline:** 87 unit suites (1058 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+<!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---
 
@@ -58,7 +62,7 @@ Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decompositi
   - In `src/app/api/ai/stream/route.ts`, implemented `handleClientDisconnect`: when client aborts post-TTFT (after tokens were streamed), the server autonomously settles the reservation via `commitAIReservation(operationId)`, while early disconnects pre-TTFT are refunded (`refundAIReservation`).
   - In Phase 11 (2026-10-02), client financial authority was completely revoked: client hook `useAIStream` was stripped of all settlement RPC invocations (`commitAIReservation`, `settleReservationAsConsumed`). `stopStream()` aborts immediately (0ms) and dismantles ghost decorations instantly without dispatching any network settlement calls, leaving 100% of stream settlement to the server stream handler (`cancel()` and `req.signal.aborted`).
   - Upstream Gemini model generation terminates instantly at socket level, eliminating token bleed and guaranteeing 0ms UI stop latency.
-  - Verified via dedicated test suites `src/test/ai/ai-stream-abort-latency.test.ts`, `src/test/ai/ai-client-authority-revocation.test.ts`, and `src/test/ai/ai-authoritative-stream-settlement.test.ts` (100% passing across 82 test files and 1036 tests).
+  - Verified via dedicated test suites `src/test/ai/ai-stream-abort-latency.test.ts`, `src/test/ai/ai-client-authority-revocation.test.ts`, and `src/test/ai/ai-authoritative-stream-settlement.test.ts` (100% pass rate).
 
 ## TD-06 — Dead `'error'` member in the `SyncStatus` union — ✅ RESOLVED (2026-08-25)
 
@@ -94,7 +98,7 @@ Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decompositi
 - **Resolution:**
   - Extracted shared test suite arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated Single Source of Truth (`vitest.constants.mts`), restricting config files strictly to default exports (`export default defineConfig(...)`).
   - Migrated configuration files to Native ESM (`vitest.config.mts` and `vitest.live.config.mts`), replaced CommonJS `__dirname` with standard `import.meta.dirname`, and specified explicit `.mjs` import extensions for TypeScript module resolution.
-  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings (currently 82 test files and 1036 tests via vitest.config.mts, plus 21 live files via vitest.live.config.mts).
+  - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings and 100% pass rate.
 
 ## TD-10 — Offline Extraction of IndexedDB Device Trust Envelope (Accepted Risk for PIN / Mitigated via WebAuthn PRF)
 
@@ -114,7 +118,7 @@ Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decompositi
   - Strongly typed all cryptographic worker RPC action payloads (`CryptoWorkerResponsePayloads`), indexedDB vault profiles (`UserVaultProfile`), and database encryption metadata (`FileEncryptionMetadata`).
   - Pruned all unused imports, variables, and dead mocks across server actions, sync engines, UI modals, and test suites.
   - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
-  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across all test suites (expanded to 82 unit test suites with 1036 tests green, plus 21 live integration suites with 119 tests green).
+  - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across the entire verification harness.
 
 ## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session — ✅ RESOLVED (2026-09-19)
 
@@ -125,7 +129,7 @@ Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decompositi
   - Introduced Fast-Path routing in `src/proxy.ts` that completely bypasses `getUser()` network calls on public routes (e.g. `/`, static assets) and on `/login` when no auth cookies exist.
   - Equipped `getUser()` in `src/proxy.ts` with an `AbortSignal.timeout(2500)` watchdog race that fails closed gracefully into an unauthenticated null user without socket stalling.
   - Implemented `copyCookiesAndRedirect` helper ensuring all `Set-Cookie` directives (including deletions from `@supabase/ssr`) are retained and returned to the client browser on 307 redirects and 401 API responses.
-  - Verified via dedicated unit test suites (`src/test/auth/auth-signout.test.ts` and `src/test/auth/proxy.test.ts`), maintaining 100% test pass rate across all 82 test suites (1036 passing tests) and clean ESLint status.
+  - Verified via dedicated unit test suites (`src/test/auth/auth-signout.test.ts` and `src/test/auth/proxy.test.ts`), maintaining 100% test pass rate and clean ESLint status.
 
 ## TD-13 — Systemic Fail-Open Defaults on Redis Outages & Unprotected Cron Execution — ✅ RESOLVED (Phase 13 / 2026-10-02)
 
@@ -143,7 +147,7 @@ Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decompositi
   - Implemented `acquireCronLock` (`src/lib/cron/lock.ts`) backed by atomic Redis `SET ... NX EX` with in-memory TTL fallback, enabling concurrent cron runs to skip gracefully with HTTP 200 `{ skipped: true }`.
   - Enforced strict hermetic test isolation in `src/test/load-test-env.ts`: unit tests (`npm run test`) never load `.env.local` or `.env` and run exclusively against dummy Redis and Postgres placeholders, while live tests (`npm run test:live`) exclusively load isolated test branch credentials.
   - Regulated Vitest concurrency (`maxWorkers: 3` on Windows) to prevent CPU thread starvation and eliminate worker spawn timeouts.
-  - Verified across 78 unit test suites (957 passing tests) and 21 live database suites (119 passing tests).
+  - Verified across all unit and live database integration test suites with 100% pass rate.
 
 ## TD-14 — In-Flight Lost Updates, Queue Coalescing Pollution & Destructive Push Failure Rollbacks — ✅ RESOLVED (Phase 14 / 2026-10-03)
 
@@ -158,7 +162,7 @@ Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decompositi
   - Extracted pure `src/lib/sync/coalescing.ts` module with `canCoalesce` restricting merges strictly to `status === 'queued'`, advancing `localRevision` and resetting retry counters.
   - Passed authoritative server `version` to atomic CAS commits to keep client aligned with server state.
   - Excised destructive rollback from network push failure catches; checkpoints are cleanly discarded via `removeCheckpoint()`, preserving offline edits for backoff retries.
-  - Verified via dedicated test suite `src/test/sync/sync-cas-concurrency.test.ts` (9/9 passing) and 100% pass across all 79 unit test suites (966 tests) and 21 live database suites (119 tests).
+  - Verified via dedicated test suite `src/test/sync/sync-cas-concurrency.test.ts` (9/9 passing) with 100% pass rate across all test suites.
 
 ## TD-15 — Latent Upstream AST Recursion DoS in Dev Linter Toolchain (`braces` <= 3.0.3)
 
@@ -188,4 +192,28 @@ Last reviewed: 2026-10-04 (v1.44.0 — TD-16 monolithic sync-manager decompositi
   - Reused existing `SyncRollback` (`src/lib/sync/rollback.ts`, 303 lines) directly via dependency injection without duplicating rollback logic.
   - Re-exported all extracted classes and contracts through `src/lib/sync/index.ts` maintaining 100% backward compatibility for all public consumers and test suites.
   - Verified across 100% of sync unit test suites (306/306 vitest tests passing).
+
+## TD-17 — Editor Orchestrator Monolithic Autosave, React 19 Ref Violations & Vault Security Gaps — ✅ RESOLVED (Phase 17 / 2026-10-04)
+
+- **Debt:**
+  - `useEditorOrchestrator` combined document state, conflict handling, and monolithic autosave debounce timers into a single file exceeding 1,900 lines (`LUGX-020`).
+  - Render-time mutation of mutable ref containers in `useAIStream` and `useEditorOrchestrator` violated React 19 concurrent render purity standards.
+  - On component unmount, `flushOnUnmount` persisted plaintext into IndexedDB tagged as encrypted if the vault was locked (`LUGX-004`).
+  - In `loadInitialFile`, early exits on vault locked state or decryption errors executed the enclosing `finally` block, falsely resetting hydration to `"ready"` and unlocking the editor (`LUGX-047`).
+  - Decryption errors during initial file hydration rendered raw ciphertext or broken strings into the CodeMirror surface (`LUGX-048`).
+  - In `SearchReplace`, replacement operated blindly on cached character ranges without verifying that the live document slice matched the expected search query (`LUGX-054`).
+  - File encryption/decryption toggle in `FileContextMenu` lacked optimistic concurrency controls, risking overwrites of concurrent edits (`LUGX-055`).
+  - `buildFileAAD` accepted null, undefined, or empty `userId` and `fileId`, risking corrupted or mismatched cryptographic authentication tags (`LUGX-056`).
+  - When importing files to the vault offline-first, failures to reach the server left the local copy unpersisted or incorrectly marked clean (`LUGX-057`).
+- **Resolution:**
+  - **LUGX-020 (Autosave Hook Extraction):** Extracted `useEditorAutosave` (`src/hooks/use-editor-autosave.ts`, 178 lines) with pure injected callbacks (`persist`, `flushOnUnmount`, `getContent`, `isBlocked`, `onUserEdit`), debounce coalescing, and automatic suspension while `isWriteLocked` is active with seamless resumption upon unlock.
+  - **React 19 Ref Discipline:** Wrapped all closure-synchronizing ref mutations in `useLayoutEffect` across `use-editor-autosave.ts`, `use-editor-orchestrator.ts`, and `use-ai-stream.ts`, guaranteeing zero render-phase ref access.
+  - **LUGX-004 (Fail-Closed Unmount Flush):** Enforced fail-closed vault checks in `flushOnUnmount`: skips persistence if vault is locked (`!sessionKeyStore.hasMasterKey()`), and re-encrypts outbound content via `SyncCryptoGateway.encryptOutbound` if unlocked before writing to IndexedDB.
+  - **LUGX-047 (Finally Block Guard):** Introduced `isVaultLockedExit` and `isFatalExit` flags in `loadInitialFile` guarding the `finally` block against resetting `hydration` to `"ready"`.
+  - **LUGX-048 (Fatal Hydration on Decrypt Failure):** Decryption errors immediately transition hydration to `"fatal"`, freeze the editor (`adapter.setEditable(false)`), and surface an explicit error banner without exposing ciphertext.
+  - **LUGX-054 (Stale Range Verification):** Verified `currentDoc.slice(from, to) === searchText` synchronously before executing single or multi-range replacements, aborting and re-indexing if the document changed.
+  - **LUGX-055 (OCC Encryption Preconditions):** Passed `expectedVersion` and `expectedETag` to `toggleFileEncryption`, detecting and surfacing HTTP 412 conflicts gracefully.
+  - **LUGX-056 (Strict AAD Validation):** Hoisted `buildFileAAD(userId, fileId)` to module scope in `use-editor-orchestrator.ts` and enforced non-empty trimmed string checks throwing informative errors on invalid IDs.
+  - **LUGX-057 (Offline-First Vault Import Durability):** Pre-persisted imported vault files to IndexedDB with `isDirty: true` and `lastSyncedAt: 0` before server dispatch, marking clean only after server confirmation.
+  - **Verification:** Covered by 5 dedicated regression test suites: `use-editor-autosave.test.ts`, `editor-security-hardening.test.ts`, `search-replace.stale-ranges.test.tsx`, `file-context-menu.encryption-conflict.test.tsx`, and `sidebar-import.vault.test.tsx`.
 
