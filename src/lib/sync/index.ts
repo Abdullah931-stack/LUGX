@@ -74,7 +74,7 @@ export type { SyncPullEngineOptions } from './sync-pull-engine';
 
 // Conflict Resolution
 export { conflictResolver, ConflictResolver } from './conflict-resolver';
-export type { DiffOp, MergeResult, ResolutionStrategy } from './conflict-resolver';
+export type { DiffOp, WordSpan, MergeResult, ResolutionStrategy } from './conflict-resolver';
 
 // Performance
 export { syncPerformanceMonitor, SyncPerformanceMonitor } from './performance-monitor';

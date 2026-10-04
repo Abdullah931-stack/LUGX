@@ -44,10 +44,11 @@ function formatTime(timestamp?: number): string {
 }
 
 /**
- * Render a single diff line with appropriate styling in Markdown monospace font
+ * Render a single diff line with appropriate styling in Markdown monospace font.
+ * Supports fine-grained intra-line word highlighting when op.type === 'modify'.
  */
 function DiffLine({ op }: { op: DiffOp }) {
-    if (!op.value.trim() && op.type === 'equal') return null;
+    if (op.type === 'equal' && !op.value.trim()) return null;
 
     const baseClasses = "text-xs sm:text-sm px-2.5 py-1 whitespace-pre-wrap break-words leading-relaxed rounded font-mono";
 
@@ -70,7 +71,148 @@ function DiffLine({ op }: { op: DiffOp }) {
                     &nbsp; {op.value}
                 </div>
             );
+        case 'modify':
+            return (
+                <div className={`${baseClasses} bg-amber-950/40 border-r-2 border-amber-500 text-zinc-300 flex flex-wrap items-baseline gap-y-0.5`}>
+                    <span className="text-amber-400 font-bold ml-1.5 select-none">~</span>
+                    {op.spans.map((span, idx) => {
+                        if (span.type === 'delete') {
+                            return (
+                                <span
+                                    key={idx}
+                                    className="bg-red-500/20 text-red-400 line-through rounded px-0.5 mx-0.5"
+                                >
+                                    {span.value}
+                                </span>
+                            );
+                        }
+                        if (span.type === 'insert') {
+                            return (
+                                <span
+                                    key={idx}
+                                    className="bg-green-500/20 text-green-400 font-medium rounded px-0.5 mx-0.5"
+                                >
+                                    {span.value}
+                                </span>
+                            );
+                        }
+                        return (
+                            <span key={idx} className="text-zinc-400">
+                                {span.value}
+                            </span>
+                        );
+                    })}
+                </div>
+            );
     }
+}
+
+/**
+ * Local column preview highlighting words deleted or replaced locally
+ */
+function LocalHighlightedPreview({ diffs, fallbackText }: { diffs?: DiffOp[]; fallbackText: string }) {
+    if (!diffs || diffs.length === 0) {
+        return (
+            <div className="text-sm text-zinc-200 whitespace-pre-wrap font-sans leading-relaxed select-text" dir="auto">
+                {fallbackText || "مستند فارغ"}
+            </div>
+        );
+    }
+
+    return (
+        <div className="text-xs sm:text-sm font-mono leading-relaxed space-y-0.5 select-text" dir="auto">
+            {diffs.map((op, i) => {
+                if (op.type === 'equal') {
+                    return (
+                        <div key={i} className="text-zinc-300 py-0.5 whitespace-pre-wrap break-words min-h-[1.25rem]">
+                            {op.value || '\u00A0'}
+                        </div>
+                    );
+                }
+                if (op.type === 'delete') {
+                    return (
+                        <div key={i} className="bg-red-950/40 text-red-300 line-through px-1.5 py-0.5 rounded whitespace-pre-wrap break-words border-r-2 border-red-500/50">
+                            {op.value || '\u00A0'}
+                        </div>
+                    );
+                }
+                if (op.type === 'modify') {
+                    return (
+                        <div key={i} className="bg-red-950/20 px-1.5 py-0.5 rounded whitespace-pre-wrap break-words border-r-2 border-amber-500/50 text-zinc-300">
+                            {op.spans.map((span, sIdx) => {
+                                if (span.type === 'delete') {
+                                    return (
+                                        <span key={sIdx} className="bg-red-500/20 text-red-300 line-through rounded px-0.5 mx-0.5">
+                                            {span.value}
+                                        </span>
+                                    );
+                                }
+                                if (span.type === 'equal') {
+                                    return <span key={sIdx}>{span.value}</span>;
+                                }
+                                return null;
+                            })}
+                        </div>
+                    );
+                }
+                return null;
+            })}
+        </div>
+    );
+}
+
+/**
+ * Server column preview highlighting words inserted or replaced on the server
+ */
+function ServerHighlightedPreview({ diffs, fallbackText }: { diffs?: DiffOp[]; fallbackText: string }) {
+    if (!diffs || diffs.length === 0) {
+        return (
+            <div className="text-sm text-zinc-200 whitespace-pre-wrap font-sans leading-relaxed select-text" dir="auto">
+                {fallbackText || "مستند فارغ"}
+            </div>
+        );
+    }
+
+    return (
+        <div className="text-xs sm:text-sm font-mono leading-relaxed space-y-0.5 select-text" dir="auto">
+            {diffs.map((op, i) => {
+                if (op.type === 'equal') {
+                    return (
+                        <div key={i} className="text-zinc-300 py-0.5 whitespace-pre-wrap break-words min-h-[1.25rem]">
+                            {op.value || '\u00A0'}
+                        </div>
+                    );
+                }
+                if (op.type === 'insert') {
+                    return (
+                        <div key={i} className="bg-green-950/40 text-green-300 font-medium px-1.5 py-0.5 rounded whitespace-pre-wrap break-words border-r-2 border-green-500/50">
+                            {op.value || '\u00A0'}
+                        </div>
+                    );
+                }
+                if (op.type === 'modify') {
+                    return (
+                        <div key={i} className="bg-green-950/20 px-1.5 py-0.5 rounded whitespace-pre-wrap break-words border-r-2 border-amber-500/50 text-zinc-300">
+                            {op.spans.map((span, sIdx) => {
+                                if (span.type === 'insert') {
+                                    return (
+                                        <span key={sIdx} className="bg-green-500/20 text-green-300 font-medium rounded px-0.5 mx-0.5">
+                                            {span.value}
+                                        </span>
+                                    );
+                                }
+                                if (span.type === 'equal') {
+                                    return <span key={sIdx}>{span.value}</span>;
+                                }
+                                return null;
+                            })}
+                        </div>
+                    );
+                }
+                return null;
+            })}
+        </div>
+    );
 }
 
 export function ConflictDialog({ conflict, onResolve, onClose, isResolving = false }: ConflictDialogProps) {
@@ -361,9 +503,7 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
                                     </span>
                                 </div>
                                 <div className="flex-1 overflow-auto p-4 custom-scrollbar">
-                                    <div className="text-sm text-zinc-200 whitespace-pre-wrap font-sans leading-relaxed select-text" dir="auto">
-                                        {localDisplayText || "مستند فارغ"}
-                                    </div>
+                                    <LocalHighlightedPreview diffs={initialMergeResult.diffs} fallbackText={localDisplayText} />
                                 </div>
                             </div>
 
@@ -401,9 +541,7 @@ export function ConflictDialog({ conflict, onResolve, onClose, isResolving = fal
                                             تم حذف هذا الملف من الخادم
                                         </div>
                                     ) : (
-                                        <div className="text-sm text-zinc-200 whitespace-pre-wrap font-sans leading-relaxed select-text" dir="auto">
-                                            {serverDisplayText || "مستند فارغ"}
-                                        </div>
+                                        <ServerHighlightedPreview diffs={initialMergeResult.diffs} fallbackText={serverDisplayText} />
                                     )}
                                 </div>
                             </div>

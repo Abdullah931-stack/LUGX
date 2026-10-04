@@ -113,6 +113,18 @@ export function validateMarkdownSyntaxIntegrity(
                 }
             }
         }
+
+        // 5. Unclosed Inline Code Backtick Detection
+        const backtickMatches = line.match(/(?<!\\)`/g);
+        if (backtickMatches && backtickMatches.length % 2 !== 0) {
+            errors.push(`Unclosed inline code backtick detected at line ${i + 1}`);
+        }
+
+        // 6. Unclosed Bold Delimiter Detection (**)
+        const boldAsteriskMatches = line.match(/(?<!\\)\*\*/g);
+        if (boldAsteriskMatches && boldAsteriskMatches.length % 2 !== 0) {
+            errors.push(`Unclosed bold delimiter (**) detected at line ${i + 1}`);
+        }
     }
 
     // 5. Unclosed Code Block Detection

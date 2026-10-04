@@ -12,6 +12,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ConflictResolver } from '@/lib/sync/conflict-resolver';
+import { tokenizeLine, trySubLineMerge, diff3MergeText } from '@/lib/sync/diff3';
 import { validateMarkdownSyntaxIntegrity } from '@/lib/sync/syntax-validator';
 import { IDBFile, SyncConflict } from '@/lib/sync/idb-types';
 
@@ -677,6 +678,318 @@ describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
             expect(result.status).toBe('manual_resolution_required');
             expect(result.hasOverlaps).toBe(true);
             expect(result.reason).toContain('Encrypted ciphertext detected');
+        });
+
+        describe('Option 1 Native Zero-Dependency Micro-LCS Sub-Line Merge', () => {
+            it('should tokenize unicode text including words, whitespace, and punctuation', () => {
+                const line = 'Hello, world! 123 مرحبا بالعالم';
+                const tokens = tokenizeLine(line);
+                expect(tokens).toEqual([
+                    'Hello', ',', ' ', 'world', '!', ' ', '123', ' ', 'مرحبا', ' ', 'بالعالم'
+                ]);
+            });
+
+            it('should cleanly merge disjoint token modifications on the same line (no false conflict)', () => {
+                const base = 'The quick brown fox jumps over the lazy dog';
+                const local = 'The fast brown fox jumps over the lazy dog'; // "quick" -> "fast"
+                const remote = 'The quick brown fox leaps over the lazy dog'; // "jumps" -> "leaps"
+
+                const subResult = trySubLineMerge(local, base, remote);
+                expect(subResult.success).toBe(true);
+                expect(subResult.line).toBe('The fast brown fox leaps over the lazy dog');
+
+                // Integration test through attemptThreeWayMerge
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(true);
+                expect(result.status).toBe('merged_clean');
+                expect(result.hasOverlaps).toBe(false);
+                expect(result.content).toBe('The fast brown fox leaps over the lazy dog');
+            });
+
+            it('should handle multilingual Arabic sub-line merge with disjoint modifications', () => {
+                const base = 'مرحبا بكم في عالم الويب الحديث';
+                const local = 'أهلا بكم في عالم الويب الحديث'; // "مرحبا" -> "أهلا"
+                const remote = 'مرحبا بكم في عالم التكنولوجيا الحديث'; // "الويب" -> "التكنولوجيا"
+
+                const subResult = trySubLineMerge(local, base, remote);
+                expect(subResult.success).toBe(true);
+                expect(subResult.line).toBe('أهلا بكم في عالم التكنولوجيا الحديث');
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(true);
+                expect(result.status).toBe('merged_clean');
+                expect(result.content).toBe('أهلا بكم في عالم التكنولوجيا الحديث');
+            });
+
+            it('should declare conflict when sub-line token modifications overlap on the same word', () => {
+                const base = 'The quick brown fox';
+                const local = 'The fast brown fox'; // "quick" -> "fast"
+                const remote = 'The agile brown fox'; // "quick" -> "agile"
+
+                const subResult = trySubLineMerge(local, base, remote);
+                expect(subResult.success).toBe(false);
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(false);
+                expect(result.status).toBe('conflict_overlaps');
+                expect(result.hasOverlaps).toBe(true);
+                expect(result.conflictMarkers).toContain('<<<<<<< LOCAL');
+                expect(result.conflictMarkers).toContain('The fast brown fox');
+                expect(result.conflictMarkers).toContain('=======');
+                expect(result.conflictMarkers).toContain('The agile brown fox');
+                expect(result.conflictMarkers).toContain('>>>>>>> REMOTE');
+            });
+
+            it('should merge disjoint intra-line edits across multiple lines in a document cleanly', () => {
+                const base = 'Row 1: item alpha and item beta\nRow 2: status pending and counter 0';
+                const local = 'Row 1: item first and item beta\nRow 2: status pending and counter 10';
+                const remote = 'Row 1: item alpha and item last\nRow 2: status approved and counter 0';
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(true);
+                expect(result.status).toBe('merged_clean');
+                expect(result.content).toBe('Row 1: item first and item last\nRow 2: status approved and counter 10');
+            });
+
+            it('should reject sub-line merge and declare conflict when token merge violates Markdown syntax (unclosed code fence)', () => {
+                const base = '```js';
+                const local = '```typescript';
+                const remote = '```js extra';
+
+                const subResult = trySubLineMerge(local, base, remote);
+                expect(subResult.success).toBe(false);
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(false);
+                expect(result.status).toBe('conflict_overlaps');
+            });
+
+            it('should respect subLineMerge: false option and declare line conflict on intra-line differences', () => {
+                const base = 'The quick brown fox jumps over the lazy dog';
+                const local = 'The fast brown fox jumps over the lazy dog';
+                const remote = 'The quick brown fox leaps over the lazy dog';
+
+                const result = diff3MergeText(local, base, remote, { subLineMerge: false });
+                expect(result.hasConflicts).toBe(true);
+                expect(result.success).toBe(false);
+                expect(result.content).toContain('<<<<<<< LOCAL');
+            });
+        });
+
+        describe('Visual Diff with Intra-Line Micro-LCS WordSpan', () => {
+            it('should emit modify DiffOp with fine-grained WordSpan tokens for single modified line', () => {
+                const local = 'The quick brown fox';
+                const remote = 'The fast brown fox';
+
+                const diffs = resolver.computeVisualDiff(local, remote);
+                expect(diffs).toHaveLength(1);
+                expect(diffs[0].type).toBe('modify');
+
+                if (diffs[0].type === 'modify') {
+                    expect(diffs[0].oldValue).toBe('The quick brown fox');
+                    expect(diffs[0].newValue).toBe('The fast brown fox');
+                    expect(diffs[0].spans).toBeDefined();
+
+                    const deleteSpan = diffs[0].spans.find(s => s.type === 'delete');
+                    const insertSpan = diffs[0].spans.find(s => s.type === 'insert');
+                    expect(deleteSpan?.value).toBe('quick');
+                    expect(insertSpan?.value).toBe('fast');
+
+                    const equalSpans = diffs[0].spans.filter(s => s.type === 'equal').map(s => s.value).join('');
+                    expect(equalSpans).toBe('The  brown fox');
+                }
+            });
+
+            it('should handle pure insertions and pure deletions as line ops', () => {
+                const local = 'Line 1\nLine 2';
+                const remote = 'Line 1\nLine 2\nLine 3';
+
+                const diffs = resolver.computeVisualDiff(local, remote);
+                expect(diffs).toHaveLength(3);
+                expect(diffs[0]).toEqual({ type: 'equal', value: 'Line 1' });
+                expect(diffs[1]).toEqual({ type: 'equal', value: 'Line 2' });
+                expect(diffs[2]).toEqual({ type: 'insert', value: 'Line 3' });
+            });
+
+            it('should handle multi-line block replacements with 1-to-1 intra-line word spans', () => {
+                const local = 'Item 1: red apple\nItem 2: blue car';
+                const remote = 'Item 1: green apple\nItem 2: red car';
+
+                const diffs = resolver.computeVisualDiff(local, remote);
+                expect(diffs).toHaveLength(2);
+                expect(diffs[0].type).toBe('modify');
+                expect(diffs[1].type).toBe('modify');
+
+                if (diffs[0].type === 'modify') {
+                    const del = diffs[0].spans.find(s => s.type === 'delete');
+                    const ins = diffs[0].spans.find(s => s.type === 'insert');
+                    expect(del?.value).toBe('red');
+                    expect(ins?.value).toBe('green');
+                }
+            });
+
+            it('should accurately compute spans for markdown formatted text (links, bold, code)', () => {
+                const local = 'Visit [Homepage](https://example.com/v1) for **alpha** documentation and `code1`';
+                const remote = 'Visit [Homepage](https://example.com/v2) for **beta** documentation and `code2`';
+
+                const diffs = resolver.computeVisualDiff(local, remote);
+                expect(diffs).toHaveLength(1);
+                expect(diffs[0].type).toBe('modify');
+
+                if (diffs[0].type === 'modify') {
+                    const delSpans = diffs[0].spans.filter(s => s.type === 'delete').map(s => s.value);
+                    const insSpans = diffs[0].spans.filter(s => s.type === 'insert').map(s => s.value);
+                    expect(delSpans).toContain('v1');
+                    expect(delSpans).toContain('alpha');
+                    expect(delSpans).toContain('code1');
+                    expect(insSpans).toContain('v2');
+                    expect(insSpans).toContain('beta');
+                    expect(insSpans).toContain('code2');
+                }
+            });
+
+            it('should integrate Deletion Guard in computeVisualDiff when baseContent is provided', () => {
+                const base = 'Line 1\nDeleted By User\nLine 3';
+                const local = 'Line 1\nLine 3';
+                const remote = 'Line 1\nDeleted By User\nLine 3';
+
+                // Without base: looks like remote inserted 'Deleted By User'
+                const diffsWithoutBase = resolver.computeVisualDiff(local, remote);
+                expect(diffsWithoutBase.some(d => d.type === 'insert' && d.value === 'Deleted By User')).toBe(true);
+
+                // With base: recognized that user deleted it locally from base
+                const diffsWithBase = resolver.computeVisualDiff(local, remote, base);
+                expect(diffsWithBase.some(d => d.type === 'delete' && d.value === 'Deleted By User')).toBe(true);
+                expect(diffsWithBase.some(d => d.type === 'insert' && d.value === 'Deleted By User')).toBe(false);
+            });
+        });
+
+        describe('Deletion Guard Logic', () => {
+            it('should keep line deleted when line is present in server, missing in local, and was in baseContent', () => {
+                const base = 'Header\nTarget Line To Delete\nFooter';
+                const local = 'Header\nFooter'; // User deleted Target Line
+                const remote = 'Header\nTarget Line To Delete\nFooter'; // Unchanged in server
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(true);
+                expect(result.status).toBe('merged_clean');
+                expect(result.hasOverlaps).toBe(false);
+                expect(result.content).toBe('Header\nFooter');
+                expect(result.content).not.toContain('Target Line To Delete');
+            });
+
+            it('should treat line as server addition only if it was NOT in baseContent', () => {
+                const base = 'Header\nFooter';
+                const local = 'Header\nFooter';
+                const remote = 'Header\nServer New Feature\nFooter'; // Added by server
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(true);
+                expect(result.status).toBe('merged_clean');
+                expect(result.content).toBe('Header\nServer New Feature\nFooter');
+            });
+
+            it('should correctly execute applyDeletionGuard helper', () => {
+                const base = 'Line 1\nDeleted Locally\nLine 3';
+                const local = 'Line 1\nLine 3';
+                const remote = 'Line 1\nDeleted Locally\nAdded by Remote\nLine 3';
+
+                const guard = resolver.applyDeletionGuard(base, local, remote);
+                expect(guard.deletedLines).toEqual(['Deleted Locally']);
+                expect(guard.addedLines).toEqual(['Added by Remote']);
+                expect(guard.purgedServerContent).toBe('Line 1\nAdded by Remote\nLine 3');
+            });
+
+            it('should prevent resurrecting deleted lines when local modified adjacent line', () => {
+                const base = 'Line A\nLine B\nLine C';
+                const local = 'Line A (local modified)\nLine C'; // Modified A and deleted B!
+                const remote = 'Line A (remote modified)\nLine B\nLine C'; // Modified A, left B untouched
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                // Line B was in base, unchanged in remote, deleted in local -> kept deleted!
+                if (result.success) {
+                    expect(result.content).not.toContain('Line B');
+                } else {
+                    // Even if Line A had conflict, Line B must not be resurrected in remote conflict block
+                    expect(result.conflictMarkers).not.toContain('Line B');
+                }
+            });
+
+            it('should declare conflict if server modifies a line that was deleted locally', () => {
+                const base = 'Header\nCritical Config: baseline\nFooter';
+                const local = 'Header\nFooter'; // User deleted Critical Config
+                const remote = 'Header\nCritical Config: updated_by_server\nFooter'; // Server modified it
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(false);
+                expect(result.status).toBe('conflict_overlaps');
+                expect(result.hasOverlaps).toBe(true);
+                expect(result.conflictMarkers).toContain('Critical Config: updated_by_server');
+            });
+
+            it('should handle multiple non-contiguous deletions across base content without resurrecting any', () => {
+                const base = 'Sec 1\nDel 1\nSec 2\nDel 2\nSec 3\nDel 3\nSec 4';
+                const local = 'Sec 1\nSec 2\nSec 3\nSec 4';
+                const remote = 'Sec 1 (remote mod)\nDel 1\nSec 2\nDel 2\nSec 3\nDel 3\nSec 4 (remote mod)';
+
+                const result = resolver.attemptThreeWayMerge({
+                    base: { content: base },
+                    local: { content: local },
+                    remote: { content: remote },
+                });
+
+                expect(result.success).toBe(true);
+                expect(result.status).toBe('merged_clean');
+                expect(result.content).toBe('Sec 1 (remote mod)\nSec 2\nSec 3\nSec 4 (remote mod)');
+                expect(result.content).not.toContain('Del 1');
+                expect(result.content).not.toContain('Del 2');
+                expect(result.content).not.toContain('Del 3');
+            });
         });
     });
 });

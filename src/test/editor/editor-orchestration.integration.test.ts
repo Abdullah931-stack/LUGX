@@ -724,6 +724,69 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
             expect(result.current.isDirty).toBe(false);
         });
 
+        it("receives remote update, user types a new line, verify save payload contains BOTH the remote text and the newly typed line", async () => {
+            vi.mocked(fileOps.updateFileContent).mockClear();
+
+            const { result } = renderHook(() =>
+                useEditorOrchestrator({ fileId, userId, adapter })
+            );
+
+            await waitFor(() => expect(result.current.hydration).toBe("ready"));
+            expect(result.current.isDirty).toBe(false);
+            expect(capturedRemoteUpdateCallback).toBeDefined();
+
+            // 1. Client receives remote update from server (e.g. Line 1)
+            await act(async () => {
+                capturedRemoteUpdateCallback!({
+                    fileId,
+                    content: "Line 1 from server",
+                    etag: "etag-remote-v2",
+                    version: 2,
+                    title: "Remote Title",
+                    updatedAt: new Date().toISOString(),
+                });
+            });
+
+            // Verify document and internal synchronized state
+            expect(adapter.getValue()).toBe("Line 1 from server");
+            expect(result.current.serverVersion).toBe(2);
+            expect(result.current.serverEtag).toBe("etag-remote-v2");
+            expect(result.current.isDirty).toBe(false);
+
+            // Verify local IndexedDB representation was atomically persisted
+            expect(mockLocalDb[fileId]).toBeDefined();
+            expect(mockLocalDb[fileId]?.content).toBe("Line 1 from server");
+            expect(mockLocalDb[fileId]?.version).toBe(2);
+            expect(mockLocalDb[fileId]?.isDirty).toBe(false);
+
+            // 2. User presses Enter and types Line 2 (in CodeMirror, new line is appended to current doc)
+            act(() => {
+                const currentDoc = adapter.getValue();
+                const updatedDoc = currentDoc + "\nLine 2 by user";
+                adapter.setValue(updatedDoc);
+                result.current.handleEditorChange(updatedDoc);
+            });
+
+            expect(result.current.isDirty).toBe(true);
+            expect(adapter.getValue()).toBe("Line 1 from server\nLine 2 by user");
+
+            // 3. Settle debounced auto-save (1000ms) and verify save payload contains BOTH lines
+            await waitFor(
+                () => {
+                    expect(fileOps.updateFileContent).toHaveBeenCalledWith(
+                        fileId,
+                        "Line 1 from server\nLine 2 by user",
+                        { expectedVersion: 2, expectedETag: "etag-remote-v2" }
+                    );
+                },
+                { timeout: 3000 }
+            );
+
+            const lastCallArgs = vi.mocked(fileOps.updateFileContent).mock.calls[0];
+            expect(lastCallArgs[1]).toContain("Line 1 from server");
+            expect(lastCallArgs[1]).toContain("Line 2 by user");
+        });
+
         it("should NOT overwrite editor when remote update arrives while local document is dirty", async () => {
             const { result } = renderHook(() =>
                 useEditorOrchestrator({ fileId, userId, adapter })

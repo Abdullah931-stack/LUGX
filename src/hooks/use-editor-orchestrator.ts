@@ -148,7 +148,9 @@ export function useEditorOrchestrator({
     const fileVersionRef = useRef<number>(1);
     const fileEtagRef = useRef<string | null>(null);
     const editorGenerationRef = useRef<number>(1);
+    const editorContentRef = useRef<string>("");
     const isProgrammaticUpdateRef = useRef<boolean>(false);
+    const pendingRemoteUpdateRef = useRef<any>(null);
     const activeConflictRef = useRef<SyncConflict | null>(null);
     const isResolvingConflictRef = useRef<boolean>(false);
     // Synchronous mirror of the dirty flag, read by the reconciliation policy at
@@ -158,6 +160,21 @@ export function useEditorOrchestrator({
     useEffect(() => {
         fileIdRef.current = fileId;
     }, [fileId]);
+
+    // Keep editor adapter synchronized with editorContentRef if adapter mounts post-hydration
+    useEffect(() => {
+        if (currentAdapter && editorContentRef.current) {
+            const currentDoc = currentAdapter.getValue();
+            if (!currentDoc && editorContentRef.current) {
+                isProgrammaticUpdateRef.current = true;
+                try {
+                    currentAdapter.setValue(editorContentRef.current);
+                } finally {
+                    isProgrammaticUpdateRef.current = false;
+                }
+            }
+        }
+    }, [currentAdapter]);
     // File-identity tracking guard: the initial load pipeline (IDB paint + background server fetch
     // + reconciliation) must run exactly once per mounted fileId.
     const loadedFileIdRef = useRef<string | null>(null);
@@ -356,6 +373,8 @@ export function useEditorOrchestrator({
             fileEtagRef.current = etag;
             setServerEtag(etag);
             editorGenerationRef.current += 1;
+            editorContentRef.current = adapterRef.current?.getValue() || committedContent || "";
+            isDirtyRef.current = false;
             setLastSaved(new Date());
 
             if (syncHookRef.current?.isInitialized && adapterRef.current) {
@@ -441,6 +460,9 @@ export function useEditorOrchestrator({
 
             // 3. Never overwrite during programmatic transactions or before hydration completes
             if (isProgrammaticUpdateRef.current || !hydratedRef.current) {
+                if (!hydratedRef.current) {
+                    pendingRemoteUpdateRef.current = event;
+                }
                 return;
             }
 
@@ -481,7 +503,7 @@ export function useEditorOrchestrator({
                 }
             }
 
-            const currentLocalContent = adapterRef.current?.getValue() ?? "";
+            const currentLocalContent = adapterRef.current?.getValue() ?? editorContentRef.current ?? "";
             const localBaseline: LocalBaseline = {
                 version: fileVersionRef.current,
                 etag: fileEtagRef.current,
@@ -497,12 +519,22 @@ export function useEditorOrchestrator({
             });
 
             if (decision.action === "apply") {
-                // Generation guard: apply remote update cleanly without disrupting user
+                // 1. Invariant: Cancel any pending debounced auto-save timer so in-flight stale typing does not overwrite server content
+                debouncedAutoSaveRef.current?.cancel?.();
+
+                // 2. Synchronously reset dirty flags
+                isDirtyRef.current = false;
+                setIsDirty(false);
+
+                // 3. Generation guard: apply remote update cleanly without disrupting user
                 fileVersionRef.current = event.version;
                 setServerVersion(event.version);
                 fileEtagRef.current = event.etag;
                 setServerEtag(event.etag);
                 editorGenerationRef.current += 1;
+
+                // 4. Synchronously update memory ref
+                editorContentRef.current = safeContent;
 
                 const prevSelection = adapterRef.current?.getSelection();
                 const hadFocus = adapterRef.current?.hasFocus() ?? false;
@@ -526,13 +558,46 @@ export function useEditorOrchestrator({
                 }
 
                 markServerPersisted(event.updatedAt);
-                setIsDirty(false);
+
+                // 5. Atomically persist clean state and baseSnapshot into local IndexedDB
+                if (syncHookRef.current?.isInitialized) {
+                    try {
+                        await syncHookRef.current.saveLocal({
+                            id: fileId,
+                            content: isEncryptedRef.current ? event.content : safeContent,
+                            title: event.title || title,
+                            version: event.version,
+                            etag: event.etag || "",
+                            isEncrypted: isEncryptedRef.current,
+                            encryptionMetadata: fileEncryptionMetadataRef.current,
+                            isDirty: false,
+                        });
+                    } catch (idbErr) {
+                        console.error("[Orchestrator] Error updating local IDB during remote update:", idbErr);
+                    }
+                }
             } else if (decision.action === "adopt_metadata") {
                 fileVersionRef.current = event.version;
                 setServerVersion(event.version);
                 fileEtagRef.current = event.etag;
                 setServerEtag(event.etag);
                 markServerPersisted(event.updatedAt);
+                if (syncHookRef.current?.isInitialized) {
+                    try {
+                        await syncHookRef.current.saveLocal({
+                            id: fileId,
+                            content: isEncryptedRef.current ? event.content : safeContent,
+                            title: event.title || title,
+                            version: event.version,
+                            etag: event.etag || "",
+                            isEncrypted: isEncryptedRef.current,
+                            encryptionMetadata: fileEncryptionMetadataRef.current,
+                            isDirty: false,
+                        });
+                    } catch (idbErr) {
+                        console.error("[Orchestrator] Error updating local IDB during adopt_metadata:", idbErr);
+                    }
+                }
             } else if (decision.action === "keep_local") {
                 console.log(
                     `[Orchestrator] Remote update retained locally (reason: ${decision.reason}). Local edits preserved.`
@@ -615,7 +680,7 @@ export function useEditorOrchestrator({
 
             setIsSaving(true);
 
-            let contentToSend = content;
+            let contentToSend = content ?? editorContentRef.current ?? "";
             let metaToSend = fileEncryptionMetadataRef.current;
 
             try {
@@ -917,6 +982,7 @@ export function useEditorOrchestrator({
             // Touch inactivity timer upon user keystrokes / activity (AUD-04)
             sessionKeyStore.touch();
 
+            editorContentRef.current = newContent;
             editorGenerationRef.current += 1;
             setIsDirty(true);
             isDirtyRef.current = true;
@@ -963,6 +1029,7 @@ export function useEditorOrchestrator({
         fileEtagRef.current = pending.etag;
         setServerEtag(pending.etag);
         editorGenerationRef.current += 1;
+        editorContentRef.current = contentToDisplay;
 
         isProgrammaticUpdateRef.current = true;
         try {
@@ -1052,6 +1119,7 @@ export function useEditorOrchestrator({
                         fileEtagRef.current = localFile.etag || null;
                         setServerEtag(localFile.etag || null);
                         editorGenerationRef.current += 1;
+                        editorContentRef.current = initialContent;
 
                         isProgrammaticUpdateRef.current = true;
                         try {
@@ -1135,6 +1203,7 @@ export function useEditorOrchestrator({
                     };
                     const paintServer = () => {
                         editorGenerationRef.current += 1;
+                        editorContentRef.current = safeContent;
                         isProgrammaticUpdateRef.current = true;
                         try {
                             adapterRef.current?.setValue(safeContent);
@@ -1213,6 +1282,12 @@ export function useEditorOrchestrator({
                 hydratedRef.current = true;
                 setHydration("ready");
                 if (adapterRef.current) adapterRef.current.setEditable(true);
+
+                if (pendingRemoteUpdateRef.current) {
+                    const pending = pendingRemoteUpdateRef.current;
+                    pendingRemoteUpdateRef.current = null;
+                    handleRemoteUpdate(pending);
+                }
             }
         }
 
@@ -1341,9 +1416,13 @@ export function useEditorOrchestrator({
                 }
 
                 const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
-                const isLocalDirty = localFile?.isDirty || activeConflictRef.current !== null || isDirty;
+                const isLocalDirty = localFile?.isDirty || activeConflictRef.current !== null || isDirtyRef.current;
 
-                if (!isLocalDirty) {
+                if (!isLocalDirty && localFile) {
+                    debouncedAutoSaveRef.current?.cancel?.();
+                    isDirtyRef.current = false;
+                    setIsDirty(false);
+
                     if (event.version && event.version > fileVersionRef.current) {
                         fileVersionRef.current = event.version;
                         setServerVersion(event.version);
@@ -1352,7 +1431,37 @@ export function useEditorOrchestrator({
                         fileEtagRef.current = event.etag;
                         setServerEtag(event.etag);
                     }
-                } else {
+                    editorGenerationRef.current += 1;
+
+                    let incomingContent = localFile.content || "";
+                    if (isEncryptedRef.current && sessionKeyStore.hasMasterKey() && localFile.encryptionMetadata?.iv && incomingContent) {
+                        try {
+                            const masterKey = sessionKeyStore.getMasterKeyRaw();
+                            if (masterKey) {
+                                const ivBytes = base64ToUint8Array(localFile.encryptionMetadata.iv);
+                                const effectiveUid = await resolveEffectiveUserId();
+                                const aad = `vault:file:${effectiveUid}:${fileId}`;
+                                incomingContent = await cryptoWorkerBridge.decryptAESGCM(
+                                    masterKey,
+                                    incomingContent,
+                                    ivBytes,
+                                    aad
+                                );
+                                wipeBuffer(ivBytes);
+                            }
+                        } catch (decErr) {
+                            console.warn("[Orchestrator] Cross-tab decryption warning:", decErr);
+                        }
+                    }
+
+                    editorContentRef.current = incomingContent;
+                    isProgrammaticUpdateRef.current = true;
+                    try {
+                        adapterRef.current?.setValue(incomingContent);
+                    } finally {
+                        isProgrammaticUpdateRef.current = false;
+                    }
+                } else if (isLocalDirty) {
                     console.warn("[Orchestrator] Sibling tab saved file while local tab is dirty. Retaining local expectedVersion for optimistic conflict guard.");
                 }
             }
@@ -1505,6 +1614,7 @@ export function useEditorOrchestrator({
                     fileEtagRef.current = saveRes.etag || null;
                     setServerEtag(saveRes.etag || null);
                     editorGenerationRef.current += 1;
+                    editorContentRef.current = resolution.content;
 
                     isProgrammaticUpdateRef.current = true;
                     try {

@@ -10,12 +10,21 @@ import { validateMarkdownSyntaxIntegrity as validateSyntax } from './syntax-vali
 import { diff3MergeText } from './diff3';
 
 /**
+ * Fine-grained intra-line word/token span
+ */
+export interface WordSpan {
+    type: 'equal' | 'insert' | 'delete';
+    value: string;
+}
+
+/**
  * Diff operation types
  */
 export type DiffOp =
     | { type: 'equal'; value: string }
     | { type: 'insert'; value: string }
-    | { type: 'delete'; value: string };
+    | { type: 'delete'; value: string }
+    | { type: 'modify'; oldValue: string; newValue: string; spans: WordSpan[] };
 
 /**
  * Status of the merge execution
@@ -256,7 +265,7 @@ export class ConflictResolver {
             title: titleMerge.value,
             parentFolderId: parentMerge.value,
             hasOverlaps,
-            diffs: contentMerge.diffs || this.computeVisualDiff(local.content, remote.content),
+            diffs: contentMerge.diffs || this.computeVisualDiff(local.content, remote.content, base?.content),
             conflictMarkers: contentMerge.conflictMarkers || (syntaxIntegrityFailed ? contentMerge.content : undefined),
             reason: hasOverlaps
                 ? (syntaxFailureReason || 'Conflicting changes detected in content or metadata')
@@ -352,7 +361,7 @@ export class ConflictResolver {
                 success: false,
                 content: mergeResult.content,
                 hasOverlaps: true,
-                diffs: this.computeVisualDiff(localContent, remoteContent),
+                diffs: this.computeVisualDiff(localContent, remoteContent, baseContent),
                 conflictMarkers: mergeResult.conflictMarkers || mergeResult.content,
             };
         }
@@ -648,43 +657,231 @@ export class ConflictResolver {
     }
 
     /**
-     * Compute visual diff using Longest Common Subsequence
+     * Compute word-level Micro-LCS spans on tokenized words/spaces.
      */
-    public computeVisualDiff(localContent: string, serverContent: string): DiffOp[] {
+    public computeWordSpans(oldValue: string, newValue: string): WordSpan[] {
+        const tokensOld = oldValue.match(/\s+|[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+/gu) || [oldValue];
+        const tokensNew = newValue.match(/\s+|[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+/gu) || [newValue];
+
+        const matches = this.computeLCS(tokensOld, tokensNew);
+        const spans: WordSpan[] = [];
+        let oldIdx = 0;
+        let newIdx = 0;
+
+        for (const [matchOld, matchNew] of matches) {
+            while (oldIdx < matchOld) {
+                spans.push({ type: 'delete', value: tokensOld[oldIdx] });
+                oldIdx++;
+            }
+            while (newIdx < matchNew) {
+                spans.push({ type: 'insert', value: tokensNew[newIdx] });
+                newIdx++;
+            }
+            spans.push({ type: 'equal', value: tokensOld[oldIdx] });
+            oldIdx++;
+            newIdx++;
+        }
+
+        while (oldIdx < tokensOld.length) {
+            spans.push({ type: 'delete', value: tokensOld[oldIdx] });
+            oldIdx++;
+        }
+        while (newIdx < tokensNew.length) {
+            spans.push({ type: 'insert', value: tokensNew[newIdx] });
+            newIdx++;
+        }
+
+        return spans;
+    }
+
+    /**
+     * Deletion Guard Logic:
+     * When a baseSnapshot is provided:
+     * If a line is present in server and missing in local: verify if it was in baseContent.
+     * - If it was in baseContent and unchanged in server: user deleted it locally! Keep it deleted (do NOT resurrect deleted lines).
+     * - Only treat as server addition if it was NOT in baseContent.
+     */
+    public applyDeletionGuard(
+        baseContent: string,
+        localContent: string,
+        serverContent: string
+    ): {
+        purgedServerContent: string;
+        deletedLines: string[];
+        addedLines: string[];
+    } {
+        const baseLines = this.tokenizeContent(baseContent);
         const localLines = this.tokenizeContent(localContent);
         const serverLines = this.tokenizeContent(serverContent);
+
+        const localSet = new Set(localLines);
+        const baseSet = new Set(baseLines);
+
+        const deletedLines: string[] = [];
+        const addedLines: string[] = [];
+        const remainingServerLines: string[] = [];
+
+        for (const line of serverLines) {
+            if (!localSet.has(line)) {
+                // Present in server and missing in local
+                if (baseSet.has(line)) {
+                    // Was in baseContent and unchanged in server: user deleted it locally!
+                    // Keep it deleted (do NOT resurrect deleted lines)
+                    deletedLines.push(line);
+                } else {
+                    // NOT in baseContent: true server addition
+                    addedLines.push(line);
+                    remainingServerLines.push(line);
+                }
+            } else {
+                remainingServerLines.push(line);
+            }
+        }
+
+        return {
+            purgedServerContent: remainingServerLines.join('\n'),
+            deletedLines,
+            addedLines,
+        };
+    }
+
+    /**
+     * Compute visual diff using Longest Common Subsequence with intra-line Micro-LCS
+     * and Deletion Guard logic when baseContent is provided.
+     */
+    public computeVisualDiff(localContent: string, serverContent: string, baseContent?: string): DiffOp[] {
+        const localLines = this.tokenizeContent(localContent);
+        const serverLines = this.tokenizeContent(serverContent);
+        const baseLines = baseContent !== undefined ? this.tokenizeContent(baseContent) : null;
+        const baseSet = baseLines ? new Set(baseLines) : null;
+
         const matches = this.computeLCS(localLines, serverLines);
 
         const diffs: DiffOp[] = [];
         let localIdx = 0;
         let serverIdx = 0;
 
+        const processGap = (delLines: string[], insLines: string[]) => {
+            // Apply Deletion Guard if baseLines provided:
+            // If a line is present in server and missing in local:
+            // If it was in baseContent and unchanged in server: user deleted it locally! Keep it deleted.
+            // Only treat as server addition if it was NOT in baseContent.
+            let filteredInsLines = insLines;
+            const locallyDeletedBaseLines: string[] = [];
+
+            if (baseSet) {
+                filteredInsLines = [];
+                for (const line of insLines) {
+                    if (baseSet.has(line)) {
+                        // User deleted it locally: keep it deleted, do not treat as server addition!
+                        locallyDeletedBaseLines.push(line);
+                    } else {
+                        filteredInsLines.push(line);
+                    }
+                }
+            }
+
+            let d = 0;
+            let i = 0;
+
+            if (delLines.length === 1 && filteredInsLines.length === 1) {
+                const spans = this.computeWordSpans(delLines[0], filteredInsLines[0]);
+                diffs.push({
+                    type: 'modify',
+                    oldValue: delLines[0],
+                    newValue: filteredInsLines[0],
+                    spans,
+                });
+                d++;
+                i++;
+            } else if (delLines.length > 0 && filteredInsLines.length > 0 && delLines.length === filteredInsLines.length) {
+                for (let k = 0; k < delLines.length; k++) {
+                    const spans = this.computeWordSpans(delLines[k], filteredInsLines[k]);
+                    diffs.push({
+                        type: 'modify',
+                        oldValue: delLines[k],
+                        newValue: filteredInsLines[k],
+                        spans,
+                    });
+                }
+                d = delLines.length;
+                i = filteredInsLines.length;
+            } else {
+                while (d < delLines.length && i < filteredInsLines.length) {
+                    const oldLine = delLines[d];
+                    const newLine = filteredInsLines[i];
+                    const spans = this.computeWordSpans(oldLine, newLine);
+                    const hasCommonTokens = spans.some(s => s.type === 'equal' && s.value.trim().length > 0);
+
+                    if (hasCommonTokens || (d === delLines.length - 1 && i === filteredInsLines.length - 1)) {
+                        diffs.push({
+                            type: 'modify',
+                            oldValue: oldLine,
+                            newValue: newLine,
+                            spans,
+                        });
+                        d++;
+                        i++;
+                    } else {
+                        diffs.push({ type: 'delete', value: oldLine });
+                        d++;
+                    }
+                }
+            }
+
+            while (d < delLines.length) {
+                diffs.push({ type: 'delete', value: delLines[d] });
+                d++;
+            }
+
+            while (i < filteredInsLines.length) {
+                diffs.push({ type: 'insert', value: filteredInsLines[i] });
+                i++;
+            }
+
+            for (const line of locallyDeletedBaseLines) {
+                diffs.push({ type: 'delete', value: line });
+            }
+        };
+
         for (const [matchLocal, matchServer] of matches) {
-            // Deletions from local
+            const delLines: string[] = [];
             while (localIdx < matchLocal) {
-                diffs.push({ type: 'delete', value: localLines[localIdx] });
+                delLines.push(localLines[localIdx]);
                 localIdx++;
             }
-            // Insertions from server
+
+            const insLines: string[] = [];
             while (serverIdx < matchServer) {
-                diffs.push({ type: 'insert', value: serverLines[serverIdx] });
+                insLines.push(serverLines[serverIdx]);
                 serverIdx++;
             }
+
+            if (delLines.length > 0 || insLines.length > 0) {
+                processGap(delLines, insLines);
+            }
+
             // Matching equal line
             diffs.push({ type: 'equal', value: localLines[localIdx] });
             localIdx++;
             serverIdx++;
         }
 
-        // Trailing deletions
+        // Trailing gap
+        const trailingDel: string[] = [];
         while (localIdx < localLines.length) {
-            diffs.push({ type: 'delete', value: localLines[localIdx] });
+            trailingDel.push(localLines[localIdx]);
             localIdx++;
         }
-        // Trailing insertions
+
+        const trailingIns: string[] = [];
         while (serverIdx < serverLines.length) {
-            diffs.push({ type: 'insert', value: serverLines[serverIdx] });
+            trailingIns.push(serverLines[serverIdx]);
             serverIdx++;
+        }
+
+        if (trailingDel.length > 0 || trailingIns.length > 0) {
+            processGap(trailingDel, trailingIns);
         }
 
         return diffs;

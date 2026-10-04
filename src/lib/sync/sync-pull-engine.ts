@@ -244,6 +244,15 @@ export class SyncPullEngine {
                 lastSyncedAt: Date.now(),
                 isDirty: false,
                 syncStatus: 'synced',
+                baseSnapshot: {
+                    content: serverFile.content,
+                    etag: serverFile.etag,
+                    version: serverFile.version,
+                    title: serverFile.title,
+                    parentFolderId: serverFile.parentFolderId,
+                    isEncrypted: serverFile.isEncrypted ?? false,
+                    encryptionMetadata: serverFile.encryptionMetadata ?? null,
+                },
             };
             await this.idb.saveFile(newFile);
 
@@ -343,6 +352,15 @@ export class SyncPullEngine {
             isDirty: false,
             syncStatus: 'synced',
             conflictData: undefined,
+            baseSnapshot: {
+                content: serverFile.content,
+                etag: serverFile.etag,
+                version: serverFile.version,
+                title: serverFile.title,
+                parentFolderId: serverFile.parentFolderId,
+                isEncrypted: serverFile.isEncrypted ?? false,
+                encryptionMetadata: serverFile.encryptionMetadata ?? null,
+            },
         };
         await this.idb.saveFile(updatedFile);
 

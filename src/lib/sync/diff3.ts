@@ -12,6 +12,8 @@
  * 4. Automatic resolution of false conflicts (identical modifications by both sides).
  */
 
+import { validateMarkdownSyntaxIntegrity } from './syntax-validator';
+
 export interface Diff3Hunk {
     oStart: number;
     oLength: number;
@@ -51,6 +53,7 @@ export interface Diff3Block {
 
 export interface Diff3Options {
     excludeFalseConflicts?: boolean;
+    subLineMerge?: boolean;
     label?: {
         a?: string;
         o?: string;
@@ -286,6 +289,69 @@ function areArraysEqual(arr1?: string[], arr2?: string[]): boolean {
 }
 
 /**
+ * Tokenizes a single line into words, spaces, and punctuation using Unicode RegEx.
+ */
+export function tokenizeLine(line: string): string[] {
+    return line.match(/\s+|[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+/gu) || [line];
+}
+
+/**
+ * Attempts a sub-line word/token 3-way merge on a single line.
+ * 
+ * When two conflicting line modifications occur against a common base line (oLine, aLine, bLine):
+ * - Tokenize each line into words, spaces, and punctuation using Unicode RegEx.
+ * - Execute 3-way merge on the token arrays.
+ * - If changes in a and b are disjoint (non-overlapping token ranges), merge tokens back into a resolved line.
+ * - Validate the merged line using validateMarkdownSyntaxIntegrity from ./syntax-validator.
+ * - If syntax is valid, treat the line as cleanly resolved (merged_clean), avoiding false conflicts!
+ * - If token changes overlap on the same words, declare a conflict.
+ */
+export function trySubLineMerge(
+    aLine: string,
+    oLine: string,
+    bLine: string
+): { success: boolean; line?: string } {
+    if (aLine === bLine) {
+        return { success: true, line: aLine };
+    }
+    if (aLine === oLine) {
+        return { success: true, line: bLine };
+    }
+    if (bLine === oLine) {
+        return { success: true, line: aLine };
+    }
+
+    const aTokens = tokenizeLine(aLine);
+    const oTokens = tokenizeLine(oLine);
+    const bTokens = tokenizeLine(bLine);
+
+    // Execute 3-way merge on the token arrays without recursive subLineMerge
+    const tokenBlocks = diff3Merge(aTokens, oTokens, bTokens, {
+        excludeFalseConflicts: true,
+        subLineMerge: false,
+    });
+
+    // If changes overlap on the same words, declare a conflict
+    for (const block of tokenBlocks) {
+        if (block.conflict) {
+            return { success: false };
+        }
+    }
+
+    // Changes in a and b are disjoint: merge tokens back into a resolved line
+    const mergedTokens = tokenBlocks.flatMap(block => block.ok || []);
+    const mergedLine = mergedTokens.join('');
+
+    // Validate the merged line using validateMarkdownSyntaxIntegrity
+    const integrity = validateMarkdownSyntaxIntegrity(mergedLine);
+    if (!integrity.isValid) {
+        return { success: false };
+    }
+
+    return { success: true, line: mergedLine };
+}
+
+/**
  * Executes a 3-way merge on string arrays (local/a, base/o, remote/b).
  */
 export function diff3Merge(
@@ -295,6 +361,7 @@ export function diff3Merge(
     options?: Diff3Options
 ): Diff3Block[] {
     const excludeFalseConflicts = options?.excludeFalseConflicts ?? true;
+    const subLineMerge = options?.subLineMerge ?? true;
     const regions = diff3MergeRegions(a, o, b);
     const results: Diff3Block[] = [];
     let okBuffer: string[] = [];
@@ -312,19 +379,75 @@ export function diff3Merge(
         } else {
             if (excludeFalseConflicts && areArraysEqual(region.aContent, region.bContent)) {
                 okBuffer.push(...(region.aContent || []));
-            } else {
-                flushOk();
-                results.push({
-                    conflict: {
-                        a: region.aContent || [],
-                        aIndex: region.aStart || 0,
-                        o: region.oContent || [],
-                        oIndex: region.oStart || 0,
-                        b: region.bContent || [],
-                        bIndex: region.bStart || 0,
-                    },
-                });
+                continue;
             }
+
+            const aContent = region.aContent ? [...region.aContent] : [];
+            const oContent = region.oContent ? [...region.oContent] : [];
+            const bContent = region.bContent ? [...region.bContent] : [];
+
+            // Deletion Guard: prune matching lines present in base & remote that were deleted locally
+            while (
+                oContent.length > 0 &&
+                bContent.length > 0 &&
+                oContent[oContent.length - 1] === bContent[bContent.length - 1] &&
+                !aContent.includes(oContent[oContent.length - 1])
+            ) {
+                oContent.pop();
+                bContent.pop();
+            }
+
+            while (
+                oContent.length > 0 &&
+                bContent.length > 0 &&
+                oContent[0] === bContent[0] &&
+                !aContent.includes(oContent[0])
+            ) {
+                oContent.shift();
+                bContent.shift();
+            }
+
+            if (excludeFalseConflicts && areArraysEqual(aContent, bContent)) {
+                okBuffer.push(...aContent);
+                continue;
+            }
+
+            // Sub-Line Word/Token 3-Way Merge
+            if (
+                subLineMerge &&
+                aContent.length === oContent.length &&
+                bContent.length === oContent.length &&
+                oContent.length > 0
+            ) {
+                let allClean = true;
+                const mergedLines: string[] = [];
+                for (let i = 0; i < oContent.length; i++) {
+                    const subResult = trySubLineMerge(aContent[i], oContent[i], bContent[i]);
+                    if (subResult.success && subResult.line !== undefined) {
+                        mergedLines.push(subResult.line);
+                    } else {
+                        allClean = false;
+                        break;
+                    }
+                }
+
+                if (allClean) {
+                    okBuffer.push(...mergedLines);
+                    continue;
+                }
+            }
+
+            flushOk();
+            results.push({
+                conflict: {
+                    a: aContent,
+                    aIndex: region.aStart || 0,
+                    o: oContent,
+                    oIndex: region.oStart || 0,
+                    b: bContent,
+                    bIndex: region.bStart || 0,
+                },
+            });
         }
     }
 
