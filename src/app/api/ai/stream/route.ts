@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
             return res;
         }
 
-        let rateLimitResult: RateLimitResult | undefined;
+        let rateLimitResult: RateLimitResult | undefined = undefined;
         const withCorrelation = (res: NextResponse): NextResponse => {
             addCorrelationHeader(res.headers, correlationId);
             if (rateLimitResult) {

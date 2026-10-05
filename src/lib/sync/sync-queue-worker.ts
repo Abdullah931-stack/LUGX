@@ -23,7 +23,18 @@ import {
     type FileSyncResult,
 } from './sync-manager.types';
 
-export type { ConflictCallback, FileSyncResult };
+export interface ServerConflictPayload {
+    content?: string;
+    rawCiphertext?: string;
+    etag?: string;
+    version?: number;
+    title?: string;
+    parentFolderId?: string | null;
+    updatedAt?: string;
+    isEncrypted?: boolean;
+    isVaultLocked?: boolean;
+    encryptionMetadata?: EncryptedEnvelopeMetadata | null;
+}
 
 /**
  * Configuration options for SyncQueueWorker
@@ -40,7 +51,7 @@ export interface SyncQueueWorkerOptions {
     conflictStore: ConflictStore;
     encryptedConflictStore: SyncEncryptedConflictStore;
     getConflictCallback?: () => ConflictCallback | undefined;
-    onConflictQuarantined?: (file: IDBFile, serverVersion: any) => Promise<void>;
+    onConflictQuarantined?: (file: IDBFile, serverVersion: ServerConflictPayload) => Promise<void>;
 }
 
 /**
@@ -59,7 +70,7 @@ export class SyncQueueWorker {
     private conflictStore: ConflictStore;
     private encryptedConflictStore: SyncEncryptedConflictStore;
     private getConflictCallback?: () => ConflictCallback | undefined;
-    private onConflictQuarantined?: (file: IDBFile, serverVersion: any) => Promise<void>;
+    private onConflictQuarantined?: (file: IDBFile, serverVersion: ServerConflictPayload) => Promise<void>;
 
     public isQueueProcessing = false;
     private isDestroyed = false;
@@ -598,16 +609,7 @@ export class SyncQueueWorker {
      */
     async quarantineServerConflict(
         file: IDBFile,
-        serverVersion: {
-            content?: string;
-            etag?: string;
-            version?: number;
-            title?: string;
-            parentFolderId?: string | null;
-            updatedAt?: string;
-            isEncrypted?: boolean;
-            encryptionMetadata?: EncryptedEnvelopeMetadata | null;
-        }
+        serverVersion: ServerConflictPayload
     ): Promise<void> {
         const localState: ConflictFileState = {
             content: file.content,

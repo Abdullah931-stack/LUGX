@@ -4,7 +4,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FileContextMenu } from "../../components/files/file-context-menu";
 import { indexedDBManager } from "../../lib/sync/indexeddb";
-import { toggleFileEncryption, getFile } from "../../server/actions/file-ops";
+import { toggleFileEncryption } from "../../server/actions/file-ops";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { cryptoWorkerBridge } from "../../lib/sync/crypto-worker-bridge";
 import { getUserVaultProfile } from "../../server/actions/vault-actions";

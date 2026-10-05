@@ -9,7 +9,7 @@
  */
 
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { exportDocument, triggerBrowserDownload } from '@/lib/export/export-service';
 
 describe('Phase 10: Export Governance & Encrypted Content Protection', () => {

@@ -18,12 +18,11 @@ import { EditorAdapter } from "@/components/editor/markdown/types";
 import { getFile, updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/server/actions/file-ops";
 import { getUserVaultProfile } from "@/server/actions/vault-actions";
 import type { FileEncryptionMetadata } from "@/types/storage-payload";
-import { debounce } from "@/lib/utils";
 import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
 import { useEditorAutosave, type UseEditorAutosaveReturn } from "@/hooks/use-editor-autosave";
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
-import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from "@/lib/sync/crypto-worker-bridge";
+import { cryptoWorkerBridge, wipeBuffer } from "@/lib/sync/crypto-worker-bridge";
 import { createClient } from "@/lib/supabase/client";
 import { AIOperationType } from "@/lib/ai/stream-handler";
 import { SyncConflict } from "@/lib/sync/idb-types";
@@ -34,9 +33,21 @@ import {
     type LocalBaseline,
 } from "@/lib/sync/reconciliation";
 import { AIStreamStatus } from "@/lib/ai/stream-session";
-import { EDITOR_AUTOSAVE_DEBOUNCE_MS } from "@/config/editor.config";
 import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
+
+export interface RemoteUpdatePayload {
+    fileId: string;
+    content: string;
+    etag: string;
+    version: number;
+    title?: string;
+    parentFolderId?: string | null;
+    updatedAt: string;
+    isEncrypted?: boolean;
+    isVaultLocked?: boolean;
+    encryptionMetadata?: FileEncryptionMetadata | null;
+}
 
 export type WriteStateType =
     | "idle"
@@ -166,7 +177,7 @@ export function useEditorOrchestrator({
     const editorGenerationRef = useRef<number>(1);
     const editorContentRef = useRef<string>("");
     const isProgrammaticUpdateRef = useRef<boolean>(false);
-    const pendingRemoteUpdateRef = useRef<any>(null);
+    const pendingRemoteUpdateRef = useRef<RemoteUpdatePayload | null>(null);
     const activeConflictRef = useRef<SyncConflict | null>(null);
     const isResolvingConflictRef = useRef<boolean>(false);
     // Synchronous mirror of the dirty flag, read by the reconciliation policy at
@@ -459,18 +470,7 @@ export function useEditorOrchestrator({
     });
 
     const handleRemoteUpdate = useCallback(
-        async (event: {
-            fileId: string;
-            content: string;
-            etag: string;
-            version: number;
-            title?: string;
-            parentFolderId?: string | null;
-            updatedAt: string;
-            isEncrypted?: boolean;
-            isVaultLocked?: boolean;
-            encryptionMetadata?: FileEncryptionMetadata | null;
-        }) => {
+        async (event: RemoteUpdatePayload) => {
             if (event.fileId !== fileId) return;
 
             // Invariant Guards:
@@ -640,7 +640,7 @@ export function useEditorOrchestrator({
                 );
             }
         },
-        [fileId, title, aiStream.isLoading, aiStream.isStreaming, aiStream.isCommitting, aiStream.status, markServerPersisted, resolveEffectiveUserId]
+        [fileId, title, aiStream.isLoading, aiStream.isStreaming, aiStream.isCommitting, aiStream.status, markServerPersisted, resolveEffectiveUserId, cancelAutosave, markClean]
     );
 
     const syncHook = useSync({
@@ -1031,7 +1031,7 @@ export function useEditorOrchestrator({
                 setIsSaving(false);
             }
         },
-        [fileId, title, isBlocked, isWriteLocked, syncHook, resolveEffectiveUserId]
+        [fileId, title, isBlocked, isWriteLocked, syncHook, resolveEffectiveUserId, markClean]
     );
 
     const autosave = useEditorAutosave({
@@ -1625,7 +1625,7 @@ export function useEditorOrchestrator({
         return () => {
             unsubscribe();
         };
-    }, [fileId, syncHook, handleVaultUnlocked]);
+    }, [fileId, syncHook, handleVaultUnlocked, resolveEffectiveUserId]);
 
     // Navigation & Unload Guard
     useEffect(() => {

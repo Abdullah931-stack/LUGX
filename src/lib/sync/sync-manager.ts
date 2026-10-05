@@ -304,7 +304,7 @@ class SyncManager {
     async pushDirtyFiles(s?: AbortSignal) { return this.queueWorker.pushDirtyFiles(s); }
     async pushFile(file: IDBFile, s?: AbortSignal): Promise<FileSyncResult> { return this.queueWorker.pushFile(file, s); }
     private async pullUpdates(s?: AbortSignal) { return this.pullEngine.pullUpdates(s); }
-    private async pullFile(file: any, s?: AbortSignal): Promise<FileSyncResult> { return this.pullEngine.pullFile(file, s); }
+    private async pullFile(file: Parameters<SyncPullEngine['pullFile']>[0], s?: AbortSignal): Promise<FileSyncResult> { return this.pullEngine.pullFile(file, s); }
 
     async queueSync(fileId: string, priority: 1 | 2 | 3 = 2, operationId?: string): Promise<void> {
         if (this.isDestroyed || !this.initialized) return;

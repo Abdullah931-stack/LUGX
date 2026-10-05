@@ -17,7 +17,7 @@
  * (INSERT ... ON CONFLICT DO NOTHING on (user_id, date)).
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, sql, and } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import crypto from "node:crypto";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";

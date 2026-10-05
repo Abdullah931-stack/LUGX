@@ -1,5 +1,39 @@
 # Changelog - LUGX Project
 
+## [1.45.1] - 2026-10-05 (Static Type Safety & Code Quality Hardening: ESLint and TypeScript Remediation)
+
+### Bug Fixes & Type Safety Hardening (`src/lib/sync/sync-queue-worker.ts`)
+
+- **TypeScript Static Type Alignment in Queue Worker (TS2345):**
+  - Resolved `TS2345` compiler type error in `SyncQueueWorker` where `serverVersion` passed to `onConflictQuarantined` had optional fields (`string | undefined`) incompatible with required interface fields.
+  - Aligned `ServerConflictPayload` with optional field definitions (`content?`, `rawCiphertext?`, `etag?`, `version?`, `title?`, `parentFolderId?`, `updatedAt?`, `isEncrypted?`, `isVaultLocked?`, `encryptionMetadata?`).
+  - Unified the method signature of `quarantineServerConflict` to use `ServerConflictPayload` directly, eliminating ad-hoc parameter typing and removing `@typescript-eslint/no-explicit-any` from `onConflictQuarantined`.
+
+### Linter & Code Health Remediation (`src/app/api/ai/stream/route.ts`, `src/hooks/`, `src/lib/sync/`, `src/server/`)
+
+- **AI Streaming Route `prefer-const` Fix (`src/app/api/ai/stream/route.ts`):**
+  - Initialized `let rateLimitResult: RateLimitResult | undefined = undefined;` explicitly at declaration, resolving ESLint `prefer-const` error while preserving closure-level access for `withCorrelation` on early error exits.
+- **Editor Orchestrator & Autosave React Hooks Discipline (`src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`):**
+  - Resolved `react-hooks/exhaustive-deps` warnings: added stable callbacks `cancelAutosave` and `markClean` to `handleRemoteUpdate`, added `markClean` to `executeServerWrite`, and added `resolveEffectiveUserId` to the cross-tab sync listener `useEffect`.
+  - Replaced `any` in `pendingRemoteUpdateRef` by defining and applying the `RemoteUpdatePayload` interface.
+  - Purged unused symbols and imports: removed `debounce`, `base64ToUint8Array`, and `EDITOR_AUTOSAVE_DEBOUNCE_MS` from `use-editor-orchestrator.ts`, and removed unused `getContent` destructuring from `use-editor-autosave.ts`.
+- **Sync Engine & Server Quality Hardening (`src/lib/sync/sync-manager.ts`, `src/lib/sync/sync-encrypted-conflict-store.ts`, `src/server/empty.ts`, `src/server/services/ai-settlement-service.ts`):**
+  - In `sync-manager.ts`, replaced `file: any` on `pullFile` with `Parameters<SyncPullEngine['pullFile']>[0]`.
+  - In `sync-encrypted-conflict-store.ts`, removed unused `EncryptedEnvelopeMetadata` import.
+  - In `src/server/empty.ts`, resolved `import/no-anonymous-default-export` by binding the empty object literal to a named constant `empty` before default export.
+  - In `ai-settlement-service.ts`, purged unused `countWords` import and uncalled private helper `getWeeklyWordUsage` (quota verification is enforced via atomic transaction subqueries).
+
+### Test Suite Hygiene & Assertions (`src/test/`)
+
+- **Non-Blocking stopStream Assertion (`src/test/ai/ai-stream-abort-latency.test.ts`):**
+  - Added explicit assertion `expect(commitResolved).toBe(false);` after `stopStream()` invocation, providing regression proof that user cancellation returns immediately without waiting for deferred asynchronous commit settlement promises to resolve.
+- **Test File Import Cleanup:**
+  - Removed unused `vi` and `beforeEach` imports from `src/test/ai/ai-key-rotation-400.test.ts`.
+  - Removed unused `sql` import from `src/test/ai/ai-ops.integrity.test.ts`.
+  - Removed unused `afterEach` and `useSync` imports, and removed dead `editable` variable from `src/test/editor/editor-security-hardening.test.ts`.
+  - Removed unused `afterEach` import from `src/test/export/export-governance.test.ts`.
+  - Removed unused `getFile` import from `src/test/files/file-context-menu.encryption-conflict.test.tsx`.
+
 ## [1.45.0] - 2026-10-04 (Phase 17: Editor Decomposition, Standalone Autosave Hook & React 19 Ref Discipline)
 
 ### Breaking & Architectural Changes (`src/hooks/use-editor-autosave.ts`, `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-ai-stream.ts`)

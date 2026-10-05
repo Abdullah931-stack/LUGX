@@ -6,7 +6,7 @@
  */
 
 import { IndexedDBManager } from './indexeddb';
-import { IDBFile, EncryptedEnvelopeMetadata } from './idb-types';
+import { IDBFile } from './idb-types';
 import { SyncRollback } from './rollback';
 import { ConflictStore } from '../idb/conflict-store';
 import type { PendingEncryptedConflict } from './types/vault';

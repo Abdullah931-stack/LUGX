@@ -6,7 +6,6 @@ import * as schema from "@/server/db/schema";
 import crypto from "node:crypto";
 import { AIOperation } from "@/lib/ai/prompts";
 import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config";
-import { countWords } from "@/lib/utils";
 import { eq, and, sql } from "drizzle-orm";
 
 /**
@@ -118,24 +117,6 @@ export async function getTodayUsage(userId: string) {
     }
 
     return usage;
-}
-
-async function getWeeklyWordUsage(userId: string): Promise<number> {
-    const weekStart = getWeekStart();
-
-    const result = await db
-        .select({
-            total: sql<number>`COALESCE(SUM(correct_words + improve_words + translate_words), 0)`,
-        })
-        .from(schema.usage)
-        .where(
-            and(
-                eq(schema.usage.userId, userId),
-                sql`date >= ${weekStart}`
-            )
-        );
-
-    return result[0]?.total || 0;
 }
 
 function getLimitsForOperation(

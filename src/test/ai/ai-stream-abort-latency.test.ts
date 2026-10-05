@@ -142,6 +142,7 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
         // It must finish immediately (< 50ms in test environment).
         expect(elapsedMs).toBeLessThan(50);
         expect(result.current.status).toBe("aborted");
+        expect(commitResolved).toBe(false);
 
         // Ghost decoration must be cleared immediately
         expect(editor.clearStreamingGhost).toHaveBeenCalled();

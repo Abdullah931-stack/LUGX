@@ -124,7 +124,7 @@ export function useEditorAutosave({
   // When write lock releases, if we are dirty, re-trigger a save
   useEffect(() => {
     if (!isWriteLocked && isDirtyRef.current) {
-      const { getContent, isBlocked, fileId } = optsRef.current;
+      const { isBlocked, fileId } = optsRef.current;
       if (!isBlocked()) {
          if (!timerRef.current) {
              timerRef.current = setTimeout(() => {

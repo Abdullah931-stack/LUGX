@@ -9,13 +9,12 @@
  * - LUGX-048: Decryption Failure Renders Ciphertext into Editor
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { buildFileAAD, useEditorOrchestrator } from "../../hooks/use-editor-orchestrator";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { SyncCryptoGateway } from "../../lib/sync/sync-crypto-gateway";
 import * as fileOps from "../../server/actions/file-ops";
-import { useSync } from "../../hooks/use-sync";
 import type { EditorAdapter } from "../../components/editor/markdown/types";
 
 // Mock dependencies
@@ -79,7 +78,6 @@ vi.mock("../../hooks/use-ai-stream", () => ({
 
 function createMockAdapter(initialValue = ""): EditorAdapter {
     let content = initialValue;
-    let editable = true;
     return {
         getValue: vi.fn(() => content),
         setValue: vi.fn((val: string) => {
@@ -91,9 +89,7 @@ function createMockAdapter(initialValue = ""): EditorAdapter {
         setSelection: vi.fn(),
         focus: vi.fn(),
         hasFocus: vi.fn(() => false),
-        setEditable: vi.fn((val: boolean) => {
-            editable = val;
-        }),
+        setEditable: vi.fn(),
     } as unknown as EditorAdapter;
 }
 

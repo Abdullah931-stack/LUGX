@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { classifyGeminiError } from "@/lib/ai/key-rotation";
 
 describe("Phase 11: Gemini HTTP 400 Key-Failure Error Classification", () => {
